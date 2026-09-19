@@ -1,0 +1,1764 @@
+#!/bin/bash
+#
+# star-traders-sync - sync Star Traders: Frontiers saves between Macs over
+# Tailscale, through a hub directory that is the single source of truth.
+#
+# One script, identical on both machines. Every difference lives in
+# ~/.config/star-traders-sync/config.
+#
+# Plain bash 3.2. No bash 4 features: no associative arrays, no ${x^^},
+# no mapfile, no <<<.
+
+set -euo pipefail
+
+readonly STS_VERSION="1.0.0"
+readonly PROG="star-traders-sync"
+
+# --------------------------------------------------------------------------
+# Exit codes. Every one of these is documented in --help and in the README
+# troubleshooting table. Nothing exits non-zero without one of these.
+# --------------------------------------------------------------------------
+readonly EX_OK=0
+readonly EX_USAGE=2
+
+readonly EX_CONFIG_MISSING=10      # config absent or unreadable
+readonly EX_CONFIG_MALFORMED=11    # unparseable line or unknown key
+readonly EX_CONFIG_INCOMPLETE=12   # required keys missing or empty
+readonly EX_LOCAL_SAVE_BAD=13      # local save path missing/not a dir/empty
+readonly EX_HUB_PATH_MISSING=14    # hub path absent on the hub host
+readonly EX_ROOT=15                # running as root
+readonly EX_BASH_OLD=16            # bash older than 3.2
+readonly EX_TOOL_MISSING=17        # rsync or ssh not on PATH
+
+readonly EX_TS_MISSING=20          # tailscale binary not found
+readonly EX_TS_DAEMON=21           # tailscaled not running
+readonly EX_TS_LOGGED_OUT=22       # node logged out or Stopped
+readonly EX_TS_INTERACTIVE=23      # tailscale up needs a browser login
+readonly EX_TS_NO_PEER=24          # hub host absent from the tailnet
+readonly EX_TS_PEER_OFFLINE=25     # hub host present but offline
+readonly EX_TS_PING=26             # tailscale ping failed or timed out
+
+readonly EX_SSH_FAILED=30          # non-interactive ssh failed
+readonly EX_SSH_HOSTKEY=31         # host key unknown or changed
+readonly EX_HUB_PERMS=32           # remote user cannot read/write hub dir
+readonly EX_RSYNC=33               # rsync exited non-zero
+readonly EX_DISK_FULL=34           # no space on either side
+
+readonly EX_GAME_RUNNING=40        # game is running on this machine
+readonly EX_GAME_NO_START=41       # game never started (Steam/appid wrong)
+
+readonly EX_LOCK_REMOTE=50         # hub lock held by another host
+readonly EX_LOCK_CREATE=51         # lock could not be created
+readonly EX_LOCK_LOCAL=52          # another sts is running on this machine
+
+readonly EX_CONFLICT=60            # both sides changed since last sync
+readonly EX_CONFLICT_FIRSTRUN=61   # first run, both sides non-empty
+readonly EX_HUB_EMPTY=62           # hub empty, explicit first push needed
+readonly EX_SNAPSHOT=63            # snapshot failed, so no overwrite allowed
+
+readonly EX_BACKUP_NOT_MOUNTED=70  # backup volume not mounted
+readonly EX_BACKUP_NOT_HUB=71      # sts backup run off the hub host
+
+# --------------------------------------------------------------------------
+# Globals set during startup
+# --------------------------------------------------------------------------
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$PROG"
+CONFIG_FILE="$CONFIG_DIR/config"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$PROG"
+STATE_FILE="$STATE_DIR/last-sync.json"
+LOG_DIR="$HOME/Library/Logs/$PROG"
+LOG_FILE="$LOG_DIR/$PROG.log"
+
+OPT_DRY_RUN=0
+OPT_VERBOSE=0
+OPT_FORCE=""          # "", "local" or "hub"
+OPT_OFFLINE_OK=0
+COMMAND=""
+
+IS_HUB=0              # 1 when this machine is the hub host
+HUB_ENDPOINT=""       # resolved MagicDNS name or tailnet IP
+HUB_ENDPOINT_KIND=""  # "magicdns" or "tailnet-ip" or "local"
+TS_BIN=""
+
+LOCAL_LOCK_FILE=""
+HELD_HUB_LOCK=0
+CLEANUP_PATHS=""      # newline separated, removed by the EXIT trap
+
+# Config values, all prefixed CFG_. Defaults for optional keys only.
+CFG_HUB_HOST=""
+CFG_HUB_USER=""
+CFG_HUB_PATH=""
+CFG_LOCAL_SAVE_PATH=""
+CFG_LOCAL_SAVE_PATH_MODS=""
+CFG_STEAM_APPID=""
+CFG_GAME_PROCESS_NAME=""
+CFG_GAME_START_TIMEOUT="90"
+CFG_SSH_PORT="22"
+CFG_SSH_EXTRA_OPTS=""
+CFG_SSH_CONNECT_TIMEOUT="10"
+CFG_PREFER_MAGICDNS="1"
+CFG_SYNC_EXCLUDE=""
+CFG_SNAPSHOT_KEEP="10"
+CFG_LOCK_TTL_SECONDS="3600"
+CFG_CLOCK_SKEW_TOLERANCE="300"
+CFG_BACKUP_VOLUME=""
+CFG_BACKUP_DEST=""
+CFG_BACKUP_KEEP="30"
+CFG_LOG_MAX_BYTES="5242880"
+CFG_LOG_KEEP="3"
+CFG_LOG_LEVEL="INFO"
+
+# --------------------------------------------------------------------------
+# Logging. stdout stays short and human readable; detail goes to the log.
+# --------------------------------------------------------------------------
+
+iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+log_level_num() {
+    case "$1" in
+        DEBUG) echo 10 ;;
+        INFO)  echo 20 ;;
+        WARN)  echo 30 ;;
+        ERROR) echo 40 ;;
+        *)     echo 20 ;;
+    esac
+}
+
+rotate_log() {
+    [ -f "$LOG_FILE" ] || return 0
+    local size
+    size=$(stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+    [ "$size" -lt "$CFG_LOG_MAX_BYTES" ] && return 0
+
+    local i
+    i=$CFG_LOG_KEEP
+    rm -f "$LOG_FILE.$i" 2>/dev/null || true
+    while [ "$i" -gt 1 ]; do
+        local prev=$((i - 1))
+        [ -f "$LOG_FILE.$prev" ] && mv -f "$LOG_FILE.$prev" "$LOG_FILE.$i"
+        i=$prev
+    done
+    mv -f "$LOG_FILE" "$LOG_FILE.1"
+}
+
+# log LEVEL STEP MESSAGE...
+log() {
+    local level="$1" step="$2"; shift 2
+    local msg="$*"
+    local threshold current
+    threshold=$(log_level_num "$CFG_LOG_LEVEL")
+    current=$(log_level_num "$level")
+
+    if [ "$current" -ge "$threshold" ]; then
+        mkdir -p "$LOG_DIR" 2>/dev/null || true
+        rotate_log
+        printf '%s %-5s %-14s %s\n' "$(iso_now)" "$level" "$step" "$msg" \
+            >> "$LOG_FILE" 2>/dev/null || true
+    fi
+    if [ "$OPT_VERBOSE" -eq 1 ] && [ "$current" -ge "$threshold" ]; then
+        printf '%s %-5s %-14s %s\n' "$(iso_now)" "$level" "$step" "$msg" >&2
+    fi
+}
+
+# say MESSAGE - the short human line on stdout
+say()  { printf '%s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+
+# die EXITCODE STEP MESSAGE... - log at ERROR, print to stderr, exit
+die() {
+    local code="$1" step="$2"; shift 2
+    log ERROR "$step" "exit=$code $*"
+    printf 'error: %s\n' "$*" >&2
+    printf 'exit code %s - see %s\n' "$code" "$LOG_FILE" >&2
+    exit "$code"
+}
+
+# --------------------------------------------------------------------------
+# Traps. Cleanup and lock release always run, on every exit path.
+# --------------------------------------------------------------------------
+
+on_err() {
+    local code=$? line=${1:-?}
+    log ERROR trap "unhandled failure at line $line, status $code"
+}
+
+on_exit() {
+    local code=$?
+    release_hub_lock
+    local p
+    printf '%s' "$CLEANUP_PATHS" | while IFS= read -r p; do
+        [ -n "$p" ] && rm -rf "$p" 2>/dev/null || true
+    done
+    [ -n "$LOCAL_LOCK_FILE" ] && rm -f "$LOCAL_LOCK_FILE" 2>/dev/null || true
+    log DEBUG trap "exit status $code"
+    return $code
+}
+
+trap 'on_err $LINENO' ERR
+trap on_exit EXIT
+
+cleanup_later() { CLEANUP_PATHS="$CLEANUP_PATHS
+$1"; }
+
+# --------------------------------------------------------------------------
+# Config. The file is parsed, never sourced - a config file must not be able
+# to execute code. Unknown keys are a hard error rather than a shrug.
+# --------------------------------------------------------------------------
+
+config_key_known() {
+    case "$1" in
+        HUB_HOST|HUB_USER|HUB_PATH) return 0 ;;
+        LOCAL_SAVE_PATH|LOCAL_SAVE_PATH_MODS) return 0 ;;
+        STEAM_APPID|GAME_PROCESS_NAME|GAME_START_TIMEOUT) return 0 ;;
+        SSH_PORT|SSH_EXTRA_OPTS|SSH_CONNECT_TIMEOUT|PREFER_MAGICDNS) return 0 ;;
+        SYNC_EXCLUDE) return 0 ;;
+        SNAPSHOT_KEEP|LOCK_TTL_SECONDS|CLOCK_SKEW_TOLERANCE) return 0 ;;
+        BACKUP_VOLUME|BACKUP_DEST|BACKUP_KEEP) return 0 ;;
+        LOG_MAX_BYTES|LOG_KEEP|LOG_LEVEL) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+config_key_is_path() {
+    case "$1" in
+        HUB_PATH|LOCAL_SAVE_PATH|LOCAL_SAVE_PATH_MODS|BACKUP_VOLUME|BACKUP_DEST)
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Only a leading ~/ is expanded, and only in path keys. Nothing else.
+expand_tilde() {
+    case "$1" in
+        "~/"*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+        "~")   printf '%s' "$HOME" ;;
+        *)     printf '%s' "$1" ;;
+    esac
+}
+
+load_config() {
+    [ -e "$CONFIG_FILE" ] || die $EX_CONFIG_MISSING config \
+        "no config at $CONFIG_FILE - copy config.example there and edit it"
+    [ -f "$CONFIG_FILE" ] || die $EX_CONFIG_MISSING config \
+        "$CONFIG_FILE exists but is not a regular file"
+    [ -r "$CONFIG_FILE" ] || die $EX_CONFIG_MISSING config \
+        "$CONFIG_FILE is not readable by $(whoami)"
+
+    local lineno=0 line key val
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        # strip trailing CR so a file edited on another platform still parses
+        line="${line%$'\r'}"
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        case "$line" in
+            *=*) ;;
+            *) die $EX_CONFIG_MALFORMED config \
+                 "$CONFIG_FILE line $lineno is not KEY=value: $line" ;;
+        esac
+
+        key="${line%%=*}"
+        val="${line#*=}"
+        # trim surrounding whitespace on the key only; values are literal
+        key="$(printf '%s' "$key" | tr -d '[:space:]')"
+
+        config_key_known "$key" || die $EX_CONFIG_MALFORMED config \
+            "$CONFIG_FILE line $lineno: unknown key '$key' - see config.example"
+
+        if config_key_is_path "$key" && [ -n "$val" ]; then
+            val="$(expand_tilde "$val")"
+        fi
+        printf -v "CFG_$key" '%s' "$val"
+    done < "$CONFIG_FILE"
+
+    log DEBUG config "loaded $CONFIG_FILE"
+}
+
+# Every missing required key is reported at once, not one per run.
+validate_config() {
+    local missing="" k v
+    for k in HUB_HOST HUB_USER HUB_PATH LOCAL_SAVE_PATH STEAM_APPID \
+             GAME_PROCESS_NAME BACKUP_VOLUME BACKUP_DEST; do
+        eval "v=\${CFG_$k}"
+        [ -n "$v" ] || missing="$missing $k"
+    done
+    if [ -n "$missing" ]; then
+        printf 'error: required config keys are missing or empty:\n' >&2
+        for k in $missing; do printf '  %s\n' "$k" >&2; done
+        printf 'edit %s - see config.example for what each one means\n' \
+            "$CONFIG_FILE" >&2
+        log ERROR config "missing required keys:$missing"
+        exit $EX_CONFIG_INCOMPLETE
+    fi
+
+    # Numeric keys must actually be numeric, or later arithmetic lies.
+    for k in GAME_START_TIMEOUT SSH_PORT SSH_CONNECT_TIMEOUT PREFER_MAGICDNS \
+             SNAPSHOT_KEEP LOCK_TTL_SECONDS CLOCK_SKEW_TOLERANCE BACKUP_KEEP \
+             LOG_MAX_BYTES LOG_KEEP; do
+        eval "v=\${CFG_$k}"
+        case "$v" in
+            ''|*[!0-9]*) die $EX_CONFIG_MALFORMED config \
+                "$k must be a non-negative integer, got '$v'" ;;
+        esac
+    done
+
+    case "$CFG_LOG_LEVEL" in
+        DEBUG|INFO|WARN|ERROR) ;;
+        *) die $EX_CONFIG_MALFORMED config \
+             "LOG_LEVEL must be DEBUG, INFO, WARN or ERROR, got '$CFG_LOG_LEVEL'" ;;
+    esac
+
+    case "$CFG_HUB_PATH" in
+        /*) ;;
+        *) die $EX_CONFIG_MALFORMED config \
+             "HUB_PATH must be absolute - it is evaluated on the hub host, where ~ is the hub user's home, got '$CFG_HUB_PATH'" ;;
+    esac
+
+    # BACKUP_DEST under BACKUP_VOLUME, or the mount check means nothing.
+    case "$CFG_BACKUP_DEST" in
+        "$CFG_BACKUP_VOLUME"/*) ;;
+        *) die $EX_CONFIG_MALFORMED config \
+             "BACKUP_DEST ($CFG_BACKUP_DEST) must live under BACKUP_VOLUME ($CFG_BACKUP_VOLUME)" ;;
+    esac
+
+    log DEBUG config "validated"
+}
+
+# --------------------------------------------------------------------------
+# Preflight: the checks that do not need the network.
+# --------------------------------------------------------------------------
+
+check_not_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        die $EX_ROOT preflight \
+            "refusing to run as root - saves belong to your user and root would leave files your user cannot rewrite"
+    fi
+}
+
+check_bash_version() {
+    local major minor
+    major="${BASH_VERSINFO[0]}"
+    minor="${BASH_VERSINFO[1]}"
+    if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 2 ]; }; then
+        die $EX_BASH_OLD preflight \
+            "bash 3.2 or newer required, running $BASH_VERSION"
+    fi
+}
+
+check_tools() {
+    local missing=""
+    command -v rsync >/dev/null 2>&1 || missing="$missing rsync"
+    command -v ssh   >/dev/null 2>&1 || missing="$missing ssh"
+    if [ -n "$missing" ]; then
+        die $EX_TOOL_MISSING preflight \
+            "required tools not on PATH:$missing"
+    fi
+    log DEBUG preflight "rsync=$(command -v rsync) ssh=$(command -v ssh)"
+}
+
+# Local save directory must exist, be a directory, and contain something.
+# An empty local save directory is a real state, not a fresh start.
+check_local_save_path() {
+    local p="$CFG_LOCAL_SAVE_PATH"
+    [ -e "$p" ] || die $EX_LOCAL_SAVE_BAD preflight \
+        "LOCAL_SAVE_PATH does not exist: $p - launch the game once so it creates it, then re-run"
+    [ -d "$p" ] || die $EX_LOCAL_SAVE_BAD preflight \
+        "LOCAL_SAVE_PATH is not a directory: $p"
+    [ -r "$p" ] || die $EX_LOCAL_SAVE_BAD preflight \
+        "LOCAL_SAVE_PATH is not readable: $p"
+}
+
+local_save_is_empty() {
+    local n
+    n=$(count_files "$CFG_LOCAL_SAVE_PATH")
+    [ "$n" -eq 0 ]
+}
+
+# --------------------------------------------------------------------------
+# Tailscale
+# --------------------------------------------------------------------------
+
+readonly TS_APP_PATH="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+
+find_tailscale() {
+    if [ -x "$TS_APP_PATH" ]; then
+        TS_BIN="$TS_APP_PATH"
+        log DEBUG tailscale "using App Store binary $TS_BIN"
+        return 0
+    fi
+    if command -v tailscale >/dev/null 2>&1; then
+        TS_BIN="$(command -v tailscale)"
+        log DEBUG tailscale "using PATH binary $TS_BIN"
+        return 0
+    fi
+    die $EX_TS_MISSING tailscale \
+        "tailscale not found at $TS_APP_PATH nor on PATH - install the Tailscale app or 'brew install tailscale'"
+}
+
+# Emits the raw JSON. Distinguishes "daemon is down" from "command failed".
+ts_status_json() {
+    local out rc
+    set +e
+    out="$("$TS_BIN" status --json 2>&1)"
+    rc=$?
+    set -e
+    if [ $rc -ne 0 ]; then
+        case "$out" in
+            *"is not running"*|*"connect: no such file or directory"*|\
+            *"failed to connect to local backend"*|*"Connection refused"*)
+                die $EX_TS_DAEMON tailscale \
+                    "tailscaled is not running - start the Tailscale app, or 'sudo tailscaled install-system-daemon'" ;;
+            *)
+                die $EX_TS_DAEMON tailscale \
+                    "tailscale status failed (rc=$rc): $out" ;;
+        esac
+    fi
+    printf '%s' "$out"
+}
+
+ts_backend_state() {
+    printf '%s' "$1" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin).get("BackendState",""))'
+}
+
+# States 11 and 12: try `tailscale up` exactly once, then re-check. If it
+# wants a browser, say so and get out rather than blocking forever.
+ts_ensure_up() {
+    local json state
+    json="$(ts_status_json)"
+    state="$(ts_backend_state "$json")"
+    log DEBUG tailscale "backend state $state"
+
+    if [ "$state" = "Running" ]; then
+        printf '%s' "$json"
+        return 0
+    fi
+
+    log WARN tailscale "backend state is $state, attempting 'tailscale up' once"
+    say "Tailscale is $state - bringing it up (one attempt)..."
+
+    local out rc
+    set +e
+    out="$("$TS_BIN" up --timeout=30s 2>&1)"
+    rc=$?
+    set -e
+
+    # An auth URL means a human has to click. Never hang waiting for it.
+    case "$out" in
+        *"https://login.tailscale.com/"*)
+            local url
+            url="$(printf '%s' "$out" | grep -o 'https://login\.tailscale\.com/[A-Za-z0-9/._-]*' | head -1)"
+            log ERROR tailscale "interactive login required: $url"
+            printf 'error: Tailscale needs an interactive login or reauth.\n' >&2
+            printf 'Open this URL, then re-run:\n  %s\n' "$url" >&2
+            exit $EX_TS_INTERACTIVE ;;
+        *"Reauthentication required"*|*"key expired"*|*"NeedsLogin"*)
+            log ERROR tailscale "reauth required: $out"
+            printf 'error: Tailscale needs reauthentication. Run:\n  %s up\n' "$TS_BIN" >&2
+            exit $EX_TS_INTERACTIVE ;;
+    esac
+
+    json="$(ts_status_json)"
+    state="$(ts_backend_state "$json")"
+    if [ "$state" != "Running" ]; then
+        log ERROR tailscale "still $state after 'tailscale up' (rc=$rc): $out"
+        printf 'error: Tailscale is still %s after one "tailscale up".\n' "$state" >&2
+        printf 'tailscale up said:\n%s\n' "$out" >&2
+        exit $EX_TS_LOGGED_OUT
+    fi
+    log INFO tailscale "backend now Running after one 'tailscale up'"
+    printf '%s' "$json"
+}
+
+# Prints "DNSName<TAB>IP<TAB>Online" for the hub peer, or nothing if absent.
+ts_find_peer() {
+    local json="$1" host="$2"
+    printf '%s' "$json" | python3 -c '
+import json, sys
+want = sys.argv[1].lower()
+d = json.load(sys.stdin)
+for p in list(d.get("Peer", {}).values()) + [d.get("Self", {})]:
+    if not p:
+        continue
+    dns = (p.get("DNSName") or "").rstrip(".")
+    host = (p.get("HostName") or "")
+    short = dns.split(".")[0]
+    if want in (host.lower(), short.lower(), dns.lower()):
+        ips = p.get("TailscaleIPs") or []
+        v4 = next((i for i in ips if ":" not in i), ips[0] if ips else "")
+        print("%s\t%s\t%s" % (dns, v4, "1" if p.get("Online") else "0"))
+        break
+' "$host"
+}
+
+# Decide how we address the hub: MagicDNS if it resolves, tailnet IP if not.
+# On a machine whose tailscaled does not install a system resolver the IP
+# fallback is the normal path, so it is logged at INFO, not WARN.
+resolve_hub_endpoint() {
+    local json peer dns ip online
+
+    json="$(ts_ensure_up)"
+    peer="$(ts_find_peer "$json" "$CFG_HUB_HOST")"
+
+    if [ -z "$peer" ]; then
+        die $EX_TS_NO_PEER tailscale \
+            "hub host '$CFG_HUB_HOST' is not in this tailnet at all - check HUB_HOST against '$TS_BIN status', or the machine has never joined"
+    fi
+
+    dns="$(printf '%s' "$peer"  | cut -f1)"
+    ip="$(printf '%s' "$peer"   | cut -f2)"
+    online="$(printf '%s' "$peer" | cut -f3)"
+
+    if [ "$online" != "1" ]; then
+        if [ "$OPT_OFFLINE_OK" -eq 1 ]; then
+            log WARN tailscale "hub $CFG_HUB_HOST is OFFLINE, continuing under --offline-ok"
+            HUB_ENDPOINT=""
+            HUB_ENDPOINT_KIND="offline"
+            return 0
+        fi
+        die $EX_TS_PEER_OFFLINE tailscale \
+            "hub host '$CFG_HUB_HOST' ($ip) is offline - wake it, or re-run with --offline-ok to play on the local save without syncing"
+    fi
+
+    if [ "$CFG_PREFER_MAGICDNS" -eq 1 ] && [ -n "$dns" ] && \
+       ping -c1 -t2 "$dns" >/dev/null 2>&1; then
+        HUB_ENDPOINT="$dns"
+        HUB_ENDPOINT_KIND="magicdns"
+        log INFO tailscale "hub endpoint $dns (MagicDNS)"
+    else
+        HUB_ENDPOINT="$ip"
+        HUB_ENDPOINT_KIND="tailnet-ip"
+        if [ "$CFG_PREFER_MAGICDNS" -eq 1 ]; then
+            log INFO tailscale "MagicDNS name '$dns' did not resolve, falling back to tailnet IP $ip"
+            say "note: MagicDNS did not resolve, using tailnet IP $ip"
+        else
+            log INFO tailscale "hub endpoint $ip (tailnet IP, MagicDNS disabled by config)"
+        fi
+    fi
+
+    local out rc
+    set +e
+    out="$("$TS_BIN" ping --c 3 --timeout 5s "$ip" 2>&1)"
+    rc=$?
+    set -e
+    if [ $rc -ne 0 ]; then
+        log ERROR tailscale "tailscale ping $ip failed: $out"
+        die $EX_TS_PING tailscale \
+            "hub '$CFG_HUB_HOST' reports online but 'tailscale ping $ip' failed - $out"
+    fi
+    log DEBUG tailscale "ping ok: $(printf '%s' "$out" | head -1)"
+}
+
+# --------------------------------------------------------------------------
+# Hub access. The hub is reached by ssh, or by plain local paths when this
+# machine IS the hub. Everything above this layer uses the same calls.
+# --------------------------------------------------------------------------
+
+readonly SNAP_DIRNAME="star-traders-sync-snapshots"
+readonly LOCK_DIRNAME=".sts-lock"
+
+detect_self_is_hub() {
+    local self_host self_dns
+    local json
+    json="$(ts_status_json)"
+    self_host="$(printf '%s' "$json" | python3 -c \
+        'import json,sys; print((json.load(sys.stdin).get("Self",{}).get("HostName") or ""))')"
+    self_dns="$(printf '%s' "$json" | python3 -c \
+        'import json,sys; print((json.load(sys.stdin).get("Self",{}).get("DNSName") or "").rstrip(".").split(".")[0])')"
+
+    # Case-insensitive: `tailscale status` shows a lowercase node name while
+    # the Self.HostName field keeps the machine's own capitalisation.
+    local want lo_host lo_dns
+    want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
+    lo_host="$(printf '%s' "$self_host" | tr '[:upper:]' '[:lower:]')"
+    lo_dns="$(printf '%s' "$self_dns" | tr '[:upper:]' '[:lower:]')"
+
+    if [ "$want" = "$lo_host" ] || [ "$want" = "$lo_dns" ]; then
+        IS_HUB=1
+        HUB_ENDPOINT_KIND="local"
+        log INFO hub "this machine is the hub ($self_host) - using local paths, no ssh"
+    else
+        IS_HUB=0
+        log DEBUG hub "this machine is $self_host, hub is $CFG_HUB_HOST"
+    fi
+}
+
+ssh_opts() {
+    # BatchMode, timeout and StrictHostKeyChecking are fixed on purpose.
+    # An unknown or changed host key must fail loudly, never auto-accept.
+    printf '%s' "-o BatchMode=yes -o ConnectTimeout=$CFG_SSH_CONNECT_TIMEOUT \
+-o StrictHostKeyChecking=yes -p $CFG_SSH_PORT $CFG_SSH_EXTRA_OPTS"
+}
+
+ssh_target() { printf '%s@%s' "$CFG_HUB_USER" "$HUB_ENDPOINT"; }
+
+# The exact command a human can paste to reproduce a failure by hand.
+ssh_repro_cmd() {
+    printf 'ssh %s %s' "$(ssh_opts)" "$(ssh_target)"
+}
+
+# hub_exec COMMAND - run a shell command where the hub lives.
+hub_exec() {
+    local cmd="$1"
+    if [ "$IS_HUB" -eq 1 ]; then
+        /bin/bash -c "$cmd"
+    else
+        # shellcheck disable=SC2086
+        ssh $(ssh_opts) "$(ssh_target)" "$cmd"
+    fi
+}
+
+# Probe ssh once, and turn its failure modes into distinct exit codes.
+check_hub_reachable() {
+    if [ "$IS_HUB" -eq 1 ]; then
+        log DEBUG ssh "hub is local, skipping ssh probe"
+        return 0
+    fi
+    local out rc
+    set +e
+    # shellcheck disable=SC2086
+    out="$(ssh $(ssh_opts) "$(ssh_target)" 'echo STS_SSH_OK' 2>&1)"
+    rc=$?
+    set -e
+
+    if [ $rc -eq 0 ] && [ "$out" = "STS_SSH_OK" ]; then
+        log DEBUG ssh "ssh to $(ssh_target) ok"
+        return 0
+    fi
+
+    case "$out" in
+        *"HOST IDENTIFICATION HAS CHANGED"*|*"host key for"*"has changed"*)
+            log ERROR ssh "host key CHANGED for $HUB_ENDPOINT: $out"
+            printf 'error: the SSH host key for %s has CHANGED.\n' "$HUB_ENDPOINT" >&2
+            printf 'This is either a reinstalled machine or something is wrong.\n' >&2
+            printf 'Verify the new key ON THE HUB, then remove the stale entry:\n' >&2
+            printf '  ssh-keygen -R %s\n' "$HUB_ENDPOINT" >&2
+            printf 'Compare against, run on the hub:\n' >&2
+            printf '  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\n' >&2
+            exit $EX_SSH_HOSTKEY ;;
+        *"No ED25519 host key is known"*|*"Host key verification failed"*|\
+        *"No RSA host key is known"*)
+            log ERROR ssh "host key UNKNOWN for $HUB_ENDPOINT: $out"
+            printf 'error: the SSH host key for %s is not trusted yet.\n' "$HUB_ENDPOINT" >&2
+            printf 'Not auto-accepting it. Verify it out of band first:\n' >&2
+            printf '  on the hub:   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\n' >&2
+            printf '  compare with: ssh-keyscan -t ed25519 %s 2>/dev/null | ssh-keygen -lf -\n' "$HUB_ENDPOINT" >&2
+            printf 'If and only if they match:\n' >&2
+            printf '  ssh-keyscan -t ed25519 %s >> ~/.ssh/known_hosts\n' "$HUB_ENDPOINT" >&2
+            exit $EX_SSH_HOSTKEY ;;
+    esac
+
+    log ERROR ssh "non-interactive ssh failed rc=$rc: $out"
+    printf 'error: could not ssh to the hub non-interactively (rc=%s).\n' "$rc" >&2
+    printf 'ssh said:\n%s\n' "$out" >&2
+    printf 'Reproduce it by hand with:\n  %s\n' "$(ssh_repro_cmd)" >&2
+    printf 'If it asks for a password, key auth is not set up:\n' >&2
+    printf '  ssh-copy-id -i ~/.ssh/id_ed25519.pub %s\n' "$(ssh_target)" >&2
+    exit $EX_SSH_FAILED
+}
+
+# Hub directory must exist and be readable AND writable by the hub user.
+check_hub_path() {
+    local out rc
+    set +e
+    out="$(hub_exec "
+        d='$CFG_HUB_PATH'
+        [ -e \"\$d\" ] || { echo STS_NOENT; exit 0; }
+        [ -d \"\$d\" ] || { echo STS_NOTDIR; exit 0; }
+        [ -r \"\$d\" ] || { echo STS_NOREAD; exit 0; }
+        [ -w \"\$d\" ] || { echo STS_NOWRITE; exit 0; }
+        echo STS_OK
+    " 2>&1)"
+    rc=$?
+    set -e
+    [ $rc -eq 0 ] || die $EX_SSH_FAILED hub "probing hub path failed: $out"
+
+    case "$out" in
+        *STS_OK*)      log DEBUG hub "hub path ok: $CFG_HUB_PATH" ; return 0 ;;
+        *STS_NOENT*)   die $EX_HUB_PATH_MISSING hub \
+            "hub path does not exist on $CFG_HUB_HOST: $CFG_HUB_PATH - create it with 'mkdir -p $CFG_HUB_PATH' on the hub, or run 'sts push' which will offer to seed it" ;;
+        *STS_NOTDIR*)  die $EX_HUB_PATH_MISSING hub \
+            "hub path exists but is not a directory on $CFG_HUB_HOST: $CFG_HUB_PATH" ;;
+        *STS_NOREAD*)  die $EX_HUB_PERMS hub \
+            "hub user '$CFG_HUB_USER' cannot READ $CFG_HUB_PATH on $CFG_HUB_HOST" ;;
+        *STS_NOWRITE*) die $EX_HUB_PERMS hub \
+            "hub user '$CFG_HUB_USER' cannot WRITE $CFG_HUB_PATH on $CFG_HUB_HOST - check ownership and mode" ;;
+        *) die $EX_HUB_PERMS hub "unexpected hub path probe result: $out" ;;
+    esac
+}
+
+# --------------------------------------------------------------------------
+# Fingerprints. Two directories can have identical file sizes and still hold
+# completely different saves - on this pair of machines core.db is 12288
+# bytes on both - so content hashes decide, not sizes or mtimes.
+# --------------------------------------------------------------------------
+
+# Builds the shell snippet that emits "sha256  size  relpath" per file,
+# sorted, excluding snapshots, locks and anything in SYNC_EXCLUDE.
+manifest_snippet() {
+    local dir="$1" prunes="" name
+    prunes="! -path './$SNAP_DIRNAME/*' ! -name '$LOCK_DIRNAME' ! -path './$LOCK_DIRNAME/*'"
+    for name in $CFG_SYNC_EXCLUDE; do
+        prunes="$prunes ! -name '$name'"
+    done
+    printf "cd '%s' 2>/dev/null || exit 0; LC_ALL=C find . -type f %s | LC_ALL=C sort | while IFS= read -r f; do printf '%%s  %%s  %%s\\n' \"\$(shasum -a 256 \"\$f\" | cut -d' ' -f1)\" \"\$(stat -f%%z \"\$f\")\" \"\$f\"; done" \
+        "$dir" "$prunes"
+}
+
+manifest_local() { /bin/bash -c "$(manifest_snippet "$1")"; }
+manifest_hub()   { hub_exec "$(manifest_snippet "$CFG_HUB_PATH")"; }
+
+fingerprint_of_manifest() {
+    local m="$1"
+    if [ -z "$m" ]; then printf 'empty'; return 0; fi
+    printf '%s' "$m" | shasum -a 256 | cut -d' ' -f1
+}
+
+count_files() {
+    local n
+    n="$(manifest_local "$1" | grep -c . || true)"
+    printf '%s' "${n:-0}"
+}
+
+# Newest mtime under a directory, as a unix epoch. 0 when empty.
+newest_mtime_local() {
+    local dir="$1" newest
+    newest="$(/bin/bash -c "cd '$dir' 2>/dev/null || exit 0; LC_ALL=C find . -type f ! -path './$SNAP_DIRNAME/*' ! -path './$LOCK_DIRNAME/*' -exec stat -f%m {} + 2>/dev/null | LC_ALL=C sort -n | tail -1")"
+    printf '%s' "${newest:-0}"
+}
+
+newest_mtime_hub() {
+    local newest
+    newest="$(hub_exec "cd '$CFG_HUB_PATH' 2>/dev/null || exit 0; LC_ALL=C find . -type f ! -path './$SNAP_DIRNAME/*' ! -path './$LOCK_DIRNAME/*' -exec stat -f%m {} + 2>/dev/null | LC_ALL=C sort -n | tail -1")"
+    printf '%s' "${newest:-0}"
+}
+
+hub_clock_epoch() { hub_exec 'date -u +%s'; }
+
+# --------------------------------------------------------------------------
+# Locks. Two layers: a hub lock so two machines cannot both write the hub,
+# and a local lock so two sts invocations on one machine cannot race.
+# --------------------------------------------------------------------------
+
+this_host_id() { printf '%s' "$(hostname -s)"; }
+
+# shlock ships with macOS and handles a stale pid for us.
+acquire_local_lock() {
+    mkdir -p "$STATE_DIR"
+    LOCAL_LOCK_FILE="$STATE_DIR/local.lock"
+    if command -v shlock >/dev/null 2>&1; then
+        if ! shlock -f "$LOCAL_LOCK_FILE" -p $$; then
+            local holder
+            holder="$(cat "$LOCAL_LOCK_FILE" 2>/dev/null || echo '?')"
+            LOCAL_LOCK_FILE=""   # not ours, the EXIT trap must not remove it
+            die $EX_LOCK_LOCAL lock \
+                "another $PROG is already running on this machine (pid $holder)"
+        fi
+    else
+        if ! mkdir "$LOCAL_LOCK_FILE.d" 2>/dev/null; then
+            LOCAL_LOCK_FILE=""
+            die $EX_LOCK_LOCAL lock \
+                "another $PROG is already running on this machine"
+        fi
+        cleanup_later "$LOCAL_LOCK_FILE.d"
+    fi
+    log DEBUG lock "local lock held, pid $$"
+}
+
+hub_lock_path() { printf '%s/%s' "$CFG_HUB_PATH" "$LOCK_DIRNAME"; }
+
+# mkdir is atomic on both HFS+ and APFS, and over ssh it stays atomic because
+# it is a single syscall on the far side.
+acquire_hub_lock() {
+    local lock info out
+    lock="$(hub_lock_path)"
+    info="$lock/owner"
+
+    out="$(hub_exec "
+        lock='$lock'
+        if mkdir \"\$lock\" 2>/dev/null; then
+            printf '%s\n%s\n%s\n%s\n' '$(this_host_id)' '$$' '$(iso_now)' \"\$(date -u +%s)\" > '$info'
+            echo STS_LOCK_ACQUIRED
+        else
+            if [ -f '$info' ]; then cat '$info'; else echo 'unknown'; fi
+            echo STS_LOCK_HELD
+        fi
+    " 2>&1)" || die $EX_LOCK_CREATE lock \
+        "could not create the hub lock at $lock - is the hub directory writable? ($out)"
+
+    case "$out" in
+        *STS_LOCK_ACQUIRED*)
+            HELD_HUB_LOCK=1
+            log DEBUG lock "hub lock acquired at $lock"
+            return 0 ;;
+    esac
+
+    local owner_host owner_pid owner_iso owner_epoch now age
+    owner_host="$(printf  '%s' "$out" | sed -n '1p')"
+    owner_pid="$(printf   '%s' "$out" | sed -n '2p')"
+    owner_iso="$(printf   '%s' "$out" | sed -n '3p')"
+    owner_epoch="$(printf '%s' "$out" | sed -n '4p')"
+    case "$owner_epoch" in ''|*[!0-9]*) owner_epoch=0 ;; esac
+
+    now="$(hub_clock_epoch)"
+    age=$((now - owner_epoch))
+    [ "$age" -lt 0 ] && age=0
+
+    # A lock from another machine is never cleared automatically, at any age.
+    if [ "$owner_host" != "$(this_host_id)" ]; then
+        log ERROR lock "hub lock held by $owner_host since $owner_iso (${age}s)"
+        printf 'error: the hub is locked by another machine.\n' >&2
+        printf '  holder: %s (pid %s)\n' "$owner_host" "$owner_pid" >&2
+        printf '  since:  %s (%s seconds ago)\n' "$owner_iso" "$age" >&2
+        printf 'Wait for it to finish. If that machine crashed, clear it there,\n' >&2
+        printf 'or remove %s on the hub by hand.\n' "$lock" >&2
+        exit $EX_LOCK_REMOTE
+    fi
+
+    # Our own lock from a crashed earlier run: clear only past the TTL, loudly.
+    if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
+        log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
+        warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
+        hub_exec "rm -rf '$lock'" || die $EX_LOCK_CREATE lock \
+            "failed to clear our stale hub lock at $lock"
+        acquire_hub_lock
+        return 0
+    fi
+
+    log ERROR lock "hub lock held by this host since $owner_iso (${age}s < TTL)"
+    printf 'error: the hub is locked by this machine from an earlier run.\n' >&2
+    printf '  pid %s, since %s (%s seconds ago)\n' "$owner_pid" "$owner_iso" "$age" >&2
+    printf 'It will be cleared automatically once it is older than LOCK_TTL_SECONDS (%s).\n' \
+        "$CFG_LOCK_TTL_SECONDS" >&2
+    exit $EX_LOCK_REMOTE
+}
+
+release_hub_lock() {
+    [ "$HELD_HUB_LOCK" -eq 1 ] || return 0
+    HELD_HUB_LOCK=0
+    hub_exec "rm -rf '$(hub_lock_path)'" >/dev/null 2>&1 || \
+        log WARN lock "could not release the hub lock at $(hub_lock_path) - clear it by hand"
+    log DEBUG lock "hub lock released"
+}
+
+# --------------------------------------------------------------------------
+# Snapshots. Nothing is ever overwritten before the target is snapshotted,
+# and rsync is only allowed --delete once that snapshot exists.
+# --------------------------------------------------------------------------
+
+# snapshot_local DIR -> echoes the snapshot path
+snapshot_local() {
+    local dir="$1" stamp snaproot snapdir
+    stamp="$(iso_now)"
+    snaproot="$(dirname "$dir")/$SNAP_DIRNAME"
+    snapdir="$snaproot/$stamp"
+
+    mkdir -p "$snapdir" || die $EX_SNAPSHOT snapshot \
+        "could not create snapshot directory $snapdir"
+    # cp -Rp, not a hardlink - a snapshot that shares inodes is not a snapshot.
+    if ! (cd "$dir" && find . -type f ! -path "./$SNAP_DIRNAME/*" ! -path "./$LOCK_DIRNAME/*" -print0 | \
+          cpio -0 -pdm --quiet "$snapdir" 2>/dev/null); then
+        cp -Rp "$dir"/ "$snapdir"/ 2>/dev/null || die $EX_SNAPSHOT snapshot \
+            "could not snapshot $dir into $snapdir"
+    fi
+    prune_snapshots_local "$snaproot"
+    log INFO snapshot "local snapshot $snapdir"
+    printf '%s' "$snapdir"
+}
+
+prune_snapshots_local() {
+    local snaproot="$1" keep="$CFG_SNAPSHOT_KEEP" n old
+    [ "$keep" -gt 0 ] || return 0
+    [ -d "$snaproot" ] || return 0
+    n="$(ls -1 "$snaproot" 2>/dev/null | grep -c . || true)"
+    [ "${n:-0}" -le "$keep" ] && return 0
+    ls -1 "$snaproot" | LC_ALL=C sort | head -n $((n - keep)) | while IFS= read -r old
+    do
+        if [ -n "$old" ]; then
+            rm -rf "${snaproot:?}/$old"
+            log INFO snapshot "pruned old snapshot $old"
+        fi
+    done
+}
+
+snapshot_hub() {
+    local stamp snaproot snapdir
+    stamp="$(iso_now)"
+    snaproot="$(dirname "$CFG_HUB_PATH")/$SNAP_DIRNAME"
+    snapdir="$snaproot/$stamp"
+
+    hub_exec "
+        set -e
+        mkdir -p '$snapdir'
+        cd '$CFG_HUB_PATH'
+        find . -type f ! -path './$SNAP_DIRNAME/*' ! -path './$LOCK_DIRNAME/*' -print0 \
+            | cpio -0 -pdm '$snapdir' 2>/dev/null \
+            || cp -Rp '$CFG_HUB_PATH'/ '$snapdir'/
+        keep=$CFG_SNAPSHOT_KEEP
+        if [ \"\$keep\" -gt 0 ]; then
+            n=\$(ls -1 '$snaproot' 2>/dev/null | grep -c . || true)
+            if [ \"\${n:-0}\" -gt \"\$keep\" ]; then
+                ls -1 '$snaproot' | LC_ALL=C sort | head -n \$((n - keep)) \
+                  | while IFS= read -r old; do rm -rf '$snaproot'/\"\$old\"; done
+            fi
+        fi
+    " >/dev/null 2>&1 || die $EX_SNAPSHOT snapshot \
+        "could not snapshot the hub directory on $CFG_HUB_HOST into $snapdir"
+
+    log INFO snapshot "hub snapshot $snapdir on $CFG_HUB_HOST"
+    printf '%s' "$snapdir"
+}
+
+# --------------------------------------------------------------------------
+# Transfer. rsync runs into a temp directory on the receiving side and is
+# moved into place only after it exits 0, so a dropped connection leaves the
+# target exactly as it was.
+#
+# Flags are deliberately just -a --delete plus excludes. No -E: it means
+# --extended-attributes in openrsync but --executability in GNU rsync, and
+# the only xattr these files carry is com.apple.provenance, which is local
+# bookkeeping that should not cross machines.
+# --------------------------------------------------------------------------
+
+rsync_excludes() {
+    local out="--exclude=$SNAP_DIRNAME/ --exclude=$LOCK_DIRNAME/" name
+    for name in $CFG_SYNC_EXCLUDE; do
+        out="$out --exclude=$name"
+    done
+    printf '%s' "$out"
+}
+
+# run_rsync STEP ARGS... - surfaces rsync's own exit code and stderr intact.
+run_rsync() {
+    local step="$1"; shift
+    local err_file out rc
+    err_file="$(mktemp -t sts-rsync)"
+    cleanup_later "$err_file"
+
+    log INFO "$step" "rsync $*"
+    set +e
+    out="$(rsync "$@" 2>"$err_file")"
+    rc=$?
+    set -e
+
+    local err
+    err="$(cat "$err_file" 2>/dev/null || true)"
+    [ -n "$out" ] && log DEBUG "$step" "rsync stdout: $(printf '%s' "$out" | tr '\n' '|')"
+    [ -n "$err" ] && log DEBUG "$step" "rsync stderr: $(printf '%s' "$err" | tr '\n' '|')"
+
+    if [ $rc -ne 0 ]; then
+        case "$err$out" in
+            *"No space left on device"*|*"write error"*|*"disk full"*)
+                log ERROR "$step" "disk full (rsync rc=$rc): $err"
+                printf 'error: out of disk space during transfer.\n' >&2
+                printf 'rsync exit code %s, stderr:\n%s\n' "$rc" "$err" >&2
+                printf 'Check free space on both sides:\n' >&2
+                printf '  local: df -h %s\n' "$CFG_LOCAL_SAVE_PATH" >&2
+                printf '  hub:   %s df -h %s\n' "$(ssh_repro_cmd)" "$CFG_HUB_PATH" >&2
+                exit $EX_DISK_FULL ;;
+        esac
+        log ERROR "$step" "rsync failed rc=$rc: $err"
+        printf 'error: rsync failed with its own exit code %s.\n' "$rc" >&2
+        printf 'rsync stderr:\n%s\n' "$err" >&2
+        printf 'The target was not modified - the transfer ran into a temp directory.\n' >&2
+        exit $EX_RSYNC
+    fi
+    printf '%s' "$out"
+}
+
+# pull_hub_to_local - hub becomes local. Snapshot first, temp dir, then swap.
+pull_hub_to_local() {
+    local target="$1" tmp src
+    tmp="$(dirname "$target")/.sts-incoming-$$"
+    cleanup_later "$tmp"
+    rm -rf "$tmp"; mkdir -p "$tmp"
+
+    if [ "$IS_HUB" -eq 1 ]; then
+        src="$CFG_HUB_PATH/"
+    else
+        src="$(ssh_target):$CFG_HUB_PATH/"
+    fi
+
+    # The snapshot is what makes --delete safe. No snapshot, no --delete.
+    local snap
+    snap="$(snapshot_local "$target")"
+    say "snapshot: $snap"
+
+    if [ "$IS_HUB" -eq 1 ]; then
+        run_rsync pull -a --delete $(rsync_excludes) \
+            --link-dest="$target" "$src" "$tmp/" >/dev/null
+    else
+        run_rsync pull -a --delete $(rsync_excludes) \
+            --link-dest="$target" -e "ssh $(ssh_opts)" "$src" "$tmp/" >/dev/null
+    fi
+
+    swap_into_place "$tmp" "$target"
+    log INFO pull "hub -> local complete"
+}
+
+# push_local_to_hub - local becomes hub. Same shape, temp dir lives on the hub.
+push_local_to_hub() {
+    local src="$1" tmp dst
+    tmp="$(dirname "$CFG_HUB_PATH")/.sts-incoming-$$"
+
+    hub_exec "rm -rf '$tmp' && mkdir -p '$tmp'" || die $EX_HUB_PERMS push \
+        "could not create the staging directory $tmp on $CFG_HUB_HOST"
+
+    local snap
+    snap="$(snapshot_hub)"
+    say "snapshot: $snap (on $CFG_HUB_HOST)"
+
+    if [ "$IS_HUB" -eq 1 ]; then
+        run_rsync push -a --delete $(rsync_excludes) \
+            --link-dest="$CFG_HUB_PATH" "$src/" "$tmp/" >/dev/null
+        swap_into_place "$tmp" "$CFG_HUB_PATH"
+    else
+        dst="$(ssh_target):$tmp/"
+        run_rsync push -a --delete $(rsync_excludes) \
+            --link-dest="$CFG_HUB_PATH" -e "ssh $(ssh_opts)" "$src/" "$dst" >/dev/null
+        hub_exec "
+            set -e
+            old='$CFG_HUB_PATH.sts-old-$$'
+            rm -rf \"\$old\"
+            mv '$CFG_HUB_PATH' \"\$old\"
+            mv '$tmp' '$CFG_HUB_PATH'
+            rm -rf \"\$old\"
+        " || die $EX_HUB_PERMS push \
+            "transfer succeeded but moving it into place on $CFG_HUB_HOST failed - the previous hub content is at $CFG_HUB_PATH.sts-old-$$"
+    fi
+    log INFO push "local -> hub complete"
+}
+
+# The move is the only moment the target is not intact, and it is two renames.
+swap_into_place() {
+    local tmp="$1" target="$2" old
+    old="$target.sts-old-$$"
+    rm -rf "$old"
+    mv "$target" "$old"
+    if ! mv "$tmp" "$target"; then
+        mv "$old" "$target"
+        die $EX_RSYNC swap \
+            "could not move the staged copy into place - the original was restored"
+    fi
+    rm -rf "$old"
+    log DEBUG swap "$tmp -> $target"
+}
+
+# --------------------------------------------------------------------------
+# Per-machine state. A missing or corrupt state file means first run. It
+# never means "nothing changed".
+# --------------------------------------------------------------------------
+
+state_read() {
+    [ -f "$STATE_FILE" ] || { printf 'FIRSTRUN'; return 0; }
+    python3 - "$STATE_FILE" <<'PY' 2>/dev/null || printf 'FIRSTRUN'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    if d.get("version") != 1:
+        raise ValueError("version")
+    print("%s\t%s\t%s\t%s" % (d["direction"], d["epoch"],
+                              d["local_fingerprint"], d["hub_fingerprint"]))
+except Exception:
+    raise SystemExit(1)
+PY
+}
+
+state_write() {
+    local direction="$1" lfp="$2" hfp="$3"
+    mkdir -p "$STATE_DIR"
+    python3 - "$STATE_FILE" "$direction" "$lfp" "$hfp" "$(iso_now)" <<'PY'
+import json, sys, time, os
+path, direction, lfp, hfp, iso = sys.argv[1:6]
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump({"version": 1, "direction": direction, "timestamp": iso,
+               "epoch": int(time.time()), "local_fingerprint": lfp,
+               "hub_fingerprint": hfp}, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+    log INFO state "recorded $direction local=$(printf '%s' "$lfp" | cut -c1-12) hub=$(printf '%s' "$hfp" | cut -c1-12)"
+}
+
+# --------------------------------------------------------------------------
+# Conflict detection. Nothing is ever merged and nothing is ever auto-picked.
+# When both sides moved, both sides are described and the run stops.
+# --------------------------------------------------------------------------
+
+check_game_not_running() {
+    local pids
+    pids="$(pgrep -x "$CFG_GAME_PROCESS_NAME" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+        die $EX_GAME_RUNNING game \
+            "$CFG_GAME_PROCESS_NAME is running (pid $(printf '%s' "$pids" | tr '\n' ' ')) - it holds core.db open read-write, so any copy taken now would be torn. Quit the game first."
+    fi
+}
+
+# Clock skew makes mtimes untrustworthy. Fingerprints do not care, so this
+# warns rather than fails, and says which comparison is being relied on.
+check_clock_skew() {
+    [ "$IS_HUB" -eq 1 ] && return 0
+    local hub_epoch now diff
+    hub_epoch="$(hub_clock_epoch 2>/dev/null || echo 0)"
+    case "$hub_epoch" in ''|*[!0-9]*) return 0 ;; esac
+    now="$(date -u +%s)"
+    diff=$((hub_epoch - now))
+    [ "$diff" -lt 0 ] && diff=$((-diff))
+    if [ "$diff" -gt "$CFG_CLOCK_SKEW_TOLERANCE" ]; then
+        log WARN clock "hub clock differs by ${diff}s (tolerance ${CFG_CLOCK_SKEW_TOLERANCE}s)"
+        warn "the hub's clock is ${diff}s away from this machine's - timestamps below are unreliable, the decision is based on content fingerprints"
+    else
+        log DEBUG clock "hub clock skew ${diff}s, within tolerance"
+    fi
+}
+
+human_time() {
+    local epoch="$1"
+    [ "${epoch:-0}" -gt 0 ] || { printf 'never'; return 0; }
+    date -r "$epoch" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || printf '%s' "$epoch"
+}
+
+# describe_side LABEL MANIFEST NEWEST_EPOCH
+describe_side() {
+    local label="$1" manifest="$2" epoch="$3"
+    local total saves newest_save
+    total="$(printf '%s' "$manifest" | grep -c . || true)"
+    saves="$(printf '%s' "$manifest" | grep -c 'game_[0-9]*\.db$' || true)"
+    printf '  %s\n' "$label"
+    printf '    files:     %s (%s campaign saves)\n' "${total:-0}" "${saves:-0}"
+    printf '    newest:    %s\n' "$(human_time "$epoch")"
+    newest_save="$(printf '%s' "$manifest" | grep 'game_[0-9]*\.db$' | awk '{print $3}' | tr '\n' ' ' || true)"
+    if [ -n "$newest_save" ]; then
+        printf '    campaigns: %s\n' "$newest_save"
+    fi
+    return 0
+}
+
+conflict_report() {
+    local reason="$1" lman="$2" hman="$3" lep="$4" hep="$5"
+    printf 'error: %s\n' "$reason" >&2
+    printf '\n' >&2
+    describe_side "LOCAL  ($(this_host_id)): $CFG_LOCAL_SAVE_PATH" "$lman" "$lep" >&2
+    printf '\n' >&2
+    describe_side "HUB    ($CFG_HUB_HOST): $CFG_HUB_PATH" "$hman" "$hep" >&2
+    printf '\n' >&2
+    printf 'These are not merged and not auto-picked. Decide, then re-run:\n' >&2
+    printf '  %s %s --force=local   keep this machine'"'"'s saves, overwrite the hub\n' "$PROG" "$COMMAND" >&2
+    printf '  %s %s --force=hub     keep the hub'"'"'s saves, overwrite this machine\n' "$PROG" "$COMMAND" >&2
+    printf '\nBoth sides are snapshotted before any overwrite, under %s/\n' "$SNAP_DIRNAME" >&2
+}
+
+# --------------------------------------------------------------------------
+# Commands
+# --------------------------------------------------------------------------
+
+cmd_status() {
+    local lman hman lfp hfp lep hep state
+    lman="$(manifest_local "$CFG_LOCAL_SAVE_PATH")"
+    hman="$(manifest_hub)"
+    lfp="$(fingerprint_of_manifest "$lman")"
+    hfp="$(fingerprint_of_manifest "$hman")"
+    lep="$(newest_mtime_local "$CFG_LOCAL_SAVE_PATH")"
+    hep="$(newest_mtime_hub)"
+    state="$(state_read)"
+
+    say "$PROG status"
+    say ""
+    say "  this machine : $(this_host_id)$([ "$IS_HUB" -eq 1 ] && printf ' (IS the hub)')"
+    say "  tailscale    : Running, hub via ${HUB_ENDPOINT_KIND}${HUB_ENDPOINT:+ ($HUB_ENDPOINT)}"
+    say ""
+    describe_side "LOCAL  $CFG_LOCAL_SAVE_PATH" "$lman" "$lep"
+    say "    fingerprint: $(printf '%s' "$lfp" | cut -c1-16)"
+    say ""
+    describe_side "HUB    $CFG_HUB_HOST:$CFG_HUB_PATH" "$hman" "$hep"
+    say "    fingerprint: $(printf '%s' "$hfp" | cut -c1-16)"
+    say ""
+
+    if [ "$lfp" = "$hfp" ]; then
+        say "  verdict      : in sync"
+    elif [ "$hfp" = "empty" ]; then
+        say "  verdict      : the hub is EMPTY - seed it with 'sts push --force=local'"
+    elif [ "$lfp" = "empty" ]; then
+        say "  verdict      : this machine is EMPTY - 'sts pull' would first-seed it"
+    elif [ "$lep" -gt "$hep" ]; then
+        say "  verdict      : LOCAL is newer by $((lep - hep))s"
+    elif [ "$hep" -gt "$lep" ]; then
+        say "  verdict      : HUB is newer by $((hep - lep))s"
+    else
+        say "  verdict      : differ, but timestamps are equal - trust the fingerprints"
+    fi
+
+    if [ "$state" = "FIRSTRUN" ]; then
+        say "  last sync    : never recorded on this machine (first run)"
+    else
+        say "  last sync    : $(printf '%s' "$state" | cut -f1) at $(human_time "$(printf '%s' "$state" | cut -f2)")"
+    fi
+
+    local lockinfo
+    lockinfo="$(hub_exec "cat '$(hub_lock_path)/owner' 2>/dev/null | head -3 | tr '\n' ' '" 2>/dev/null || true)"
+    if [ -n "$lockinfo" ]; then
+        say "  hub lock     : HELD by $lockinfo"
+    else
+        say "  hub lock     : free"
+    fi
+
+    local gp
+    gp="$(pgrep -x "$CFG_GAME_PROCESS_NAME" 2>/dev/null | tr '\n' ' ' || true)"
+    if [ -n "$gp" ]; then
+        say "  game         : RUNNING (pid $gp) - push and pull will refuse"
+    else
+        say "  game         : not running"
+    fi
+    log INFO status "local=$(printf '%s' "$lfp" | cut -c1-12) hub=$(printf '%s' "$hfp" | cut -c1-12)"
+}
+
+# Shared decision used by both pull and push.
+# Echoes one of: INSYNC HUB_EMPTY FIRST_SEED FIRSTRUN_CONFLICT
+#                LOCAL_ONLY HUB_ONLY BOTH_CHANGED
+decide() {
+    local lfp="$1" hfp="$2" lcount="$3" hcount="$4" state="$5"
+
+    if [ "$lfp" = "$hfp" ]; then printf 'INSYNC'; return 0; fi
+
+    if [ "$state" = "FIRSTRUN" ]; then
+        if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then printf 'HUB_EMPTY';  return 0; fi
+        if [ "$lcount" -eq 0 ] && [ "$hcount" -gt 0 ]; then printf 'FIRST_SEED'; return 0; fi
+        printf 'FIRSTRUN_CONFLICT'; return 0
+    fi
+
+    local s_lfp s_hfp
+    s_lfp="$(printf '%s' "$state" | cut -f3)"
+    s_hfp="$(printf '%s' "$state" | cut -f4)"
+
+    local lchanged=0 hchanged=0
+    [ "$lfp" != "$s_lfp" ] && lchanged=1
+    [ "$hfp" != "$s_hfp" ] && hchanged=1
+
+    if [ "$lchanged" -eq 1 ] && [ "$hchanged" -eq 1 ]; then printf 'BOTH_CHANGED'; return 0; fi
+    if [ "$lchanged" -eq 1 ]; then printf 'LOCAL_ONLY'; return 0; fi
+    if [ "$hchanged" -eq 1 ]; then printf 'HUB_ONLY';   return 0; fi
+    printf 'BOTH_CHANGED'
+}
+
+# --dry-run prints the real rsync plan for BOTH directions and touches nothing.
+cmd_dry_run_plan() {
+    local src dst e
+    e="$(rsync_excludes)"
+    say "dry run - nothing will be written. Real rsync plans, both directions:"
+    say ""
+
+    say "  HUB -> LOCAL  (what 'sts pull' would do)"
+    if [ "$IS_HUB" -eq 1 ]; then
+        src="$CFG_HUB_PATH/"; dst="$CFG_LOCAL_SAVE_PATH/"
+        say "    rsync -a --delete $e $src $dst"
+        rsync -a -n -i --delete $e "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+    else
+        src="$(ssh_target):$CFG_HUB_PATH/"; dst="$CFG_LOCAL_SAVE_PATH/"
+        say "    rsync -a --delete $e -e 'ssh $(ssh_opts)' $src $dst"
+        rsync -a -n -i --delete $e -e "ssh $(ssh_opts)" "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+    fi
+    say ""
+
+    say "  LOCAL -> HUB  (what 'sts push' would do)"
+    if [ "$IS_HUB" -eq 1 ]; then
+        src="$CFG_LOCAL_SAVE_PATH/"; dst="$CFG_HUB_PATH/"
+        say "    rsync -a --delete $e $src $dst"
+        rsync -a -n -i --delete $e "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+    else
+        src="$CFG_LOCAL_SAVE_PATH/"; dst="$(ssh_target):$CFG_HUB_PATH/"
+        say "    rsync -a --delete $e -e 'ssh $(ssh_opts)' $src $dst"
+        rsync -a -n -i --delete $e -e "ssh $(ssh_opts)" "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+    fi
+    say ""
+    say "  In a real run each of these goes into a temp directory on the"
+    say "  receiving side first, and the target is snapshotted before the swap."
+    log INFO dry-run "printed both plans"
+}
+
+cmd_pull() {
+    check_game_not_running
+    check_clock_skew
+
+    local lman hman lfp hfp lcount hcount lep hep state verdict
+    lman="$(manifest_local "$CFG_LOCAL_SAVE_PATH")"; hman="$(manifest_hub)"
+    lfp="$(fingerprint_of_manifest "$lman")"; hfp="$(fingerprint_of_manifest "$hman")"
+    lcount="$(printf '%s' "$lman" | grep -c . || true)"; lcount="${lcount:-0}"
+    hcount="$(printf '%s' "$hman" | grep -c . || true)"; hcount="${hcount:-0}"
+    lep="$(newest_mtime_local "$CFG_LOCAL_SAVE_PATH")"; hep="$(newest_mtime_hub)"
+    state="$(state_read)"
+    verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
+    log INFO pull "verdict=$verdict local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
+
+    if [ "$OPT_FORCE" = "local" ]; then
+        die $EX_USAGE pull "--force=local makes no sense for 'pull' - it would discard the hub. Use 'sts push --force=local'."
+    fi
+
+    case "$verdict" in
+        INSYNC)
+            say "already in sync - nothing to pull"
+            state_write pull "$lfp" "$hfp"
+            return 0 ;;
+        HUB_EMPTY)
+            die $EX_HUB_EMPTY pull \
+                "the hub is empty and this machine has $lcount files - there is nothing to pull. If these saves should become the source of truth, run: $PROG push" ;;
+        FIRST_SEED)
+            say "first seed: this machine has no saves, the hub has $hcount files"
+            log WARN pull "FIRST SEED - local was empty, seeding from hub (not an ordinary pull)"
+            ;;
+        FIRSTRUN_CONFLICT)
+            if [ "$OPT_FORCE" != "hub" ]; then
+                conflict_report "first run on this machine, and BOTH sides already have saves. This is a conflict, not a fresh start." \
+                    "$lman" "$hman" "$lep" "$hep"
+                log ERROR pull "first-run conflict"
+                exit $EX_CONFLICT_FIRSTRUN
+            fi
+            warn "--force=hub: overwriting this machine's $lcount files with the hub's $hcount" ;;
+        BOTH_CHANGED)
+            if [ "$OPT_FORCE" != "hub" ]; then
+                conflict_report "both sides changed since the last sync on this machine." \
+                    "$lman" "$hman" "$lep" "$hep"
+                log ERROR pull "both sides changed"
+                exit $EX_CONFLICT
+            fi
+            warn "--force=hub: discarding local changes" ;;
+        LOCAL_ONLY)
+            if [ "$OPT_FORCE" != "hub" ]; then
+                conflict_report "only THIS machine changed since the last sync - pulling would discard those changes." \
+                    "$lman" "$hman" "$lep" "$hep"
+                log ERROR pull "local-only changes, refusing to pull"
+                exit $EX_CONFLICT
+            fi
+            warn "--force=hub: discarding local changes" ;;
+        HUB_ONLY) ;;
+    esac
+
+    acquire_hub_lock
+    say "pulling $CFG_HUB_HOST:$CFG_HUB_PATH -> $CFG_LOCAL_SAVE_PATH"
+    pull_hub_to_local "$CFG_LOCAL_SAVE_PATH"
+    release_hub_lock
+
+    lman="$(manifest_local "$CFG_LOCAL_SAVE_PATH")"
+    lfp="$(fingerprint_of_manifest "$lman")"
+    state_write pull "$lfp" "$hfp"
+    say "pull complete - $(printf '%s' "$lman" | grep -c . || echo 0) files"
+}
+
+cmd_push() {
+    check_game_not_running
+    check_clock_skew
+
+    local lman hman lfp hfp lcount hcount lep hep state verdict
+    lman="$(manifest_local "$CFG_LOCAL_SAVE_PATH")"; hman="$(manifest_hub)"
+    lfp="$(fingerprint_of_manifest "$lman")"; hfp="$(fingerprint_of_manifest "$hman")"
+    lcount="$(printf '%s' "$lman" | grep -c . || true)"; lcount="${lcount:-0}"
+    hcount="$(printf '%s' "$hman" | grep -c . || true)"; hcount="${hcount:-0}"
+    lep="$(newest_mtime_local "$CFG_LOCAL_SAVE_PATH")"; hep="$(newest_mtime_hub)"
+    state="$(state_read)"
+    verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
+    log INFO push "verdict=$verdict local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
+
+    if [ "$OPT_FORCE" = "hub" ]; then
+        die $EX_USAGE push "--force=hub makes no sense for 'push' - it would discard this machine. Use 'sts pull --force=hub'."
+    fi
+
+    case "$verdict" in
+        INSYNC)
+            say "already in sync - nothing to push"
+            state_write push "$lfp" "$hfp"
+            return 0 ;;
+        HUB_EMPTY)
+            # Never seed the hub silently.
+            if [ "$OPT_FORCE" != "local" ]; then
+                printf 'The hub at %s:%s is empty.\n' "$CFG_HUB_HOST" "$CFG_HUB_PATH" >&2
+                printf 'This machine has %s files, newest %s.\n' "$lcount" "$(human_time "$lep")" >&2
+                printf '\nSeeding the hub is a one-way decision, so it is not done silently.\n' >&2
+                printf 'If these saves are the source of truth, run:\n' >&2
+                printf '  %s push --force=local\n' "$PROG" >&2
+                log ERROR push "hub empty, refusing to seed without --force=local"
+                exit $EX_HUB_EMPTY
+            fi
+            say "seeding the empty hub with $lcount files from this machine" ;;
+        FIRST_SEED)
+            die $EX_CONFLICT_FIRSTRUN push \
+                "this machine has no saves but the hub has $hcount files - pushing would wipe the hub. Run '$PROG pull' instead." ;;
+        FIRSTRUN_CONFLICT)
+            if [ "$OPT_FORCE" != "local" ]; then
+                conflict_report "first run on this machine, and BOTH sides already have saves. This is a conflict, not a fresh start." \
+                    "$lman" "$hman" "$lep" "$hep"
+                log ERROR push "first-run conflict"
+                exit $EX_CONFLICT_FIRSTRUN
+            fi
+            warn "--force=local: overwriting the hub's $hcount files with this machine's $lcount" ;;
+        BOTH_CHANGED)
+            if [ "$OPT_FORCE" != "local" ]; then
+                conflict_report "both sides changed since the last sync on this machine." \
+                    "$lman" "$hman" "$lep" "$hep"
+                log ERROR push "both sides changed"
+                exit $EX_CONFLICT
+            fi
+            warn "--force=local: discarding hub changes" ;;
+        HUB_ONLY)
+            if [ "$OPT_FORCE" != "local" ]; then
+                conflict_report "only the HUB changed since the last sync - pushing would discard those changes." \
+                    "$lman" "$hman" "$lep" "$hep"
+                log ERROR push "hub-only changes, refusing to push"
+                exit $EX_CONFLICT
+            fi
+            warn "--force=local: discarding hub changes" ;;
+        LOCAL_ONLY) ;;
+    esac
+
+    acquire_hub_lock
+    # The hub directory may legitimately not exist yet on a first seed.
+    hub_exec "mkdir -p '$CFG_HUB_PATH'" >/dev/null 2>&1 || true
+    say "pushing $CFG_LOCAL_SAVE_PATH -> $CFG_HUB_HOST:$CFG_HUB_PATH"
+    push_local_to_hub "$CFG_LOCAL_SAVE_PATH"
+    release_hub_lock
+
+    hman="$(manifest_hub)"
+    hfp="$(fingerprint_of_manifest "$hman")"
+    state_write push "$lfp" "$hfp"
+    say "push complete - $(printf '%s' "$hman" | grep -c . || echo 0) files on the hub"
+}
+
+# --------------------------------------------------------------------------
+# sts play - pull, launch, wait, push. The hub lock is NOT held while you
+# play; pull and push each take and release it around their own transfer.
+# --------------------------------------------------------------------------
+
+cmd_play() {
+    check_game_not_running
+
+    if [ "$HUB_ENDPOINT_KIND" = "offline" ]; then
+        warn "======================================================================"
+        warn "THE HUB IS OFFLINE AND --offline-ok WAS GIVEN."
+        warn "Nothing was pulled. You are about to play on this machine's local"
+        warn "save, which may be older than the hub's. Nothing will be pushed"
+        warn "afterwards either. Sync by hand once the hub is reachable."
+        warn "======================================================================"
+        log WARN play "playing offline, no pull, no push"
+    else
+        say "pulling before launch..."
+        cmd_pull
+    fi
+
+    local start_epoch
+    start_epoch="$(date -u +%s)"
+
+    say "launching Star Traders: Frontiers (appid $CFG_STEAM_APPID)..."
+    log INFO play "open steam://rungameid/$CFG_STEAM_APPID"
+    if ! open "steam://rungameid/$CFG_STEAM_APPID" 2>/dev/null; then
+        die $EX_GAME_NO_START play \
+            "'open steam://rungameid/$CFG_STEAM_APPID' failed - is Steam installed?"
+    fi
+
+    # Wait for the process to appear. If it never does, the game did not
+    # start, and pushing an unchanged save would be a lie.
+    local waited=0 pid=""
+    while [ "$waited" -lt "$CFG_GAME_START_TIMEOUT" ]; do
+        pid="$(pgrep -x "$CFG_GAME_PROCESS_NAME" 2>/dev/null | head -1 || true)"
+        [ -n "$pid" ] && break
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    if [ -z "$pid" ]; then
+        log ERROR play "process '$CFG_GAME_PROCESS_NAME' never appeared within ${CFG_GAME_START_TIMEOUT}s"
+        printf 'error: the game never started.\n' >&2
+        printf 'Waited %ss for a process named %s and saw nothing.\n' \
+            "$CFG_GAME_START_TIMEOUT" "$CFG_GAME_PROCESS_NAME" >&2
+        printf 'Nothing was pushed - an unchanged save is not worth recording.\n' >&2
+        printf 'Check that STEAM_APPID=%s is right and Steam is installed:\n' "$CFG_STEAM_APPID" >&2
+        printf '  open steam://rungameid/%s\n' "$CFG_STEAM_APPID" >&2
+        printf '  pgrep -x %s\n' "$CFG_GAME_PROCESS_NAME" >&2
+        exit $EX_GAME_NO_START
+    fi
+
+    say "game running (pid $pid) - waiting for it to exit. Ctrl-C here does not stop the game."
+    log INFO play "game started, pid $pid"
+
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 5
+    done
+
+    # Distinguish a clean quit from a crash by looking for a crash report
+    # written after we launched. Either way the save still gets pushed.
+    local crash
+    crash="$(find "$HOME/Library/Logs/DiagnosticReports" -name "$CFG_GAME_PROCESS_NAME*" \
+             -newermt "@$start_epoch" 2>/dev/null | head -1 || true)"
+    if [ -n "$crash" ]; then
+        log WARN play "game exited via CRASH - report at $crash"
+        warn "the game crashed (report: $crash) - pushing the save anyway"
+    else
+        log INFO play "game exited cleanly (pid $pid gone, no crash report)"
+        say "game exited."
+    fi
+
+    if [ "$HUB_ENDPOINT_KIND" = "offline" ]; then
+        warn "hub still offline - NOT pushing. Run '$PROG push' when it is back."
+        return 0
+    fi
+
+    say "pushing after play..."
+    cmd_push
+}
+
+# --------------------------------------------------------------------------
+# sts backup - hub host only, hub -> external disk, timestamped.
+# This is purely local to the hub, so it deliberately does not require the
+# tailnet: hub identity is decided by hostname here, and that is logged.
+# --------------------------------------------------------------------------
+
+is_hub_by_hostname() {
+    local want h1 h2
+    want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
+    h1="$(hostname -s | tr '[:upper:]' '[:lower:]')"
+    h2="$(scutil --get LocalHostName 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+    [ "$want" = "$h1" ] || [ "$want" = "$h2" ]
+}
+
+# An unmounted volume leaves an empty directory at the mount point on the
+# internal disk. Comparing device ids catches that; checking -d does not.
+check_backup_volume() {
+    local vol="$CFG_BACKUP_VOLUME" dev_vol dev_parent
+    [ -d "$vol" ] || die $EX_BACKUP_NOT_MOUNTED backup \
+        "backup volume $vol is not present at all - is the disk plugged in?"
+
+    dev_vol="$(stat -f%d "$vol" 2>/dev/null || echo x)"
+    dev_parent="$(stat -f%d "$(dirname "$vol")" 2>/dev/null || echo y)"
+    if [ "$dev_vol" = "$dev_parent" ]; then
+        die $EX_BACKUP_NOT_MOUNTED backup \
+            "$vol exists but is NOT a mount point - it is a plain directory on the internal disk (device $dev_vol, same as $(dirname "$vol")). Refusing to write backups there. Mount the disk and re-run."
+    fi
+    [ -w "$vol" ] || die $EX_BACKUP_NOT_MOUNTED backup \
+        "$vol is mounted but not writable - is it mounted read-only?"
+    log DEBUG backup "volume $vol mounted, device $dev_vol"
+}
+
+cmd_backup() {
+    if ! is_hub_by_hostname; then
+        die $EX_BACKUP_NOT_HUB backup \
+            "'$PROG backup' only runs on the hub host ($CFG_HUB_HOST). This machine is $(hostname -s)."
+    fi
+    log INFO backup "hub identity confirmed by hostname: $(hostname -s)"
+
+    check_backup_volume
+
+    [ -d "$CFG_HUB_PATH" ] || die $EX_HUB_PATH_MISSING backup \
+        "hub path $CFG_HUB_PATH does not exist on this machine"
+
+    local stamp dest prev
+    stamp="$(iso_now)"
+    dest="$CFG_BACKUP_DEST/$stamp"
+    prev="$(ls -1 "$CFG_BACKUP_DEST" 2>/dev/null | LC_ALL=C sort | tail -1 || true)"
+
+    mkdir -p "$dest" || die $EX_BACKUP_NOT_MOUNTED backup \
+        "could not create $dest"
+
+    if [ "$OPT_DRY_RUN" -eq 1 ]; then
+        say "dry run - would back up $CFG_HUB_PATH -> $dest"
+        rsync -a -n -i "$CFG_HUB_PATH/" "$dest/" 2>&1 | sed 's/^/  /' || true
+        rmdir "$dest" 2>/dev/null || true
+        return 0
+    fi
+
+    say "backing up $CFG_HUB_PATH -> $dest"
+    if [ -n "$prev" ] && [ -d "$CFG_BACKUP_DEST/$prev" ]; then
+        run_rsync backup -a --link-dest="$CFG_BACKUP_DEST/$prev" \
+            "$CFG_HUB_PATH/" "$dest/" >/dev/null
+        log INFO backup "hardlinked unchanged files against $prev"
+    else
+        run_rsync backup -a "$CFG_HUB_PATH/" "$dest/" >/dev/null
+    fi
+
+    # Prune oldest timestamped backups.
+    if [ "$CFG_BACKUP_KEEP" -gt 0 ]; then
+        local n old
+        n="$(ls -1 "$CFG_BACKUP_DEST" 2>/dev/null | grep -c . || true)"
+        if [ "${n:-0}" -gt "$CFG_BACKUP_KEEP" ]; then
+            ls -1 "$CFG_BACKUP_DEST" | LC_ALL=C sort | head -n $((n - CFG_BACKUP_KEEP)) \
+              | while IFS= read -r old; do
+                    [ -n "$old" ] && rm -rf "${CFG_BACKUP_DEST:?}/$old" && \
+                        log INFO backup "pruned old backup $old"
+                done
+        fi
+    fi
+
+    say "backup complete: $dest"
+    log INFO backup "complete $dest"
+}
+
+# --------------------------------------------------------------------------
+# Usage
+# --------------------------------------------------------------------------
+
+usage() {
+cat <<USAGE_EOF
+$PROG $STS_VERSION - sync Star Traders: Frontiers saves between Macs
+
+USAGE
+  $PROG <command> [flags]
+  sts <command> [flags]
+
+COMMANDS
+  status    read-only. Local and hub file counts, newest timestamps,
+            fingerprints, which side is newer, hub lock state, tailscale
+            state and whether the game is running. Changes nothing.
+  pull      hub -> this machine. Run before playing.
+  push      this machine -> hub. Run after playing.
+  play      pull, launch the game, wait for it to exit, then push.
+  backup    hub -> external disk, timestamped. Hub host only.
+
+FLAGS
+  --dry-run        print the real rsync plan for BOTH directions and exit.
+                   Touches nothing on either side.
+  --verbose        mirror the log to stderr as well as the log file.
+  --force=local    resolve a conflict by keeping THIS machine's saves.
+  --force=hub      resolve a conflict by keeping the HUB's saves.
+  --offline-ok     if the hub is offline, allow 'play' to run on the local
+                   save. Warns loudly. Nothing is synced in either direction.
+  -h, --help       this text.
+  --version        print version and exit.
+
+FILES
+  config   ${CONFIG_FILE}
+  state    ${STATE_FILE}
+  log      ${LOG_FILE}  (rotates at LOG_MAX_BYTES, keeps LOG_KEEP)
+
+EXIT CODES
+  0   success
+  2   usage error
+
+  Config and environment
+  10  config file missing or unreadable
+  11  config malformed: unparseable line, or an unknown key
+  12  required config keys missing or empty (all listed at once)
+  13  LOCAL_SAVE_PATH missing, not a directory, or unreadable
+  14  hub path does not exist on the hub host
+  15  running as root (refused)
+  16  bash older than 3.2 (refused)
+  17  rsync or ssh not on PATH
+
+  Tailscale
+  20  tailscale binary not found in /Applications or on PATH
+  21  tailscaled not running
+  22  node logged out or Stopped, still down after one 'tailscale up'
+  23  tailscale needs an interactive login or reauth (URL printed)
+  24  hub host not present in the tailnet at all
+  25  hub host present but offline (use --offline-ok to play anyway)
+  26  hub online but 'tailscale ping' failed or timed out
+
+  SSH and transport
+  30  non-interactive ssh failed (reproduction command printed)
+  31  ssh host key unknown or changed (never auto-accepted)
+  32  hub user cannot read or write the hub directory
+  33  rsync exited non-zero (its own code and stderr are printed)
+  34  out of disk space on one side
+  63  snapshot failed, so no overwrite was attempted
+
+  Game and concurrency
+  40  the game is running on this machine
+  41  the game never started (wrong appid, or Steam missing)
+  50  hub lock held by another machine
+  51  hub lock could not be created
+  52  another $PROG is already running on this machine
+
+  Data safety
+  60  both sides changed since the last sync - resolve with --force=
+  61  first run on this machine and both sides have saves
+  62  hub is empty; seeding it needs an explicit 'push --force=local'
+
+  Backup
+  70  backup volume not mounted (or not actually a mount point)
+  71  'backup' run on a machine that is not the hub host
+
+Full troubleshooting table: README.md
+USAGE_EOF
+}
+
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            status|pull|push|play|backup)
+                [ -n "$COMMAND" ] && { printf 'error: more than one command given: %s and %s\n' "$COMMAND" "$1" >&2; exit $EX_USAGE; }
+                COMMAND="$1" ;;
+            --dry-run)    OPT_DRY_RUN=1 ;;
+            --verbose|-v) OPT_VERBOSE=1 ;;
+            --offline-ok) OPT_OFFLINE_OK=1 ;;
+            --force=local) OPT_FORCE="local" ;;
+            --force=hub)   OPT_FORCE="hub" ;;
+            --force=*)
+                printf 'error: --force takes exactly "local" or "hub", got "%s"\n' "${1#--force=}" >&2
+                exit $EX_USAGE ;;
+            --force)
+                printf 'error: --force needs a value: --force=local or --force=hub\n' >&2
+                exit $EX_USAGE ;;
+            -h|--help)    usage; exit $EX_OK ;;
+            --version)    printf '%s %s\n' "$PROG" "$STS_VERSION"; exit $EX_OK ;;
+            *)
+                printf 'error: unknown argument "%s"\n' "$1" >&2
+                printf "run '%s --help'\n" "$PROG" >&2
+                exit $EX_USAGE ;;
+        esac
+        shift
+    done
+    [ -n "$COMMAND" ] || { usage >&2; exit $EX_USAGE; }
+}
+
+main() {
+    parse_args "$@"
+
+    # Cheapest, most fundamental refusals first - these need no config.
+    check_not_root
+    check_bash_version
+    check_tools
+
+    load_config
+    validate_config
+
+    log INFO start "command=$COMMAND dry_run=$OPT_DRY_RUN force='${OPT_FORCE}' offline_ok=$OPT_OFFLINE_OK version=$STS_VERSION"
+
+    check_local_save_path
+    acquire_local_lock
+
+    # backup is local to the hub and deliberately does not need the tailnet.
+    if [ "$COMMAND" = "backup" ]; then
+        cmd_backup
+        exit $EX_OK
+    fi
+
+    find_tailscale
+    detect_self_is_hub
+    if [ "$IS_HUB" -eq 0 ]; then
+        resolve_hub_endpoint
+        check_hub_reachable
+    fi
+
+    if [ "$OPT_DRY_RUN" -eq 1 ]; then
+        cmd_dry_run_plan
+        exit $EX_OK
+    fi
+
+    # The hub directory must exist for everything except a first push, which
+    # is allowed to create it after an explicit --force=local.
+    if [ "$COMMAND" != "push" ]; then
+        check_hub_path
+    fi
+
+    case "$COMMAND" in
+        status) cmd_status ;;
+        pull)   cmd_pull ;;
+        push)   cmd_push ;;
+        play)   cmd_play ;;
+    esac
+
+    exit $EX_OK
+}
+
+main "$@"
