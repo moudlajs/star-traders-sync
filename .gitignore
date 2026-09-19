@@ -1,0 +1,11 @@
+# Never commit a real config - it carries hostnames, users and paths.
+config
+*.local
+
+# macOS
+.DS_Store
+._*
+
+# Local scratch
+*.log
+/tmp/

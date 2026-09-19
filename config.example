@@ -1,0 +1,163 @@
+# star-traders-sync configuration
+#
+# Install to:  ~/.config/star-traders-sync/config
+#
+# Format: KEY=value, one per line. Parsed strictly - the file is NOT sourced
+# as shell, so no command substitution, no variable expansion, no quoting
+# games. A line that is not a blank line, a # comment, or a KEY=value pair
+# with a KEY from the list below is a hard error (exit 10).
+#
+# Leading "~/" in any *_PATH key is expanded to $HOME. Nothing else is.
+#
+# This file is identical in shape on both machines. Only the values differ.
+
+
+# ---------------------------------------------------------------------------
+# Hub - the single source of truth
+# ---------------------------------------------------------------------------
+
+# Tailscale hostname of the machine that hosts the hub directory.
+# Must match the node name in `tailscale status`, NOT the local .local name.
+# Discovered on this tailnet: nebulaplex01 (Mac mini M4), workmac (MacBook).
+#
+# When HUB_HOST equals this machine's own tailscale node name, every hub
+# operation uses a local path copy instead of ssh. Same code path otherwise.
+HUB_HOST=nebulaplex01
+
+# SSH user on the hub host. Ignored when this machine IS the hub.
+HUB_USER=dontlookatme
+
+# Absolute path to the hub directory ON THE HUB HOST.
+# This is NOT a game save directory, even on the hub machine itself.
+# It is created by `sts push` on first seed, never silently by anything else.
+HUB_PATH=/Users/dontlookatme/star-traders-sync-hub
+
+
+# ---------------------------------------------------------------------------
+# Local game save directory
+# ---------------------------------------------------------------------------
+
+# Where Star Traders: Frontiers keeps its saves on THIS machine.
+#
+# Verified 2026-09-19 on nebulaplex01 by diffing the filesystem across a
+# first launch, and by lsof against the running process. It is directly
+# under ~/Library - NOT under ~/Library/Application Support.
+#
+#   core.db              the save database - game holds it open rw while running
+#   data.db              static game content
+#   template_[1-4].json  character creation templates
+#   steam_autocloud.vdf  inert marker; Steam autocloud is disabled for this
+#                        title on macOS (cloud_log.txt: "AutoCloud is
+#                        disabled", all 14 rules skipped as Windows-only)
+#
+# Both .db files are encrypted blobs with no recognisable header, so they can
+# never be inspected, diffed or merged - only moved whole. That is why a
+# two-sided change is always a conflict you resolve by hand.
+#
+# Re-verify on any new machine rather than trusting this default:
+#   ls -la ~/Library/StarTradersFrontiers/
+LOCAL_SAVE_PATH=~/Library/StarTradersFrontiers
+
+# The mods build (StarTradersFrontiers_Mods.app) uses a separate directory,
+# ~/Library/StarTradersFrontiers_Mods. Leave this empty unless you play it.
+LOCAL_SAVE_PATH_MODS=
+
+
+# ---------------------------------------------------------------------------
+# Game launch and process detection
+# ---------------------------------------------------------------------------
+
+# Steam application id. Confirmed from appmanifest_335620.acf:
+#   "name"  "Star Traders: Frontiers"
+# `sts play` runs: open steam://rungameid/335620
+STEAM_APPID=335620
+
+# Process name as it appears to `pgrep -x`. Confirmed: the running binary is
+# Contents/MacOS/StarTradersFrontiers, so -x matches exactly this string.
+# `sts push`/`pull` refuse while this process exists, because core.db is held
+# open read-write and any copy taken mid-play is torn.
+GAME_PROCESS_NAME=StarTradersFrontiers
+
+# How long `sts play` waits for the process to appear after `open` returns,
+# in seconds. If it never appears, sts reports that the game never started
+# and does NOT push an unchanged save.
+GAME_START_TIMEOUT=90
+
+
+# ---------------------------------------------------------------------------
+# Transport
+# ---------------------------------------------------------------------------
+
+# SSH port on the hub host.
+SSH_PORT=22
+
+# Extra ssh options, space separated. BatchMode=yes, ConnectTimeout and
+# StrictHostKeyChecking are always applied by sts and cannot be overridden
+# here - an unknown or changed host key must fail, never auto-accept.
+SSH_EXTRA_OPTS=
+
+# Seconds before a non-interactive ssh attempt is declared dead.
+SSH_CONNECT_TIMEOUT=10
+
+# MagicDNS is preferred, tailnet IP from `tailscale status --json` is the
+# fallback. Set to 0 to skip the DNS attempt entirely and always use the IP.
+#
+# On nebulaplex01 the Homebrew tailscaled does not install a system resolver,
+# so neither `workmac` nor `workmac.tailea7d2c.ts.net` resolves and the IP
+# fallback is the normal path, not an exception. sts logs which one it used.
+PREFER_MAGICDNS=1
+
+
+# ---------------------------------------------------------------------------
+# Safety - snapshots, locks, clocks
+# ---------------------------------------------------------------------------
+
+# Before ANY overwrite, the target is snapshotted to
+#   <target>/../star-traders-sync-snapshots/<ISO timestamp>/
+# and the oldest are pruned to this many. rsync is only ever allowed to use
+# --delete once that snapshot exists on the receiving side.
+SNAPSHOT_KEEP=10
+
+# A hub lock left behind by a crashed run on THIS host is cleared only when
+# it is older than this, and clearing it is logged at WARN. A lock held by
+# any other host is never cleared automatically, at any age.
+LOCK_TTL_SECONDS=3600
+
+# Remote clock more than this many seconds away from ours makes mtime
+# comparison untrustworthy, so sts warns and leans on content fingerprints
+# (shasum of every file) instead of timestamps.
+CLOCK_SKEW_TOLERANCE=300
+
+
+# ---------------------------------------------------------------------------
+# Backup - hub host only
+# ---------------------------------------------------------------------------
+
+# `sts backup` refuses to run on any machine where HUB_HOST is not us.
+
+# The mount point that must be present. sts stats this and compares its
+# device id to that of its parent, so an unmounted volume is detected
+# instead of quietly writing into a directory on the internal disk.
+BACKUP_VOLUME=/Volumes/T9
+
+# Where timestamped backups land. Must live under BACKUP_VOLUME.
+# Note: /Volumes/T9 also holds the Steam library, including this game's
+# 724 MB install - if T9 is missing, the game is gone too, not just backups.
+BACKUP_DEST=/Volumes/T9/Backups/star-traders-sync
+
+# Timestamped backup directories to keep. 0 disables pruning.
+BACKUP_KEEP=30
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+# ~/Library/Logs/star-traders-sync/star-traders-sync.log
+# Rotated when it exceeds LOG_MAX_BYTES, keeping LOG_KEEP older files.
+LOG_MAX_BYTES=5242880
+LOG_KEEP=3
+
+# DEBUG, INFO, WARN, ERROR. Controls the log file only; --verbose mirrors
+# whatever reaches the log to stdout as well.
+LOG_LEVEL=INFO
