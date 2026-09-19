@@ -109,6 +109,31 @@ PREFER_MAGICDNS=1
 
 
 # ---------------------------------------------------------------------------
+# What gets synced
+# ---------------------------------------------------------------------------
+
+# Space separated file names excluded from every transfer, in both
+# directions. These are matched by name, not path.
+#
+# data.db is 2.4 MB of static game content shipped by Steam and versioned
+# with the game binary - roughly 75% of the directory and not a save at all.
+# If the two machines ever sit on different game versions, syncing it would
+# push one version's content database onto the other's binary. Excluded on
+# purpose, visibly, rather than silently handled in code.
+#
+# steam_autocloud.vdf is an inert marker Steam drops next to the saves. It
+# carries your Steam account id and has no business moving between machines.
+# Steam autocloud is disabled for this title on macOS anyway - its cloud
+# rules are Windows-only, see cloud_log.txt.
+#
+# Everything else syncs: core.db, game_*.db, map_*.db, the game's own .1
+# rotation backups, and all template_*.json files.
+#
+# Set this to empty to sync literally everything.
+SYNC_EXCLUDE=data.db steam_autocloud.vdf
+
+
+# ---------------------------------------------------------------------------
 # Safety - snapshots, locks, clocks
 # ---------------------------------------------------------------------------
 
