@@ -77,6 +77,18 @@ some decisions have their reasoning recorded and others do not.
 
 ## When you open a pull request here
 
+Open it as a **draft** and mark it ready when it is finished:
+
+```bash
+gh pr create --draft --title "fix(scope): ..." --body "..."
+gh pr ready <n>
+```
+
+Review fires on open and on every push, so a non-draft PR is reviewed
+half-finished and again after each fix.
+
+
+
 Answer every review comment and resolve the thread - see CONTRIBUTING.md.
 Replying at top level while leaving the inline threads open does not count;
 it looks answered from a distance and unfinished up close.

@@ -1,5 +1,11 @@
 # star-traders-sync
 
+[![CI](https://github.com/moudlajs/star-traders-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/moudlajs/star-traders-sync/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/moudlajs/star-traders-sync?sort=semver)](https://github.com/moudlajs/star-traders-sync/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+![Shell: bash 3.2](https://img.shields.io/badge/bash-3.2-4EAA25)
+
 Sync [Star Traders: Frontiers](https://store.steampowered.com/app/335620/)
 save files between two Macs over Tailscale.
 
