@@ -71,6 +71,20 @@ Both of the conventions above are checked, not just documented:
 `main` is protected: the `check` job must pass, the branch must be up to
 date, and force-pushes and deletions are blocked.
 
+## Issues
+
+**Every change gets an issue first, including small ones.** The issue says
+what is wrong and why it matters; the pull request says what was done about
+it. Splitting them that way means the reasoning survives even when the diff
+is later rewritten, and `git log` stays a record of decisions rather than
+of keystrokes.
+
+Assign it to yourself. With one maintainer an unassigned issue is an
+oversight, so the template and a workflow both do this automatically.
+
+A typo fix does not need this. Anything that changes behaviour, adds a
+guard, or touches CI does.
+
 ## Pull requests
 
 - One logical change per PR.
@@ -81,6 +95,22 @@ date, and force-pushes and deletions are blocked.
   PR title becomes the commit subject, so the title must follow the
   Conventional Commits format above.
 - The PR body should say what was verified, not just what was changed.
+
+## Review comments
+
+Every review comment gets a reply, and the thread gets resolved. Both, not
+one or the other: a reply with the thread left open reads as unfinished,
+and a resolve with no reply reads as dismissal.
+
+Three outcomes, all acceptable, none silent:
+
+- **Fixed** - reply saying what changed, and in which commit. Resolve.
+- **Not fixing** - reply saying why. Resolve.
+- **Fixing later** - open an issue, reply with its number. Resolve.
+
+This holds for review comments from Claude as much as from a person. A
+review that finds a real bug and gets no response is worse than no review,
+because the next one is easier to ignore.
 
 ## Testing
 
