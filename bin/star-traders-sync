@@ -704,6 +704,25 @@ resolve_hub_endpoint() {
 readonly SNAP_DIRNAME="star-traders-sync-snapshots"
 readonly LOCK_DIRNAME=".sts-lock"
 
+# Does CFG_HUB_HOST name this machine?
+#
+# Compared case-insensitively against BOTH the node's HostName and the short
+# MagicDNS label, because they can differ: a rename in the admin console
+# changes one and not the other, and Tailscale suffixes -1 or -2 when two
+# machines collide on a name - entirely possible with two Macs.
+#
+# One copy, used by detect_self_is_hub and by doctor. Doctor previously had
+# its own version comparing HostName only, so on a machine where the two
+# names differed it decided the hub was remote, tried to ssh to itself, and
+# skipped every hub check without saying so.
+hub_host_matches() {
+    local host="$1" dns="$2" want
+    want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    dns="$(printf '%s' "$dns" | tr '[:upper:]' '[:lower:]')"
+    [ "$want" = "$host" ] || [ "$want" = "$dns" ]
+}
+
 detect_self_is_hub() {
     local self_host self_dns
     local json
@@ -713,14 +732,7 @@ detect_self_is_hub() {
     self_dns="$(printf '%s' "$json" | python3 -c \
         'import json,sys; print((json.load(sys.stdin).get("Self",{}).get("DNSName") or "").rstrip(".").split(".")[0])')"
 
-    # Case-insensitive: `tailscale status` shows a lowercase node name while
-    # the Self.HostName field keeps the machine's own capitalisation.
-    local want lo_host lo_dns
-    want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
-    lo_host="$(printf '%s' "$self_host" | tr '[:upper:]' '[:lower:]')"
-    lo_dns="$(printf '%s' "$self_dns" | tr '[:upper:]' '[:lower:]')"
-
-    if [ "$want" = "$lo_host" ] || [ "$want" = "$lo_dns" ]; then
+    if hub_host_matches "$self_host" "$self_dns"; then
         IS_HUB=1
         HUB_ENDPOINT_KIND="local"
         log INFO hub "this machine is the hub ($self_host) - using local paths, no ssh"
@@ -2150,11 +2162,12 @@ doc_tailscale() {
     fi
     doc_ok "running, this machine is '$self'"
 
-    # Is this the hub?
-    local want lo_self
-    want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
-    lo_self="$(printf '%s' "$self" | tr '[:upper:]' '[:lower:]')"
-    if [ "$want" = "$lo_self" ]; then
+    # Is this the hub? Uses the same comparison every other command uses,
+    # so doctor cannot reach a different verdict than push and pull do.
+    local self_dns
+    self_dns="$(printf '%s' "$json" | python3 -c \
+        'import json,sys;print((json.load(sys.stdin).get("Self",{}).get("DNSName") or "").rstrip(".").split(".")[0])' 2>/dev/null || true)"
+    if hub_host_matches "$self" "$self_dns"; then
         DOC_IS_HUB=1
         IS_HUB=1
         doc_ok "this machine IS the hub, so no ssh is involved"
@@ -3158,6 +3171,14 @@ parse_args() {
             printf 'error: --force=hub makes no sense for "push" - it would discard this machine.\n' >&2
             printf 'Use:  %s pull --force=hub\n' "$PROG" >&2
             exit $EX_USAGE ;;
+        *) ;;
+    esac
+    if [ "$OPT_FIX" -eq 1 ] && [ "$COMMAND" != "doctor" ]; then
+        printf 'error: --fix only applies to "doctor".\n' >&2
+        printf 'Use:  %s doctor --fix\n' "$PROG" >&2
+        exit $EX_USAGE
+    fi
+    case "$COMMAND:$OPT_FORCE" in
         play:local|play:hub)
             printf 'error: --force cannot be used with "play", which pulls before and pushes after.\n' >&2
             printf 'Resolve the conflict explicitly first, then play:\n' >&2

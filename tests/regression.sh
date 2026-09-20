@@ -427,6 +427,40 @@ check "  says it could not read the status"                0 sh -c '"$1" doctor 
 check "  summary still printed"                            0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
 PATH="$PATH_SAVED"
 
+# doctor used to compare only HostName when deciding whether this machine is
+# the hub, while every other command also accepts the short MagicDNS label.
+# When the two differ - a rename in the admin console, or Tailscale
+# suffixing -1 to resolve a name collision between two Macs - doctor decided
+# the hub was remote, tried to ssh to itself, and skipped every hub check
+# without saying so. The default stub gives both names the same value, which
+# is why nothing caught it.
+newcase doctor_hubname
+mkdir -p "$CASE/stub"
+cat > "$CASE/stub/tailscale" <<STUB
+#!/bin/bash
+case "\$*" in
+    *"status --json"*)
+        cat <<JSON
+{"BackendState":"Running",
+ "Self":{"HostName":"renamed-in-admin-console",
+         "DNSName":"$HUBNAME.test.ts.net.",
+         "TailscaleIPs":["100.64.0.1"],"Online":true},
+ "Peer":{}}
+JSON
+        ;;
+    *"ping"*) printf 'pong\n' ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale"
+PATH_SAVED="$PATH"; PATH="$CASE/stub:$PATH"
+check "hub recognised by DNS name when HostName differs"   0 sh -c '"$1" doctor 2>&1 | grep -q "IS the hub"' _ "$STS"
+check "  so the hub checks actually run"                   0 sh -c '"$1" doctor 2>&1 | grep -q "hub duties"' _ "$STS"
+check "  and it does not try to ssh to itself"             1 sh -c '"$1" doctor 2>&1 | grep -q "cannot ssh to the hub"' _ "$STS"
+PATH="$PATH_SAVED"
+
+check "--fix is rejected on commands other than doctor"    2 "$STS" status --fix
+
 # --------------------------------------------------------------------------
 section "backup"
 newcase backup
