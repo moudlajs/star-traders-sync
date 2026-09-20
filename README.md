@@ -268,6 +268,54 @@ sts pull --force=hub
 | 44 | `HUB_PATH contains a character that cannot survive...` | 11 | Paths are passed to a remote shell and openrsync has no `--protect-args`. Use only letters, digits and `. _ / @ + -` — no spaces or quotes. |
 | 45 | `HUB_PATH and LOCAL_SAVE_PATH are the same directory` | 11 | The hub must be separate from the game's save directory on every machine, including the hub itself. Nesting either inside the other is also refused. |
 
+## Scheduled backups (hub host only)
+
+```bash
+./launchd/install-backup-job.sh              # install, load, and test-run it
+./launchd/install-backup-job.sh --uninstall
+```
+
+The plist is generated from your config rather than shipped, because it
+needs absolute paths. Re-run the installer after changing `HUB_PATH`,
+`BACKUP_VOLUME` or `BACKUP_DEST`.
+
+It pins `PATH`, `HOME`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME`, because
+launchd does not read your shell profile. The `XDG_*` ones matter more than
+they look: if the job and your terminal disagree about them, they compute
+different lock paths and the mutual exclusion between a scheduled backup and
+an interactive run silently disappears.
+
+The installer runs the job once after loading, so you find out immediately
+whether it works under launchd rather than discovering it failed at 04:00
+three weeks later.
+
+### macOS will block it from writing to an external disk
+
+A launchd job is denied access to removable volumes **silently, with no
+prompt**. The symptom is:
+
+```
+mkdir: /Volumes/YourDisk/...: Operation not permitted
+```
+
+on a volume that is mounted and writable, from a job whose identical
+command works fine when you run it in a terminal.
+
+To allow it: **System Settings > Privacy & Security > Full Disk Access**,
+then add `/bin/bash` (press ⌘⇧G in the file picker to type the path).
+
+Be aware of what that grants: every bash script run on the machine, not
+just this one. If that is too broad, the alternatives are to keep
+`BACKUP_DEST` on the internal disk, or to run `sts backup` interactively
+rather than on a schedule.
+
+A powered-off Mac misses its slot entirely — launchd only catches up from
+sleep, not from being off:
+
+```bash
+sudo pmset repeat wakeorpoweron MTWRFSU 03:55:00
+```
+
 ## Data safety
 
 **Every overwrite snapshots the target first.** Before any transfer, the

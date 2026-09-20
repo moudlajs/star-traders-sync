@@ -109,6 +109,7 @@ CFG_CLOCK_SKEW_TOLERANCE="300"
 CFG_BACKUP_VOLUME=""
 CFG_BACKUP_DEST=""
 CFG_BACKUP_KEEP="30"
+CFG_BACKUP_MOUNT_WAIT="0"
 CFG_LOG_MAX_BYTES="5242880"
 CFG_LOG_KEEP="3"
 CFG_LOG_LEVEL="INFO"
@@ -235,7 +236,7 @@ config_key_known() {
         SSH_PORT|SSH_EXTRA_OPTS|SSH_CONNECT_TIMEOUT|PREFER_MAGICDNS) return 0 ;;
         SYNC_EXCLUDE) return 0 ;;
         SNAPSHOT_KEEP|LOCK_TTL_SECONDS|CLOCK_SKEW_TOLERANCE) return 0 ;;
-        BACKUP_VOLUME|BACKUP_DEST|BACKUP_KEEP) return 0 ;;
+        BACKUP_VOLUME|BACKUP_DEST|BACKUP_KEEP|BACKUP_MOUNT_WAIT) return 0 ;;
         LOG_MAX_BYTES|LOG_KEEP|LOG_LEVEL) return 0 ;;
         *) return 1 ;;
     esac
@@ -332,7 +333,7 @@ validate_config() {
     # Numeric keys must actually be numeric, or later arithmetic lies.
     for k in GAME_START_TIMEOUT SSH_PORT SSH_CONNECT_TIMEOUT PREFER_MAGICDNS \
              SNAPSHOT_KEEP LOCK_TTL_SECONDS CLOCK_SKEW_TOLERANCE BACKUP_KEEP \
-             LOG_MAX_BYTES LOG_KEEP; do
+             BACKUP_MOUNT_WAIT LOG_MAX_BYTES LOG_KEEP; do
         eval "v=\${CFG_$k}"
         case "$v" in
             ''|*[!0-9]*) die $EX_CONFIG_MALFORMED config \
@@ -2054,8 +2055,37 @@ is_hub_by_hostname() {
 
 # An unmounted volume leaves an empty directory at the mount point on the
 # internal disk. Comparing device ids catches that; checking -d does not.
-check_backup_volume() {
+# Returns 0 when the volume is genuinely mounted, 1 when it is not.
+backup_volume_mounted() {
     local vol="$CFG_BACKUP_VOLUME" dev_vol dev_parent
+    [ -d "$vol" ] || return 1
+    dev_vol="$(stat -f%d "$vol" 2>/dev/null || echo x)"
+    dev_parent="$(stat -f%d "$(dirname "$vol")" 2>/dev/null || echo y)"
+    [ "$dev_vol" != "$dev_parent" ] || return 1
+    [ -w "$vol" ] || return 1
+    return 0
+}
+
+check_backup_volume() {
+    local vol="$CFG_BACKUP_VOLUME" dev_vol dev_parent waited
+
+    # A scheduled backup can fire moments after wake, before an external
+    # disk has remounted. Failing instantly would lose the whole day's
+    # backup over a condition that resolves itself in seconds.
+    if [ "$CFG_BACKUP_MOUNT_WAIT" -gt 0 ] && ! backup_volume_mounted; then
+        say "waiting up to ${CFG_BACKUP_MOUNT_WAIT}s for $vol to mount..."
+        log INFO backup "waiting up to ${CFG_BACKUP_MOUNT_WAIT}s for $vol"
+        waited=0
+        while [ "$waited" -lt "$CFG_BACKUP_MOUNT_WAIT" ]; do
+            sleep 5
+            waited=$((waited + 5))
+            if backup_volume_mounted; then
+                log INFO backup "$vol appeared after ${waited}s"
+                break
+            fi
+        done
+    fi
+
     [ -d "$vol" ] || die $EX_BACKUP_NOT_MOUNTED backup \
         "backup volume $vol is not present at all - is the disk plugged in?"
 
@@ -2135,15 +2165,33 @@ cmd_backup() {
     local prev
     prev="$(list_complete_backups | tail -1)"
 
-    local stamp dest suffix
+    local stamp dest suffix mkerr
     stamp="$(iso_now)"
     dest="$CFG_BACKUP_DEST/$stamp"
     suffix=2
-    while ! mkdir "$dest" 2>/dev/null; do
+    mkerr=""
+    while :; do
+        mkerr="$(mkdir "$dest" 2>&1)" && break
+        # A name collision is expected within the same second; anything else
+        # is a real error and repeating it 50 times only hides it.
+        case "$mkerr" in
+            *"File exists"*) ;;
+            *)
+                log ERROR backup "mkdir $dest failed: $mkerr"
+                printf 'error: could not create the backup directory.\n' >&2
+                printf '  %s\n' "$mkerr" >&2
+                printf '\nThe volume is mounted and writable, so this is usually macOS\n' >&2
+                printf 'privacy protection: a launchd job needs explicit permission to\n' >&2
+                printf 'write to a removable volume, and is denied silently without a\n' >&2
+                printf 'prompt. Grant it in System Settings > Privacy & Security >\n' >&2
+                printf 'Full Disk Access, for /bin/bash.\n' >&2
+                exit $EX_BACKUP_NOT_MOUNTED ;;
+        esac
         dest="$CFG_BACKUP_DEST/$stamp-$suffix"
         suffix=$((suffix + 1))
         if [ "$suffix" -gt 50 ]; then
-            die $EX_BACKUP_NOT_MOUNTED backup "could not create a unique backup directory under $CFG_BACKUP_DEST"
+            die $EX_BACKUP_NOT_MOUNTED backup \
+                "could not create a unique backup directory under $CFG_BACKUP_DEST after 50 attempts"
         fi
     done
 
