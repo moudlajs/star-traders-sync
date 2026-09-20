@@ -10,9 +10,14 @@ on:
 
 # A review takes minutes. Without this, pushing three times in quick
 # succession starts three reviews of increasingly stale diffs.
+#
+# Cancel only for new pushes. Workflow-level concurrency is evaluated before
+# the job-level `if`, so a comment run joins the group and cancels a running
+# review before skipping itself - which meant posting a summary comment
+# destroyed the review being summarised.
 concurrency:
   group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

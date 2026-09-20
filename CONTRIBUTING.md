@@ -87,6 +87,11 @@ guard, or touches CI does.
 
 ## Pull requests
 
+- **Open it as a draft.** `gh pr create --draft`, then `gh pr ready <n>`
+  when it is actually ready. Review runs on open and on every subsequent
+  push, so a non-draft PR gets reviewed while it is still half-finished and
+  again after each fix - wasted runs, and findings about code you were
+  about to change anyway. A draft is reviewed once, when you say so.
 - One logical change per PR.
 - Reference the issue in the body: `Closes #12`. That auto-closes it on
   merge and cross-links both ways. There is no separate ticket numbering.
