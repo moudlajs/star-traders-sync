@@ -35,18 +35,18 @@ CONFIG_CREATED=0
 if [ -e "$CONFIG_FILE" ]; then
     printf '  config already present, left untouched\n'
 else
-    # A short working config, not the annotated reference. Every value here
-    # is already correct for both machines: ~/ expands to the local user's
-    # home, and the HUB_* keys describe the Mac mini from either side.
+    # A short starting config, not the 100-line annotated reference.
+    # Only the four HUB_/BACKUP_ values need changing; LOCAL_SAVE_PATH uses
+    # ~/ so it expands per-user, and the game values are already correct.
     # config.example documents every tunable and its default.
     cat > "$CONFIG_FILE" <<CFGEOF
 # star-traders-sync config.
 # Every option, explained, with defaults:
 #   $EXAMPLE
 
-HUB_HOST=nebulaplex01
-HUB_USER=dontlookatme
-HUB_PATH=/Users/dontlookatme/star-traders-sync-hub
+HUB_HOST=my-mac-mini
+HUB_USER=youruser
+HUB_PATH=/Users/youruser/star-traders-sync-hub
 
 LOCAL_SAVE_PATH=~/Library/StarTradersFrontiers
 SYNC_EXCLUDE=data.db steam_autocloud.vdf
@@ -54,26 +54,38 @@ SYNC_EXCLUDE=data.db steam_autocloud.vdf
 STEAM_APPID=335620
 GAME_PROCESS_NAME=StarTradersFrontiers
 
-BACKUP_VOLUME=/Volumes/T9
-BACKUP_DEST=/Volumes/T9/Backups/star-traders-sync
+BACKUP_VOLUME=/Volumes/Backup
+BACKUP_DEST=/Volumes/Backup/Backups/star-traders-sync
 CFGEOF
     CONFIG_CREATED=1
     printf '  config written to %s\n' "$CONFIG_FILE"
 fi
 
+print_next_steps() {
+    if [ "$CONFIG_CREATED" -eq 1 ]; then
+        printf 'Edit %s - five values:\n\n' "$CONFIG_FILE"
+        printf '    HUB_HOST       tailscale node name of the machine hosting the hub\n'
+        printf '                   (see: tailscale status)\n'
+        printf '    HUB_USER       your account name ON THAT machine\n'
+        printf '    HUB_PATH       absolute path for the hub dir on that machine\n'
+        printf '    BACKUP_VOLUME  mount point of your external backup disk\n'
+        printf '    BACKUP_DEST    where backups go, under BACKUP_VOLUME\n\n'
+        printf 'The rest is already correct. Then:\n\n'
+    else
+        printf 'Next:\n\n'
+    fi
+    printf '    sts status        read-only, changes nothing\n'
+    printf '    sts --help        every exit code explained\n'
+}
+
 printf '\n'
 case ":$PATH:" in
     *":$BIN_DIR:"*)
-        if [ "$CONFIG_CREATED" -eq 1 ]; then
-            printf 'Done. Config is filled in already - nothing to edit.\n'
-        else
-            printf 'Done.\n'
-        fi
-        printf 'Next:  sts status\n'
+        print_next_steps
         ;;
     *)
-        printf '%s is not on your PATH yet. Run this:\n\n' "$BIN_DIR"
+        printf '%s is not on your PATH yet. Run this first:\n\n' "$BIN_DIR"
         printf '    echo '\''export PATH="$HOME/bin:$PATH"'\'' >> ~/.zshrc && exec zsh\n\n'
-        printf 'Then:  sts status\n'
+        print_next_steps
         ;;
 esac

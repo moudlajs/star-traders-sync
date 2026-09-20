@@ -18,7 +18,7 @@ Syncthing, no iCloud, no third-party service, no background daemon.
 ## Architecture
 
 ```
-   MacBook  (workmac)                    Mac mini  (nebulaplex01)
+   MacBook  (my-macbook)                    Mac mini  (my-mac-mini)
    ~/Library/StarTradersFrontiers        ~/Library/StarTradersFrontiers
             |                                       |
             |  rsync over ssh                       |  local path copy
@@ -29,7 +29,7 @@ Syncthing, no iCloud, no third-party service, no background daemon.
                             |
                             |  sts backup  (hub host only, daily)
                             v
-              /Volumes/T9/Backups/star-traders-sync/<ISO>/
+              /Volumes/Backup/Backups/star-traders-sync/<ISO>/
 ```
 
 The hub is a plain directory on the Mac mini. It is **not** a game save
@@ -259,7 +259,7 @@ sts pull --force=hub
 | 35 | `the hub is empty` | 62 | Seeding is a one-way decision and is never silent. `sts push --force=local`. |
 | 36 | `first seed: this machine has no saves` | 0 | A pull is allowed, and logged as a first seed rather than an ordinary pull. |
 | 37 | `the hub's clock is Ns away from this machine's` | 0 | Warning. Timestamps shown become unreliable; the decision is made on content fingerprints, which do not care about clocks. |
-| 38 | `<volume> exists but is NOT a mount point` | 70 | The disk is unplugged, and `/Volumes/T9` is a plain empty directory on the internal disk. Detected by comparing device ids, not by `-d`. Nothing is written. |
+| 38 | `<volume> exists but is NOT a mount point` | 70 | The disk is unplugged, and `/Volumes/Backup` is a plain empty directory on the internal disk. Detected by comparing device ids, not by `-d`. Nothing is written. |
 | 39 | `backup only runs on the hub host` | 71 | Run it on the mini. |
 | 40 | `the hub has 0 files and this machine has N` | 62 | Syncing *from* an empty side is refused unconditionally — `--force=hub` will not override it. An empty hub means something went wrong there, not that your saves should be deleted. |
 | 41 | `this machine has 0 files and the hub has N` | 61 | The symmetric case. Refused the same way. |
