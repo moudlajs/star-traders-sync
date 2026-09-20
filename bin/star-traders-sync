@@ -949,7 +949,12 @@ check_hub_path() {
 readonly MANIFEST_SCRIPT='
 dir="$1"; shift
 cd "$dir" 2>/dev/null || exit 0
-set -- "$@"
+# set -f covers both building and using $prune_args: it must word-split but
+# must NOT glob. SYNC_EXCLUDE legally contains * (see validate_config), and
+# without this an entry like *.bak expands against the directory we just
+# moved into, turning "-name *.bak" into "-name a.bak b.bak" - which find rejects,
+# leaving an empty manifest that nothing downstream detects.
+set -f
 prune_args=""
 for n in "$@"; do
     prune_args="$prune_args ! -name $n ! -path ./$n/*"
@@ -964,6 +969,7 @@ LC_ALL=C find . -type f $prune_args 2>/dev/null | LC_ALL=C sort | while IFS= rea
         printf "%s  %s  %s\n" "$h" "$z" "$f"
     fi
 done
+set +f
 '
 
 # Emits the exclude names as separate arguments, always including the
@@ -1032,7 +1038,13 @@ count_files() {
 # Newest mtime under a directory, as a unix epoch. 0 when empty.
 newest_mtime_local() {
     local dir="$1" newest
-    newest="$(/bin/bash -c "cd '$dir' 2>/dev/null || exit 0; LC_ALL=C find . -type f ! -path './$SNAP_DIRNAME/*' ! -path './$LOCK_DIRNAME/*' -exec stat -f%m {} + 2>/dev/null | LC_ALL=C sort -n | tail -1")"
+    # Same argument-passing discipline as the hub side: this was still
+    # interpolating a path into bash -c text.
+    newest="$(/bin/bash -c '
+        cd "$1" 2>/dev/null || exit 0
+        LC_ALL=C find . -type f ! -path "./$2/*" ! -path "./$3/*" \
+            -exec stat -f%m {} + 2>/dev/null | LC_ALL=C sort -n | tail -1
+    ' sts "$dir" "$SNAP_DIRNAME" "$LOCK_DIRNAME")"
     printf '%s' "${newest:-0}"
 }
 
@@ -1536,23 +1548,30 @@ preserve_excluded() {
 }
 
 preserve_excluded_hub() {
-    local staged="$1" name names=""
+    local staged="$1" name
     [ -n "$CFG_SYNC_EXCLUDE" ] || return 0
-    # Plain words, not shell-quoted text: they are passed as arguments now.
+    # Build a positional list the way manifest_hub does, rather than joining
+    # into a string. A string has to be expanded unquoted at the call site,
+    # and by then set -f is off again, so a SYNC_EXCLUDE entry containing a
+    # glob would expand against whatever directory sts was invoked from.
+    set --
     set -f
-    for name in $CFG_SYNC_EXCLUDE; do names="$names $name"; done
+    for name in $CFG_SYNC_EXCLUDE; do set -- "$@" "$name"; done
     set +f
     hub_exec_args '
         hub="$1"; staged="$2"; shift 2
         cd "$hub" 2>/dev/null || exit 0
         for n in "$@"; do
+            set -f
             for f in $n; do
+                set +f
                 [ -e "$f" ] || continue
                 [ -e "$staged/$f" ] && continue
                 cp -Rp "$f" "$staged"/ 2>/dev/null || true
             done
+            set +f
         done
-    ' "$CFG_HUB_PATH" "$staged" $names >/dev/null 2>&1 || true
+    ' "$CFG_HUB_PATH" "$staged" "$@" >/dev/null 2>&1 || true
     return 0
 }
 

@@ -256,6 +256,23 @@ check "  excluded directory survived the swap"           0 test -f "$CASE/local/
 check "  its contents are intact"                        0 grep -q MY-MOD "$CASE/local/mods/m1.txt"
 check "  no false conflict on the next run"              0 "$STS" pull
 
+# A SYNC_EXCLUDE entry containing a glob is legal per validate_config. If
+# the manifest expands it against the save directory instead of handing it
+# to find as a pattern, find rejects the expression and the manifest comes
+# back EMPTY - with no unhashable marker, so nothing downstream notices.
+# Two machines with the same config would then both fingerprint as empty,
+# compare equal, and report "in sync" forever while syncing nothing.
+newcase globexclude
+sed -i '' 's|^SYNC_EXCLUDE=.*|SYNC_EXCLUDE=*.bak|' "$CASE/cfg/star-traders-sync/config"
+printf 'junk\n' > "$CASE/local/notes.bak"
+printf 'junk\n' > "$CASE/local/other.bak"
+GLOB_FILES="$("$STS" status 2>/dev/null | grep -oE 'files: +[0-9]+' | head -1 | grep -oE '[0-9]+')"
+check "glob in SYNC_EXCLUDE: manifest is not empty"      0 test "${GLOB_FILES:-0}" -gt 0
+check "  and the excluded files are excluded"            0 test "${GLOB_FILES:-0}" = "5"
+check "  push still works with a glob exclude"           0 "$STS" push --force=local
+check "  the .bak files did not reach the hub"           1 test -f "$CASE/hub/notes.bak"
+check "  real saves did reach the hub"                   0 test -f "$CASE/hub/core.db"
+
 # --------------------------------------------------------------------------
 section "fingerprinting"
 newcase hashable
