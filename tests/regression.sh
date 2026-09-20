@@ -164,6 +164,28 @@ chmod 555 "$CASE"
 check "unwritable hub parent: terminates, no recursion" 51 "$STS" push
 chmod 755 "$CASE"
 
+newcase hostid
+"$STS" push --force=local >/dev/null 2>&1
+MYID="$(cat "$CASE/state/star-traders-sync/host-id" 2>/dev/null || true)"
+check "a stable host id was recorded"                    0 test -n "$MYID"
+
+# A lock whose stable id is not ours belongs to another machine, and must
+# never be cleared automatically - even though the hostname matches, which
+# is what the old hostname-only comparison went on.
+mkdir -p "$CASE/.sts-lock"
+printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\nnonce\nsomeone-elses-uuid\n' \
+    "$(hostname -s)" > "$CASE/.sts-lock/owner"
+check "lock with a foreign id: refused despite same host" 50 "$STS" pull
+check "  and not cleared"                                 0 test -d "$CASE/.sts-lock"
+
+# Our own lock, ancient, is cleared past the TTL even if the hostname has
+# changed since - which is the case the old comparison got wrong.
+printf 'some-old-hostname\n1234\n2020-01-01T00:00:00Z\n1577836800\nnonce\n%s\n' \
+    "$MYID" > "$CASE/.sts-lock/owner"
+printf 'LOCK_TTL_SECONDS=1\n' >> "$CASE/cfg/star-traders-sync/config"
+check "our own stale lock cleared despite a renamed host"  0 "$STS" pull
+check "  lock released"                                    1 test -d "$CASE/.sts-lock"
+
 # --------------------------------------------------------------------------
 section "interrupted swaps"
 newcase orphan
