@@ -68,6 +68,13 @@ Do not re-derive these the hard way:
 - The hub lock must be released before `sts play` waits for the game, or
   the other machine is blocked for the whole session.
 
+## Before you open a pull request here
+
+Open an issue first and reference it with `Closes #N`, for anything beyond
+a typo. This was applied inconsistently early on - PRs #11, #12, #13 and
+#17 went up with no issue behind them - and the result is a history where
+some decisions have their reasoning recorded and others do not.
+
 ## When you open a pull request here
 
 Answer every review comment and resolve the thread - see CONTRIBUTING.md.

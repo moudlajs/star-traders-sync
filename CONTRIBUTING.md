@@ -71,6 +71,20 @@ Both of the conventions above are checked, not just documented:
 `main` is protected: the `check` job must pass, the branch must be up to
 date, and force-pushes and deletions are blocked.
 
+## Issues
+
+**Every change gets an issue first, including small ones.** The issue says
+what is wrong and why it matters; the pull request says what was done about
+it. Splitting them that way means the reasoning survives even when the diff
+is later rewritten, and `git log` stays a record of decisions rather than
+of keystrokes.
+
+Assign it to yourself. With one maintainer an unassigned issue is an
+oversight, so the template and a workflow both do this automatically.
+
+A typo fix does not need this. Anything that changes behaviour, adds a
+guard, or touches CI does.
+
 ## Pull requests
 
 - One logical change per PR.
