@@ -538,6 +538,41 @@ check "connection lost mid-probe: report survives"         0 doctor_ssh_says "pr
 check "  and says what happened"                           0 doctor_ssh_says "lost the connection"
 check "  reassurance still printed"                        0 doctor_ssh_says "Nothing above was changed"
 
+# The fifth-round fix that this covers closed a real path to losing saves:
+# --fix recreating HUB_PATH while a swap has it renamed aside turns the
+# in-flight `mv staged hub` into a move INTO the new empty directory. mv
+# exits 0, so the swap's own check reports success, and the pre-swap copy
+# is then deleted. It had no test until now.
+newcase doctor_hub_busy
+"$STS" push --force=local >/dev/null 2>&1
+rm -rf "$CASE/hub"                 # what a swap leaves behind, briefly
+mkdir -p "$CASE/.sts-lock"         # ... while holding the hub lock
+HUB_BUSY_OUT="$("$STS" doctor --fix 2>&1 || true)"
+check "hub locked: --fix refuses to recreate HUB_PATH"   1 test -d "$CASE/hub"
+check "  and says why"                                   0 sh -c 'printf "%s" "$1" | grep -q "a sync is running"' _ "$HUB_BUSY_OUT"
+check "  report still completes"                         0 sh -c 'printf "%s" "$1" | grep -q "Nothing above was changed"' _ "$HUB_BUSY_OUT"
+
+rm -rf "$CASE/.sts-lock"           # lock released, the repair is allowed
+"$STS" doctor --fix >/dev/null 2>&1 || true
+check "hub unlocked: --fix creates HUB_PATH"             0 test -d "$CASE/hub"
+
+# doc_state_dirs carries its own copy of acquire_local_lock's kill -0
+# liveness check. The existing lock cases only exercise the original, and
+# doctor_fix cannot reach this one because it deletes the state directory
+# first, so [ -d "$lockdir" ] is never true there.
+newcase doctor_stale_lock
+mkdir -p "$CASE/state/star-traders-sync/local.lock.d"
+printf '%s\n' "$$" > "$CASE/state/star-traders-sync/local.lock"
+LIVE_OUT="$("$STS" doctor 2>&1 || true)"
+check "a live sts is reported, not cleared"              0 sh -c 'printf "%s" "$1" | grep -q "another sts is running"' _ "$LIVE_OUT"
+check "  and its lock is left alone"                     0 test -d "$CASE/state/star-traders-sync/local.lock.d"
+
+printf '99999\n' > "$CASE/state/star-traders-sync/local.lock"
+check "a dead owner's lock is reported stale"            0 sh -c '"$1" doctor 2>&1 | grep -q "owner 99999 is gone"' _ "$STS"
+check "  but not cleared without --fix"                  0 test -d "$CASE/state/star-traders-sync/local.lock.d"
+"$STS" doctor --fix >/dev/null 2>&1 || true
+check "  and cleared with --fix"                         1 test -d "$CASE/state/star-traders-sync/local.lock.d"
+
 # --------------------------------------------------------------------------
 section "backup"
 newcase backup
