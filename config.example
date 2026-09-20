@@ -88,6 +88,14 @@ CLOCK_SKEW_TOLERANCE=300
 # Timestamped backup directories to keep. 0 disables pruning.
 BACKUP_KEEP=30
 
+# Seconds to wait for BACKUP_VOLUME to appear before giving up. A scheduled
+# backup can fire moments after the machine wakes, before an external disk
+# has remounted; failing instantly would lose the day's backup over a
+# condition that resolves itself in seconds. 0 disables the wait, which is
+# what you want for an interactive run.
+# The launchd job installer sets this to 180.
+BACKUP_MOUNT_WAIT=0
+
 # ~/Library/Logs/star-traders-sync/star-traders-sync.log
 LOG_MAX_BYTES=5242880
 LOG_KEEP=3
