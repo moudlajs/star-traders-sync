@@ -14,6 +14,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 STS="$REPO/bin/star-traders-sync"
 SB="$(mktemp -d "${TMPDIR:-/tmp}/sts-tests.XXXXXX")"
+REAL_HOME="$HOME"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
@@ -83,7 +84,9 @@ SNAPSHOT_KEEP=3
 BACKUP_VOLUME=$CASE/vol
 BACKUP_DEST=$CASE/vol/b
 EOF
+    mkdir -p "$CASE/home"
     export XDG_CONFIG_HOME="$CASE/cfg" XDG_STATE_HOME="$CASE/state"
+    export HOME="$CASE/home"
     for f in core.db game_1.db map_1.db template_1.json; do
         printf 'v1-%s\n' "$f" > "$CASE/local/$f"
     done
@@ -341,11 +344,14 @@ check "  and reports zero problems"                      0 sh -c '"$1" doctor 2>
 # A missing config must be reported, not crashed on: doctor exists precisely
 # for the state where nothing else can run.
 newcase doctor_noconfig
+mkdir -p "$CASE/home/bin"
+PATH="$CASE/home/bin:$PATH"
 rm -f "$CASE/cfg/star-traders-sync/config"
 check "no config: doctor exits 1 rather than dying"      1 "$STS" doctor
 check "  names the missing file"                         0 sh -c '"$1" doctor 2>&1 | grep -q "no config at"' _ "$STS"
 check "  and skips the rest instead of guessing"         0 sh -c '"$1" doctor 2>&1 | grep -q "nothing else can be checked"' _ "$STS"
 check "  does not offer a repair that cannot help"       0 sh -c '"$1" doctor 2>&1 | grep -q "None of these can be repaired"' _ "$STS"
+PATH="${PATH#"$CASE/home/bin:"}"
 
 # The most common half-finished install: install.sh ran, config never edited.
 newcase doctor_placeholder
@@ -356,9 +362,12 @@ check "  names the key still on its placeholder"         0 sh -c '"$1" doctor 2>
 # doctor without --fix must change nothing at all.
 newcase doctor_readonly
 rm -rf "$CASE/state"
-BEFORE="$(find "$CASE" -type f 2>/dev/null | LC_ALL=C sort | shasum)"
+# Its own log does not count: that is doctor recording what it did, not
+# changing anything it inspected.
+snap_case() { find "$CASE" -type f ! -path "*/Library/Logs/*" 2>/dev/null | LC_ALL=C sort | shasum; }
+BEFORE="$(snap_case)"
 "$STS" doctor >/dev/null 2>&1 || true
-AFTER="$(find "$CASE" -type f 2>/dev/null | LC_ALL=C sort | shasum)"
+AFTER="$(snap_case)"
 check "doctor without --fix changes nothing"             0 test "$BEFORE" = "$AFTER"
 
 # --fix may only create things, never destroy.
@@ -503,18 +512,47 @@ case "$*" in
 esac
 STUB
 chmod +x "$CASE/stub/tailscale" "$CASE/stub/ssh-keygen" "$CASE/stub/ssh"
-PATH_SAVED="$PATH"; PATH="$CASE/stub:$PATH"
-check "non-hub machine: the ssh path actually runs"        0 sh -c '"$1" doctor 2>&1 | grep -q "key auth works"' _ "$STS"
-check "connection lost mid-probe: report survives"         0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
-check "  and says what happened"                           0 sh -c '"$1" doctor 2>&1 | grep -q "lost the connection"' _ "$STS"
-check "  reassurance still printed"                        0 sh -c '"$1" doctor 2>&1 | grep -q "Nothing above was changed"' _ "$STS"
-PATH="$PATH_SAVED"
+
+# Self-contained HOME. doc_ssh looks for ~/.ssh/id_ed25519, which exists on
+# a developer machine and not on a fresh CI runner - so this case passed
+# locally and failed in CI, which is the test depending on the environment
+# rather than on the code.
+mkdir -p "$CASE/home/.ssh"
+: > "$CASE/home/.ssh/id_ed25519"
+DOCTOR_SSH_CASE="$CASE"
+
+doctor_ssh_says() {
+    # Capture first, then match. grep -q closes the pipe as soon as it hits,
+    # and under pipefail that surfaces as SIGPIPE (141) from doctor.
+    local out
+    out="$(HOME="$DOCTOR_SSH_CASE/home" \
+           PATH="$DOCTOR_SSH_CASE/stub:$PATH" \
+           XDG_CONFIG_HOME="$DOCTOR_SSH_CASE/cfg" \
+           XDG_STATE_HOME="$DOCTOR_SSH_CASE/state" \
+           "$STS" doctor 2>&1 || true)"
+    printf '%s' "$out" | grep -q "$1"
+}
+
+check "non-hub machine: the ssh path actually runs"        0 doctor_ssh_says "key auth works"
+check "connection lost mid-probe: report survives"         0 doctor_ssh_says "problem"
+check "  and says what happened"                           0 doctor_ssh_says "lost the connection"
+check "  reassurance still printed"                        0 doctor_ssh_says "Nothing above was changed"
 
 # --------------------------------------------------------------------------
 section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1
 check "backup refuses a non-mount-point volume"         70 "$STS" backup
+
+# The suite must leave nothing behind outside its sandbox. doctor --fix can
+# append to a shell rc, so this is not hypothetical.
+if [ -n "$(find "$REAL_HOME" -maxdepth 1 -name '.zshrc.sts-backup' -newer "$SB" 2>/dev/null)" ]; then
+    printf '\n  FAIL the suite modified %s/.zshrc\n' "$REAL_HOME"
+    FAIL=$((FAIL + 1))
+else
+    PASS=$((PASS + 1))
+    printf '  ok   the suite left the real home untouched\n'
+fi
 
 printf '\n%s: %s passed, %s failed\n' "$(basename "$0")" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

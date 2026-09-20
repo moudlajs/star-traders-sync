@@ -2120,6 +2120,23 @@ doc_save_dir() {
 DOC_TS_OK=0
 DOC_IS_HUB=0
 
+# Is a sync in progress on the hub right now?
+#
+# doctor takes no locks - it is meant to be safe to run at any moment - but
+# that means --fix must not create HUB_PATH while a swap has it renamed
+# aside. push_local_to_hub and swap_into_place both leave that path briefly
+# absent, and recreating it there turns the in-flight `mv staged hub` into a
+# move INTO the new empty directory rather than a replacement. mv exits 0,
+# the swap's own check sees success, and the pre-swap copy is then deleted.
+hub_is_busy() {
+    local lock; lock="$(hub_lock_path)"
+    if [ "$DOC_IS_HUB" -eq 1 ]; then
+        [ -d "$lock" ]
+    else
+        hub_exec_args '[ -d "$1" ]' "$lock" >/dev/null 2>&1
+    fi
+}
+
 doc_tailscale() {
     doc_section "tailscale"
 
@@ -2305,9 +2322,14 @@ doc_ssh() {
         *OK*)      doc_ok "hub directory $CFG_HUB_PATH is writable" ;;
         *NOENT*)
             doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"
-            doc_try "create $CFG_HUB_PATH on $CFG_HUB_HOST" \
-                hub_exec_args 'mkdir -p "$1"' "$CFG_HUB_PATH" \
-                || doc_do "or seed it: sts push --force=local" ;;
+            if hub_is_busy; then
+                doc_do "a sync is running on the hub right now - not creating it"
+                doc_do "re-run once that finishes"
+            else
+                doc_try "create $CFG_HUB_PATH on $CFG_HUB_HOST" \
+                    hub_exec_args 'mkdir -p "$1"' "$CFG_HUB_PATH" \
+                    || doc_do "or seed it: sts push --force=local"
+            fi ;;
         *NOTDIR*)  doc_fail "$CFG_HUB_PATH exists on the hub but is not a directory" ;;
         *NOWRITE*) doc_fail "$CFG_HUB_USER cannot write $CFG_HUB_PATH on the hub" ;;
         *)         doc_fail "could not probe the hub directory: $probe" ;;
@@ -2323,6 +2345,11 @@ doc_hub_only() {
         local n
         n="$(find "$CFG_HUB_PATH" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
         doc_ok "hub directory, ${n:-0} files"
+    elif hub_is_busy; then
+        doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"
+        doc_do "a sync is running right now, which moves it aside briefly"
+        doc_do "not creating it - that would turn the in-flight swap into a nested move"
+        doc_do "re-run once the sync finishes"
     else
         doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"
         doc_try "create $CFG_HUB_PATH" mkdir -p "$CFG_HUB_PATH" \
