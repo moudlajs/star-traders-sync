@@ -1923,7 +1923,7 @@ doc_environment() {
 
     if [ -L "$HOME/bin/sts" ]; then
         local tgt
-        tgt="$(readlink "$HOME/bin/sts")"
+        tgt="$(readlink "$HOME/bin/sts" || true)"
         if [ -x "$tgt" ]; then
             doc_ok "sts -> $tgt"
         else
@@ -2176,7 +2176,7 @@ doc_tailscale() {
     fi
 
     local peer
-    peer="$(ts_find_peer "$json" "$CFG_HUB_HOST")"
+    peer="$(ts_find_peer "$json" "$CFG_HUB_HOST" || true)"
     if [ -z "$peer" ]; then
         doc_fail "hub '$CFG_HUB_HOST' is not in this tailnet at all"
         doc_do "check HUB_HOST against the node names in:"
@@ -2280,8 +2280,12 @@ doc_ssh() {
         return 1
     fi
 
-    # Hub directory.
-    local probe
+    # Hub directory. Guarded like every other risky substitution here: this
+    # runs ssh, and a connection that drops between the auth probe above and
+    # this line would otherwise kill the whole report - on a machine already
+    # having connectivity trouble, which is exactly when doctor is run.
+    local probe prc
+    set +e
     probe="$(hub_exec_args '
         d="$1"
         [ -e "$d" ] || { echo NOENT; exit 0; }
@@ -2289,6 +2293,14 @@ doc_ssh() {
         [ -w "$d" ] || { echo NOWRITE; exit 0; }
         echo OK
     ' "$CFG_HUB_PATH" 2>&1)"
+    prc=$?
+    set -e
+    if [ $prc -ne 0 ]; then
+        doc_fail "lost the connection while probing the hub directory"
+        doc_do "$(printf '%s' "$probe" | head -1)"
+        doc_do "re-run when the hub is reachable: $(ssh_repro_cmd)"
+        return 1
+    fi
     case "$probe" in
         *OK*)      doc_ok "hub directory $CFG_HUB_PATH is writable" ;;
         *NOENT*)

@@ -461,6 +461,55 @@ PATH="$PATH_SAVED"
 
 check "--fix is rejected on commands other than doctor"    2 "$STS" status --fix
 
+# Until now every case made the test machine self-detect as the hub, so
+# doc_ssh always took its early return and the entire ssh path - not just
+# its failure branch - had zero coverage. That is how an unguarded
+# assignment survived three reviews in a row.
+newcase doctor_ssh
+mkdir -p "$CASE/stub"
+sed -i '' 's|^HUB_HOST=.*|HUB_HOST=some-other-machine|' "$CASE/cfg/star-traders-sync/config"
+cat > "$CASE/stub/tailscale" <<'STUB'
+#!/bin/bash
+case "$*" in
+    *"status --json"*)
+        cat <<JSON
+{"BackendState":"Running",
+ "Self":{"HostName":"this-client","DNSName":"this-client.test.ts.net.",
+         "TailscaleIPs":["100.64.0.9"],"Online":true},
+ "Peer":{"x":{"HostName":"some-other-machine",
+              "DNSName":"some-other-machine.test.ts.net.",
+              "TailscaleIPs":["100.64.0.1"],"Online":true}}}
+JSON
+        ;;
+    *"ping"*) printf 'pong\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+# Host key "trusted", auth succeeds, but the hub probe loses the connection -
+# the exact sequence that used to kill the report mid-way.
+cat > "$CASE/stub/ssh-keygen" <<'STUB'
+#!/bin/bash
+case "$*" in
+    *-F*) printf 'found\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+cat > "$CASE/stub/ssh" <<'STUB'
+#!/bin/bash
+case "$*" in
+    *"echo STS_OK"*) printf 'STS_OK\n'; exit 0 ;;
+    *"bash -s"*)     printf 'client_loop: send disconnect\n' >&2; exit 255 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale" "$CASE/stub/ssh-keygen" "$CASE/stub/ssh"
+PATH_SAVED="$PATH"; PATH="$CASE/stub:$PATH"
+check "non-hub machine: the ssh path actually runs"        0 sh -c '"$1" doctor 2>&1 | grep -q "key auth works"' _ "$STS"
+check "connection lost mid-probe: report survives"         0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
+check "  and says what happened"                           0 sh -c '"$1" doctor 2>&1 | grep -q "lost the connection"' _ "$STS"
+check "  reassurance still printed"                        0 sh -c '"$1" doctor 2>&1 | grep -q "Nothing above was changed"' _ "$STS"
+PATH="$PATH_SAVED"
+
 # --------------------------------------------------------------------------
 section "backup"
 newcase backup
