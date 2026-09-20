@@ -358,10 +358,12 @@ validate_config() {
              "HUB_PATH must be absolute - it is evaluated on the hub host, where ~ is the hub user's home, got '$CFG_HUB_PATH'" ;;
     esac
 
-    # Paths reach a remote shell through both ssh and rsync, and openrsync
-    # has no --protect-args. A space would split a transfer in two; a quote,
-    # $, ; or backtick would execute. Restrict them to characters that
-    # survive that round trip intact.
+    # This restriction is now about rsync alone. hub_exec_args passes values
+    # as positional parameters, so ssh no longer parses them as syntax - but
+    # rsync hands a remote path to the hub's login shell itself, and
+    # openrsync has no --protect-args, so a space still splits a transfer in
+    # two and a metacharacter still reaches a shell. Lifting this means
+    # solving that first; see the note in README.
     for k in HUB_PATH LOCAL_SAVE_PATH BACKUP_VOLUME BACKUP_DEST; do
         eval "v=\${CFG_$k}"
         case "$v" in
@@ -741,7 +743,17 @@ ssh_repro_cmd() {
     printf 'ssh %s %s' "$(ssh_opts)" "$(ssh_target)"
 }
 
+# Single-quote a value so a shell reads it back as one literal word.
+# Every embedded quote is closed, escaped and reopened: ' -> '\''
+shq() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 # hub_exec COMMAND - run a shell command where the hub lives.
+#
+# The command is shell TEXT, so anything interpolated into it is code. Use
+# it only for commands with no variable parts; everything else belongs in
+# hub_exec_args.
 hub_exec() {
     local cmd="$1"
     if [ "$IS_HUB" -eq 1 ]; then
@@ -749,6 +761,36 @@ hub_exec() {
     else
         # shellcheck disable=SC2086
         ssh $(ssh_opts) "$(ssh_target)" "$cmd"
+    fi
+}
+
+# hub_exec_args SCRIPT ARG... - run SCRIPT where the hub lives, with ARGs
+# available as "$1", "$2" and so on.
+#
+# This exists because building shell text out of config values makes those
+# values executable. A path containing a quote - /Users/dan/Daniel's saves
+# is entirely ordinary on macOS - turned a sync into arbitrary code
+# execution on BOTH machines, and the call sites that did it included ones
+# running rm -rf and mv on the hub.
+#
+# Values now arrive as positional parameters, which survive both bash -c
+# and a remote shell without ever being parsed as syntax. The script itself
+# is a fixed literal; only the data varies.
+hub_exec_args() {
+    local script="$1"; shift
+    if [ "$IS_HUB" -eq 1 ]; then
+        /bin/bash -c "$script" sts "$@"
+    else
+        local quoted="" a
+        for a in "$@"; do
+            quoted="$quoted $(shq "$a")"
+        done
+        # bash -s reads the script from stdin, so the script text never
+        # passes through the remote shell's parser as a command line.
+        # shellcheck disable=SC2086
+        ssh $(ssh_opts) "$(ssh_target)" "bash -s --$quoted" <<SCRIPT
+$script
+SCRIPT
     fi
 }
 
@@ -843,23 +885,23 @@ check_hub_reachable() {
 check_hub_path() {
     local allow_missing="${1:-no}" out rc
     set +e
-    out="$(hub_exec "
-        d='$CFG_HUB_PATH'
-        if [ ! -e \"\$d\" ]; then
-            for cand in \"\$d\".sts-old-*; do
-                [ -d \"\$cand\" ] || continue
+    out="$(hub_exec_args '
+        d="$1"
+        if [ ! -e "$d" ]; then
+            for cand in "$d".sts-old-*; do
+                [ -d "$cand" ] || continue
                 echo STS_ORPHAN
-                echo \"\$cand\"
+                echo "$cand"
                 exit 0
             done
             echo STS_NOENT
             exit 0
         fi
-        [ -d \"\$d\" ] || { echo STS_NOTDIR; exit 0; }
-        [ -r \"\$d\" ] || { echo STS_NOREAD; exit 0; }
-        [ -w \"\$d\" ] || { echo STS_NOWRITE; exit 0; }
+        [ -d "$d" ] || { echo STS_NOTDIR; exit 0; }
+        [ -r "$d" ] || { echo STS_NOREAD; exit 0; }
+        [ -w "$d" ] || { echo STS_NOWRITE; exit 0; }
         echo STS_OK
-    " 2>&1)"
+    ' "$CFG_HUB_PATH" 2>&1)"
     rc=$?
     set -e
     [ $rc -eq 0 ] || die $EX_SSH_FAILED hub "probing hub path failed: $out"
@@ -901,20 +943,63 @@ check_hub_path() {
 
 # Builds the shell snippet that emits "sha256  size  relpath" per file,
 # sorted, excluding snapshots, locks and anything in SYNC_EXCLUDE.
-manifest_snippet() {
-    local dir="$1" prunes="" name
-    prunes="! -path './$SNAP_DIRNAME/*' ! -name '$LOCK_DIRNAME' ! -path './$LOCK_DIRNAME/*'"
-    set -f   # SYNC_EXCLUDE is a literal name list, never a glob to expand here
+# The manifest script is a fixed literal. The directory and every exclude
+# name arrive as positional parameters, so a name containing a quote cannot
+# become syntax.
+readonly MANIFEST_SCRIPT='
+dir="$1"; shift
+cd "$dir" 2>/dev/null || exit 0
+set -- "$@"
+prune_args=""
+for n in "$@"; do
+    prune_args="$prune_args ! -name $n ! -path ./$n/*"
+done
+# shellcheck disable=SC2086
+LC_ALL=C find . -type f $prune_args 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+    h=$(shasum -a 256 "$f" 2>/dev/null | cut -d" " -f1)
+    z=$(stat -f%z "$f" 2>/dev/null)
+    if [ -z "$h" ] || [ -z "$z" ]; then
+        printf "STS_UNHASHABLE  %s\n" "$f"
+    else
+        printf "%s  %s  %s\n" "$h" "$z" "$f"
+    fi
+done
+'
+
+# Emits the exclude names as separate arguments, always including the
+# snapshot and lock directories.
+manifest_args() {
+    local name
+    printf '%s\n' "$SNAP_DIRNAME"
+    printf '%s\n' "$LOCK_DIRNAME"
+    set -f
     for name in $CFG_SYNC_EXCLUDE; do
-        prunes="$prunes ! -name '$name' ! -path './$name/*'"
+        printf '%s\n' "$name"
     done
     set +f
-    printf "cd '%s' 2>/dev/null || exit 0; LC_ALL=C find . -type f %s | LC_ALL=C sort | while IFS= read -r f; do h=\$(shasum -a 256 \"\$f\" 2>/dev/null | cut -d' ' -f1); z=\$(stat -f%%z \"\$f\" 2>/dev/null); if [ -z \"\$h\" ] || [ -z \"\$z\" ]; then printf 'STS_UNHASHABLE  %%s\\n' \"\$f\"; else printf '%%s  %%s  %%s\\n' \"\$h\" \"\$z\" \"\$f\"; fi; done" \
-        "$dir" "$prunes"
 }
 
-manifest_local() { /bin/bash -c "$(manifest_snippet "$1")"; }
-manifest_hub()   { hub_exec "$(manifest_snippet "$CFG_HUB_PATH")"; }
+
+# Sets the positional parameters to the exclude names, snapshot and lock
+# directories first. Callers then pass "$@" straight through.
+
+manifest_local() {
+    local dir="$1" nm
+    set -- "$SNAP_DIRNAME" "$LOCK_DIRNAME"
+    set -f
+    for nm in $CFG_SYNC_EXCLUDE; do set -- "$@" "$nm"; done
+    set +f
+    /bin/bash -c "$MANIFEST_SCRIPT" sts "$dir" "$@"
+}
+
+manifest_hub() {
+    local nm
+    set -- "$SNAP_DIRNAME" "$LOCK_DIRNAME"
+    set -f
+    for nm in $CFG_SYNC_EXCLUDE; do set -- "$@" "$nm"; done
+    set +f
+    hub_exec_args "$MANIFEST_SCRIPT" "$CFG_HUB_PATH" "$@"
+}
 
 # Refuses rather than guesses when any file could not be fingerprinted.
 assert_manifest_hashable() {
@@ -953,7 +1038,11 @@ newest_mtime_local() {
 
 newest_mtime_hub() {
     local newest
-    newest="$(hub_exec "cd '$CFG_HUB_PATH' 2>/dev/null || exit 0; LC_ALL=C find . -type f ! -path './$SNAP_DIRNAME/*' ! -path './$LOCK_DIRNAME/*' -exec stat -f%m {} + 2>/dev/null | LC_ALL=C sort -n | tail -1")"
+    newest="$(hub_exec_args '
+        cd "$1" 2>/dev/null || exit 0
+        LC_ALL=C find . -type f ! -path "./$2/*" ! -path "./$3/*" \
+            -exec stat -f%m {} + 2>/dev/null | LC_ALL=C sort -n | tail -1
+    ' "$CFG_HUB_PATH" "$SNAP_DIRNAME" "$LOCK_DIRNAME")"
     printf '%s' "${newest:-0}"
 }
 
@@ -1070,24 +1159,25 @@ acquire_hub_lock() {
     # owner fields. The lock directory's own mtime is reported too, because a
     # run that died between the mkdir and the owner write leaves a lock with
     # no owner at all - and that used to be permanently un-clearable.
-    out="$(hub_exec "
-        lock='$lock'
-        if mkdir \"\$lock\" 2>/dev/null; then
-            printf '%s\n%s\n%s\n%s\n%s\n%s\n' '$(this_host_id)' '$$' '$(iso_now)' \"\$(date -u +%s)\" '$HUB_LOCK_NONCE' '$(stable_host_id)' > '$info'
+    out="$(hub_exec_args '
+        lock="$1"; info="$lock/owner"
+        if mkdir "$lock" 2>/dev/null; then
+            printf "%s\n%s\n%s\n%s\n%s\n%s\n" "$2" "$3" "$4" "$(date -u +%s)" "$5" "$6" > "$info"
             echo STS_LOCK_ACQUIRED
-        elif [ ! -d \"\$lock\" ]; then
+        elif [ ! -d "$lock" ]; then
             echo STS_LOCK_NOCREATE
         else
             echo STS_LOCK_HELD
-            if [ -f '$info' ]; then
+            if [ -f "$info" ]; then
                 echo STS_OWNER
-                cat '$info'
+                cat "$info"
             else
                 echo STS_NO_OWNER
-                stat -f%m \"\$lock\" 2>/dev/null || echo 0
+                stat -f%m "$lock" 2>/dev/null || echo 0
             fi
         fi
-    " 2>&1)" || die $EX_LOCK_CREATE lock \
+    ' "$lock" "$(this_host_id)" "$$" "$(iso_now)" "$HUB_LOCK_NONCE" "$(stable_host_id)" 2>&1)" \
+        || die $EX_LOCK_CREATE lock \
         "could not create the hub lock at $lock - is the hub directory writable? ($out)"
 
     case "$out" in
@@ -1124,7 +1214,7 @@ acquire_hub_lock() {
             if [ "$lock_age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
                 log WARN lock "CLEARING ownerless hub lock at $lock, age ${lock_age}s"
                 warn "clearing an ownerless hub lock (a run died while taking it), ${lock_age}s old"
-                hub_exec "rm -rf '$lock'" || die $EX_LOCK_CREATE lock \
+                hub_exec_args 'rm -rf "$1"' "$lock" || die $EX_LOCK_CREATE lock \
                     "failed to clear the ownerless hub lock at $lock"
                 acquire_hub_lock
                 return 0
@@ -1172,7 +1262,7 @@ acquire_hub_lock() {
     if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
         log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
         warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
-        hub_exec "rm -rf '$lock'" || die $EX_LOCK_CREATE lock \
+        hub_exec_args 'rm -rf "$1"' "$lock" || die $EX_LOCK_CREATE lock \
             "failed to clear our stale hub lock at $lock"
         acquire_hub_lock
         return 0
@@ -1195,11 +1285,11 @@ release_hub_lock() {
     info="$lock/owner"
     # Only remove it if it is still OURS. Deleting someone else's lock is
     # worse than leaking our own.
-    hub_exec "
-        if [ \"\$(sed -n 5p '$info' 2>/dev/null)\" = '$HUB_LOCK_NONCE' ]; then
-            rm -rf '$lock'
+    hub_exec_args '
+        if [ "$(sed -n 5p "$1/owner" 2>/dev/null)" = "$2" ]; then
+            rm -rf "$1"
         fi
-    " >/dev/null 2>&1 || \
+    ' "$lock" "$HUB_LOCK_NONCE" >/dev/null 2>&1 || \
         log WARN lock "could not release the hub lock at $lock - clear it by hand"
     log DEBUG lock "hub lock released"
 }
@@ -1297,43 +1387,43 @@ snapshot_hub() {
     snaproot="$(dirname "$CFG_HUB_PATH")/$SNAP_DIRNAME"
     snapdir="$snaproot/$stamp"
 
-    out="$(hub_exec "
+    out="$(hub_exec_args '
         set -eo pipefail
-        snaproot='$snaproot'
-        snapdir='$snapdir'
-        mkdir -p \"\$snaproot\"
+        hub="$1"; snaproot="$2"; snapdir="$3"; stamp="$4"; keep="$5"
+        snapdirs="$6"; lockdir="$7"
+        mkdir -p "$snaproot"
         suffix=2
-        while ! mkdir \"\$snapdir\" 2>/dev/null; do
-            snapdir=\"\$snaproot/$stamp-\$suffix\"
-            suffix=\$((suffix + 1))
-            [ \"\$suffix\" -gt 50 ] && { echo STS_SNAP_NODIR; exit 1; }
+        while ! mkdir "$snapdir" 2>/dev/null; do
+            snapdir="$snaproot/$stamp-$suffix"
+            suffix=$((suffix + 1))
+            [ "$suffix" -gt 50 ] && { echo STS_SNAP_NODIR; exit 1; }
         done
-        snapdir=\$(cd \"\$snapdir\" && pwd -P)
-        cd '$CFG_HUB_PATH'
-        src_n=\$(find . -type f ! -path './$SNAP_DIRNAME/*' 2>/dev/null | grep -c . || true)
-        if ! find . -type f ! -path './$SNAP_DIRNAME/*' -print0 2>/dev/null \
-             | cpio -0 -pdm \"\$snapdir\" 2>/dev/null; then
-            cp -Rp '$CFG_HUB_PATH'/ \"\$snapdir\"/ 2>/dev/null || { echo STS_SNAP_FAIL; exit 1; }
+        snapdir=$(cd "$snapdir" && pwd -P)
+        cd "$hub"
+        src_n=$(find . -type f ! -path "./$snapdirs/*" 2>/dev/null | grep -c . || true)
+        if ! find . -type f ! -path "./$snapdirs/*" -print0 2>/dev/null \
+             | cpio -0 -pdm "$snapdir" 2>/dev/null; then
+            cp -Rp "$hub"/ "$snapdir"/ 2>/dev/null || { echo STS_SNAP_FAIL; exit 1; }
         fi
-        dst_n=\$(find \"\$snapdir\" -type f 2>/dev/null | grep -c . || true)
-        if [ \"\${dst_n:-0}\" -lt \"\${src_n:-0}\" ]; then
-            echo \"STS_SNAP_SHORT \$src_n \$dst_n\"
+        dst_n=$(find "$snapdir" -type f 2>/dev/null | grep -c . || true)
+        if [ "${dst_n:-0}" -lt "${src_n:-0}" ]; then
+            echo "STS_SNAP_SHORT $src_n $dst_n"
             exit 1
         fi
-        keep=$CFG_SNAPSHOT_KEEP
-        livecount=\$(find '$CFG_HUB_PATH' -maxdepth 1 -type f 2>/dev/null | grep -c . || true)
-        if [ \"\$keep\" -gt 0 ] && [ \"\${livecount:-0}\" -gt 0 ]; then
-            n=\$(ls -1 \"\$snaproot\" 2>/dev/null | grep -c . || true)
-            if [ \"\${n:-0}\" -gt \"\$keep\" ]; then
-                ls -1 \"\$snaproot\" | LC_ALL=C sort | head -n \$((n - keep)) \
+        livecount=$(find "$hub" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)
+        if [ "$keep" -gt 0 ] && [ "${livecount:-0}" -gt 0 ]; then
+            n=$(ls -1 "$snaproot" 2>/dev/null | grep -c . || true)
+            if [ "${n:-0}" -gt "$keep" ]; then
+                ls -1 "$snaproot" | LC_ALL=C sort | head -n $((n - keep)) \
                   | while IFS= read -r old; do
-                        [ -n \"\$old\" ] || continue
-                        rm -rf \"\$snaproot/\$old\"
+                        [ -n "$old" ] || continue
+                        rm -rf "$snaproot/$old"
                     done
             fi
         fi
-        echo \"STS_SNAP_OK \$dst_n \$snapdir\"
-    " 2>&1)" || true
+        echo "STS_SNAP_OK $dst_n $snapdir"
+    ' "$CFG_HUB_PATH" "$snaproot" "$snapdir" "$stamp" "$CFG_SNAPSHOT_KEEP" \
+      "$SNAP_DIRNAME" "$LOCK_DIRNAME" 2>&1)" || true
 
     case "$out" in
         *STS_SNAP_OK*)
@@ -1448,19 +1538,21 @@ preserve_excluded() {
 preserve_excluded_hub() {
     local staged="$1" name names=""
     [ -n "$CFG_SYNC_EXCLUDE" ] || return 0
+    # Plain words, not shell-quoted text: they are passed as arguments now.
     set -f
-    for name in $CFG_SYNC_EXCLUDE; do names="$names '$name'"; done
+    for name in $CFG_SYNC_EXCLUDE; do names="$names $name"; done
     set +f
-    hub_exec "
-        cd '$CFG_HUB_PATH' 2>/dev/null || exit 0
-        for n in $names; do
-            for f in \$n; do
-                [ -e \"\$f\" ] || continue
-                [ -e '$staged'/\"\$f\" ] && continue
-                cp -Rp \"\$f\" '$staged'/ 2>/dev/null || true
+    hub_exec_args '
+        hub="$1"; staged="$2"; shift 2
+        cd "$hub" 2>/dev/null || exit 0
+        for n in "$@"; do
+            for f in $n; do
+                [ -e "$f" ] || continue
+                [ -e "$staged/$f" ] && continue
+                cp -Rp "$f" "$staged"/ 2>/dev/null || true
             done
         done
-    " >/dev/null 2>&1 || true
+    ' "$CFG_HUB_PATH" "$staged" $names >/dev/null 2>&1 || true
     return 0
 }
 
@@ -1506,17 +1598,18 @@ push_local_to_hub() {
 
     # Sweep staging directories left by interrupted pushes. Safe here: we
     # hold the hub lock, so nothing else is mid-transfer.
-    hub_exec "
-        now=\$(date -u +%s)
-        for d in '$(dirname "$CFG_HUB_PATH")'/.sts-incoming-*; do
-            [ -d \"\$d\" ] || continue
-            m=\$(stat -f%m \"\$d\" 2>/dev/null || echo \"\$now\")
-            [ \$((now - m)) -ge 300 ] && rm -rf \"\$d\"
+    hub_exec_args '
+        parent="$1"
+        now=$(date -u +%s)
+        for d in "$parent"/.sts-incoming-*; do
+            [ -d "$d" ] || continue
+            m=$(stat -f%m "$d" 2>/dev/null || echo "$now")
+            [ $((now - m)) -ge 300 ] && rm -rf "$d"
         done
         exit 0
-    " >/dev/null 2>&1 || true
+    ' "$(dirname "$CFG_HUB_PATH")" >/dev/null 2>&1 || true
 
-    hub_exec "rm -rf '$tmp' && mkdir -p '$tmp'" || die $EX_HUB_PERMS push \
+    hub_exec_args 'rm -rf "$1" && mkdir -p "$1"' "$tmp" || die $EX_HUB_PERMS push \
         "could not create the staging directory $tmp on $CFG_HUB_HOST"
 
     local snap
@@ -1538,18 +1631,18 @@ push_local_to_hub() {
         set +f
         preserve_excluded_hub "$tmp"
         IN_SWAP=1
-        hub_exec "
+        hub_exec_args '
             set -e
-            trap '' HUP INT TERM
-            old='$CFG_HUB_PATH.sts-old-$$'
-            rm -rf \"\$old\"
-            mv '$CFG_HUB_PATH' \"\$old\"
-            if ! mv '$tmp' '$CFG_HUB_PATH'; then
-                mv \"\$old\" '$CFG_HUB_PATH'
+            trap "" HUP INT TERM
+            hub="$1"; tmp="$2"; old="$1.sts-old-$3"
+            rm -rf "$old"
+            mv "$hub" "$old"
+            if ! mv "$tmp" "$hub"; then
+                mv "$old" "$hub"
                 exit 90
             fi
-            rm -rf \"\$old\"
-        " || die $EX_HUB_PERMS push \
+            rm -rf "$old"
+        ' "$CFG_HUB_PATH" "$tmp" "$$" || die $EX_HUB_PERMS push \
             "transfer succeeded but moving it into place on $CFG_HUB_HOST failed - the previous hub content was restored, or is at $CFG_HUB_PATH.sts-old-$$"
         IN_SWAP=0
     fi
@@ -1734,7 +1827,7 @@ cmd_status() {
     fi
 
     local lockinfo
-    lockinfo="$(hub_exec "cat '$(hub_lock_path)/owner' 2>/dev/null | head -3 | tr '\n' ' '" 2>/dev/null || true)"
+    lockinfo="$(hub_exec_args 'cat "$1/owner" 2>/dev/null | head -3 | tr "\n" " "' "$(hub_lock_path)" 2>/dev/null || true)"
     if [ -n "$lockinfo" ]; then
         say "  hub lock     : HELD by $lockinfo"
     else
@@ -1996,7 +2089,7 @@ cmd_push() {
     esac
 
     # The hub directory may legitimately not exist yet on a first seed.
-    hub_exec "mkdir -p '$CFG_HUB_PATH'" >/dev/null 2>&1 || true
+    hub_exec_args 'mkdir -p "$1"' "$CFG_HUB_PATH" >/dev/null 2>&1 || true
     say "pushing $CFG_LOCAL_SAVE_PATH -> $CFG_HUB_HOST:$CFG_HUB_PATH"
     push_local_to_hub "$CFG_LOCAL_SAVE_PATH"
 

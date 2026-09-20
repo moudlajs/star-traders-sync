@@ -375,6 +375,18 @@ ISO timestamp, level, step, and result, rotated at `LOG_MAX_BYTES`
 (default 5 MB) keeping `LOG_KEEP` (default 3) files. stdout stays short;
 detail goes to the log. `--verbose` mirrors the log to stderr.
 
+## Notes on paths
+
+Config paths are restricted to `A-Za-z0-9._/@+-` — no spaces, quotes or
+shell metacharacters.
+
+That is a limitation of **rsync**, not of this tool's own plumbing. Commands
+sent to the hub pass values as positional parameters, so a path containing a
+quote or a semicolon is inert. But rsync hands a remote path to the hub's
+login shell itself, and openrsync has no `--protect-args`, so a space still
+splits a transfer into two arguments and a metacharacter still reaches a
+shell. Lifting the restriction means solving that first.
+
 ## Notes on rsync
 
 macOS 15 ships **openrsync** (`protocol version 29`, "rsync 2.6.9

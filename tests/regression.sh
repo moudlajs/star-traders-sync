@@ -282,6 +282,29 @@ check "shell metacharacters in a path are rejected"     11 "$STS" status
 check "  nothing executed"                               1 test -e /tmp/sts-pwned
 
 # --------------------------------------------------------------------------
+section "remote command construction"
+newcase inject
+INJ="$CASE/injfn.sh"
+sed -n '/^shq() {/,/^}/p; /^hub_exec_args() {/,/^}/p' "$STS" > "$INJ"
+rm -f "$CASE/PWNED"
+INJ_OK=1
+# Values that would be code if they were interpolated into shell text.
+for v in "plain" "with space" "it's quoted" "semi;colon" "dollar\$HOME" \
+         'back`id`tick' "pipe|and&" "\$(touch $CASE/PWNED)" "; touch $CASE/PWNED"; do
+    got="$(
+        IS_HUB=1
+        . "$INJ"
+        hub_exec_args 'printf "%s" "$1"' "$v"
+    )"
+    [ "$got" = "$v" ] || INJ_OK=0
+done
+check "hostile values survive as literal arguments"      0 test "$INJ_OK" = "1"
+check "  and none of them executed"                      1 test -e "$CASE/PWNED"
+
+MULTI="$(IS_HUB=1; . "$INJ"; hub_exec_args 'printf "[%s][%s]" "$1" "$2"' "a b" "c'd")"
+check "multiple arguments stay separate"                 0 test "$MULTI" = "[a b][c'd]"
+
+# --------------------------------------------------------------------------
 section "dry run writes nothing"
 newcase dry
 "$STS" push --force=local >/dev/null 2>&1
