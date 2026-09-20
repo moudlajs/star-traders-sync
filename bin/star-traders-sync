@@ -1900,7 +1900,7 @@ doc_environment() {
             else
                 doc_warn "~/bin is not on PATH, so 'sts' will not resolve"
                 if [ "$OPT_FIX" -eq 1 ]; then
-                    doc_fix_path
+                    doc_fix_path || true
                 else
                     DOC_FIXABLE=$((DOC_FIXABLE + 1))
                     doc_do "sts doctor --fix   will append to ~/.zshrc (with a backup):"
@@ -2013,12 +2013,23 @@ doc_config() {
     fi
     doc_ok "all required keys set"
 
-    if [ "$CFG_HUB_PATH" = "$CFG_LOCAL_SAVE_PATH" ]; then
-        doc_fail "HUB_PATH and LOCAL_SAVE_PATH are the same directory"
-        doc_do "the hub must be separate from the save directory on every machine"
+    # The real validator, not a hand-rolled subset. die() inside $( ) only
+    # ends the subshell, so doctor gets the message and keeps going.
+    # Reimplementing these checks is what let the nesting rule - the one
+    # that stops a push moving the live save directory out from under the
+    # game - go unchecked here in the first place.
+    local verr vrc
+    set +e
+    verr="$( validate_config 2>&1 )"
+    vrc=$?
+    set -e
+    if [ $vrc -ne 0 ]; then
+        doc_fail "config is not valid"
+        printf '%s\n' "$verr" | grep -v '^exit code' | sed 's/^error: //' \
+            | while IFS= read -r l; do [ -n "$l" ] && doc_do "$l"; done
         return 1
     fi
-    doc_ok "hub and save directories are distinct"
+    doc_ok "config passes every validation rule"
 
     DOC_CONFIG_OK=1
     return 0
@@ -2319,14 +2330,18 @@ cmd_doctor() {
     printf '%s %s - checking this machine\n' "$PROG" "$STS_VERSION"
     [ "$OPT_FIX" -eq 1 ] && printf '(--fix: safe repairs will be applied)\n'
 
-    doc_environment
+    # Every one of these returns non-zero for ordinary states - no save
+    # directory yet, no ssh yet. Under set -e a bare call aborts the whole
+    # report at the first problem, which is the one thing doctor exists not
+    # to do. The || true is load-bearing, not defensive noise.
+    doc_environment || true
 
     if doc_config; then
-        doc_state_dirs
-        doc_save_dir
+        doc_state_dirs || true
+        doc_save_dir || true
         if doc_tailscale; then
-            doc_ssh
-            doc_hub_only
+            doc_ssh || true
+            doc_hub_only || true
         else
             doc_section "ssh to the hub"; doc_skip "a working tailscale"
         fi

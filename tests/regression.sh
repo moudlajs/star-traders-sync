@@ -368,6 +368,29 @@ rm -rf "$CASE/state"
 check "doctor --fix created the state directory"         0 test -d "$CASE/state/star-traders-sync"
 check "  and left the saves alone"                       0 test -f "$CASE/local/core.db"
 
+# The bug that made all of this necessary: doctor's helpers return non-zero
+# for ordinary first-run states, and under set -e a bare call aborted the
+# whole report at the first problem - the one thing doctor exists not to do.
+# The most likely first-run state of all is "the game has never been
+# launched", so there is no save directory yet.
+newcase doctor_continues
+rm -rf "$CASE/local"
+check "a later failure does not truncate the report"     1 "$STS" doctor
+check "  the summary line still prints"                  0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
+check "  the reassurance still prints"                   0 sh -c '"$1" doctor 2>&1 | grep -q "Nothing above was changed"' _ "$STS"
+check "  and later sections still ran"                   0 sh -c '"$1" doctor 2>&1 | grep -q "tailscale"' _ "$STS"
+
+# doctor must reach the same verdict as the real commands. It used to
+# hand-roll a subset of the validation and miss the nesting rule, so it
+# could report the config fine for a config push would refuse.
+newcase doctor_agrees
+mkdir -p "$CASE/hub/saves"
+printf 'x\n' > "$CASE/hub/saves/core.db"
+sed -i '' "s|^LOCAL_SAVE_PATH=.*|LOCAL_SAVE_PATH=$CASE/hub/saves|" "$CASE/cfg/star-traders-sync/config"
+check "nested paths: doctor rejects them"                1 "$STS" doctor
+check "  push rejects them too"                         11 "$STS" push
+check "  and both give the same reason"                  0 sh -c '"$1" doctor 2>&1 | grep -q "is inside HUB_PATH"' _ "$STS"
+
 # --------------------------------------------------------------------------
 section "backup"
 newcase backup
