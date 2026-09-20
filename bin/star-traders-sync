@@ -78,6 +78,8 @@ COMMAND=""
 IS_HUB=0              # 1 when this machine is the hub host
 HUB_ENDPOINT=""       # resolved MagicDNS name or tailnet IP
 HUB_ENDPOINT_KIND=""  # "magicdns" or "tailnet-ip" or "local"
+HUB_DNS=""            # the peer's MagicDNS name, when it has one
+HUB_IP=""             # the peer's tailnet IP
 TS_BIN=""
 
 LOCAL_LOCK_FILE=""
@@ -586,6 +588,8 @@ resolve_hub_endpoint() {
 
     dns="$(printf '%s' "$peer"  | cut -f1)"
     ip="$(printf '%s' "$peer"   | cut -f2)"
+    HUB_DNS="$dns"
+    HUB_IP="$ip"
     online="$(printf '%s' "$peer" | cut -f3)"
 
     if [ "$online" != "1" ]; then
@@ -687,6 +691,48 @@ hub_exec() {
     fi
 }
 
+# The same machine is reachable by MagicDNS name AND tailnet IP, and each
+# address is trusted separately by ssh. If one of them is already in
+# known_hosts, the key it holds is a verification source the user has
+# already accepted, so we can do the comparison for them instead of making
+# them eyeball two SHA256 strings. If neither is trusted, fall back to
+# out-of-band verification - we never auto-accept.
+hostkey_help() {
+    local want="$1" alt="" altkey="" wantkey=""
+
+    if [ "$want" = "$HUB_DNS" ]; then alt="$HUB_IP"; else alt="$HUB_DNS"; fi
+
+    if [ -n "$alt" ] && ssh-keygen -F "$alt" >/dev/null 2>&1; then
+        altkey="$(ssh-keygen -F "$alt" 2>/dev/null | grep -v '^#' | awk '{print $3}' | head -1)"
+        wantkey="$(ssh-keyscan -t ed25519 "$want" 2>/dev/null | awk '{print $3}' | head -1)"
+        if [ -n "$altkey" ] && [ "$altkey" = "$wantkey" ]; then
+            printf 'You already trust this machine as %s, and %s presents the\n' "$alt" "$want"
+            printf 'identical host key. Adding the name is safe. Run:\n\n' >&2
+            printf '    ssh-keyscan -t ed25519 %s >> ~/.ssh/known_hosts\n\n' "$want" >&2
+            printf 'Then re-run this command.\n' >&2
+            log INFO ssh "advised adding $want, key matches already-trusted $alt"
+            return 0
+        fi
+        if [ -n "$altkey" ] && [ -n "$wantkey" ]; then
+            printf 'WARNING: you trust %s, but %s presents a DIFFERENT key.\n' "$alt" "$want" >&2
+            printf 'Do not add it. Investigate before going further.\n' >&2
+            log ERROR ssh "key mismatch between $alt and $want"
+            return 0
+        fi
+    fi
+
+    printf 'Not auto-accepting it. Verify out of band, then add it.\n\n' >&2
+    printf 'Copy this whole block - it does the comparison for you:\n\n' >&2
+    printf '    # 1. ON THE HUB (%s), print its real fingerprint:\n' "$CFG_HUB_HOST" >&2
+    printf '    ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\n\n' >&2
+    printf '    # 2. HERE, paste that SHA256:... value in and run it:\n' >&2
+    printf '    EXPECT="SHA256:PASTE_IT_HERE"\n' >&2
+    printf '    GOT=$(ssh-keyscan -t ed25519 %s 2>/dev/null | ssh-keygen -lf - | awk "{print \\$2}")\n' "$want" >&2
+    printf '    [ "$GOT" = "$EXPECT" ] \\\n' >&2
+    printf '      && ssh-keyscan -t ed25519 %s >> ~/.ssh/known_hosts && echo "MATCH - added" \\\n' "$want" >&2
+    printf '      || echo "MISMATCH: $GOT - do not proceed"\n' >&2
+}
+
 # Probe ssh once, and turn its failure modes into distinct exit codes.
 check_hub_reachable() {
     if [ "$IS_HUB" -eq 1 ]; then
@@ -718,12 +764,8 @@ check_hub_reachable() {
         *"No ED25519 host key is known"*|*"Host key verification failed"*|\
         *"No RSA host key is known"*)
             log ERROR ssh "host key UNKNOWN for $HUB_ENDPOINT: $out"
-            printf 'error: the SSH host key for %s is not trusted yet.\n' "$HUB_ENDPOINT" >&2
-            printf 'Not auto-accepting it. Verify it out of band first:\n' >&2
-            printf '  on the hub:   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\n' >&2
-            printf '  compare with: ssh-keyscan -t ed25519 %s 2>/dev/null | ssh-keygen -lf -\n' "$HUB_ENDPOINT" >&2
-            printf 'If and only if they match:\n' >&2
-            printf '  ssh-keyscan -t ed25519 %s >> ~/.ssh/known_hosts\n' "$HUB_ENDPOINT" >&2
+            printf 'error: the SSH host key for %s is not trusted yet.\n\n' "$HUB_ENDPOINT" >&2
+            hostkey_help "$HUB_ENDPOINT"
             exit $EX_SSH_HOSTKEY ;;
     esac
 
