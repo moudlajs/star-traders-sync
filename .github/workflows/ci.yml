@@ -55,13 +55,19 @@ jobs:
 
       - name: Every exit code in the script is documented
         run: |
+          # The table lives in docs/troubleshooting.md. If it moves again,
+          # this path must move with it or the check silently passes on
+          # nothing.
+          TABLE=docs/troubleshooting.md
+          [ -f "$TABLE" ] || { echo "$TABLE is missing"; exit 1; }
           grep -oE '^readonly EX_[A-Z_]+=[0-9]+' bin/star-traders-sync \
             | grep -oE '[0-9]+$' | sort -un > /tmp/codes
+          [ -s /tmp/codes ] || { echo "found no exit codes to check"; exit 1; }
           missing=0
           while read -r c; do
-            grep -qE "^\| $c \|" README.md || { echo "exit code $c not in README table"; missing=1; }
+            grep -qE "^\| $c \|" "$TABLE" || { echo "exit code $c not in $TABLE"; missing=1; }
           done < /tmp/codes
-          [ "$missing" -eq 0 ] && echo "ok - all documented"
+          [ "$missing" -eq 0 ] && echo "ok - $(wc -l < /tmp/codes | tr -d ' ') codes documented"
           exit $missing
 
       - name: Regression suite
