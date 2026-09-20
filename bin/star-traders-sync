@@ -964,7 +964,58 @@ hub_clock_epoch() { hub_exec 'date -u +%s'; }
 # and a local lock so two sts invocations on one machine cannot race.
 # --------------------------------------------------------------------------
 
+# The human-readable name, used in messages only.
 this_host_id() { printf '%s' "$(hostname -s)"; }
+
+# The identity the hub lock is actually compared against.
+#
+# hostname -s can change with DHCP or network conditions on macOS. When it
+# did, this machine's own stale lock was thereafter seen as another
+# machine's and was never cleared at any age, requiring a manual rm -rf on
+# the hub to recover. A value generated once and kept in the state
+# directory does not move.
+stable_host_id() {
+    local f="$STATE_DIR/host-id" tmp id
+    if [ -f "$f" ]; then
+        id="$(head -1 "$f" 2>/dev/null || true)"
+        case "$id" in
+            ?*) printf '%s' "$id"; return 0 ;;
+        esac
+    fi
+    mkdir -p "$STATE_DIR" 2>/dev/null || true
+    id="$(uuidgen 2>/dev/null || true)"
+    [ -n "$id" ] || id="$(this_host_id)-$$-$(date -u +%s)"
+
+    # The first write has to be atomic. `backup` and the sync commands hold
+    # different local locks on purpose, so a nightly backup can overlap a
+    # manual push; on a machine that has no id yet, both would generate one
+    # and a plain `>` would be last-writer-wins. The loser would then carry
+    # an id in memory that is not the one on disk, and a lock it left behind
+    # would afterwards look like another machine's - reintroducing exactly
+    # the permanent lockout this function exists to prevent.
+    #
+    # ln(1) is atomic and fails if the target exists, so the loser of the
+    # race finds out and adopts the winner's id instead of its own.
+    # mktemp, not "$f.$$": two processes can share a pid-derived name (a
+    # subshell inherits its parent's $$), and then one would link a file the
+    # other had already overwritten - returning an id that is not the one on
+    # disk, which is the very failure this is guarding against.
+    tmp="$(mktemp "$f.XXXXXX" 2>/dev/null || true)"
+    [ -n "$tmp" ] || tmp="$f.$$.$RANDOM"
+    if printf '%s\n' "$id" > "$tmp" 2>/dev/null && ln "$tmp" "$f" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null || true
+        printf '%s' "$id"
+        return 0
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+
+    # Either someone else won the race, or the file could not be created.
+    id="$(head -1 "$f" 2>/dev/null || true)"
+    case "$id" in
+        ?*) printf '%s' "$id" ;;
+        *)  printf '%s' "$(this_host_id)" ;;   # no persistence: degrade to the old behaviour
+    esac
+}
 
 # shlock ships with macOS and handles a stale pid for us.
 acquire_local_lock() {
@@ -1022,7 +1073,7 @@ acquire_hub_lock() {
     out="$(hub_exec "
         lock='$lock'
         if mkdir \"\$lock\" 2>/dev/null; then
-            printf '%s\n%s\n%s\n%s\n%s\n' '$(this_host_id)' '$$' '$(iso_now)' \"\$(date -u +%s)\" '$HUB_LOCK_NONCE' > '$info'
+            printf '%s\n%s\n%s\n%s\n%s\n%s\n' '$(this_host_id)' '$$' '$(iso_now)' \"\$(date -u +%s)\" '$HUB_LOCK_NONCE' '$(stable_host_id)' > '$info'
             echo STS_LOCK_ACQUIRED
         elif [ ! -d \"\$lock\" ]; then
             echo STS_LOCK_NOCREATE
@@ -1087,18 +1138,27 @@ acquire_hub_lock() {
             exit $EX_LOCK_REMOTE ;;
     esac
 
-    local owner_host owner_pid owner_iso owner_epoch age
+    local owner_host owner_pid owner_iso owner_epoch owner_id age is_ours
     owner_host="$(printf  '%s' "$out" | sed -n '3p')"
     owner_pid="$(printf   '%s' "$out" | sed -n '4p')"
     owner_iso="$(printf   '%s' "$out" | sed -n '5p')"
     owner_epoch="$(printf '%s' "$out" | sed -n '6p')"
+    owner_id="$(printf    '%s' "$out" | sed -n '8p')"
     case "$owner_epoch" in ''|*[!0-9]*) owner_epoch=0 ;; esac
 
     age=$((now - owner_epoch))
     [ "$age" -lt 0 ] && age=0
 
+    # Prefer the stable id. Fall back to the hostname for a lock written by
+    # a version that predates it, so an upgrade mid-lock still behaves.
+    if [ -n "$owner_id" ]; then
+        [ "$owner_id" = "$(stable_host_id)" ] && is_ours=1 || is_ours=0
+    else
+        [ "$owner_host" = "$(this_host_id)" ] && is_ours=1 || is_ours=0
+    fi
+
     # A lock from another machine is never cleared automatically, at any age.
-    if [ "$owner_host" != "$(this_host_id)" ]; then
+    if [ "$is_ours" -eq 0 ]; then
         log ERROR lock "hub lock held by $owner_host since $owner_iso (${age}s)"
         printf 'error: the hub is locked by another machine.\n' >&2
         printf '  holder: %s (pid %s)\n' "$owner_host" "$owner_pid" >&2
