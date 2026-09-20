@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag must match STS_VERSION in the script
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(grep -oE '^readonly STS_VERSION="[^"]+"' bin/star-traders-sync \
+                 | cut -d'"' -f2)"
+          echo "tag=$tag  STS_VERSION=$ver"
+          [ "$tag" = "$ver" ] || {
+            echo "tag and STS_VERSION disagree - bump one of them"; exit 1; }
+
+      - name: Regression suite must pass before a release exists
+        run: ./tests/regression.sh
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME" \
+            bin/star-traders-sync \
+            install.sh \
+            config.example
