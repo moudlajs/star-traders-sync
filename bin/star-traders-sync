@@ -1173,6 +1173,50 @@ run_rsync() {
     printf '%s' "$out"
 }
 
+# Files in SYNC_EXCLUDE are machine-local by definition: they are never
+# transferred in either direction. But a transfer stages into a temp
+# directory and swaps that whole directory into place, so anything not
+# transferred is simply absent from the replacement - which silently
+# deleted the receiver's own copy. They must be carried across by hand.
+preserve_excluded() {
+    local live="$1" staged="$2" name f count=0
+    [ -d "$live" ] || return 0
+    set -f
+    for name in $CFG_SYNC_EXCLUDE; do
+        set +f
+        for f in "$live"/$name; do
+            if [ -f "$f" ] && [ ! -e "$staged/$(basename "$f")" ]; then
+                cp -p "$f" "$staged"/ 2>/dev/null && count=$((count + 1))
+            fi
+        done
+        set -f
+    done
+    set +f
+    if [ "$count" -gt 0 ]; then
+        log INFO preserve "carried $count excluded file(s) across the swap into $staged"
+    fi
+    return 0
+}
+
+preserve_excluded_hub() {
+    local staged="$1" name names=""
+    [ -n "$CFG_SYNC_EXCLUDE" ] || return 0
+    set -f
+    for name in $CFG_SYNC_EXCLUDE; do names="$names '$name'"; done
+    set +f
+    hub_exec "
+        cd '$CFG_HUB_PATH' 2>/dev/null || exit 0
+        for n in $names; do
+            for f in \$n; do
+                [ -f \"\$f\" ] || continue
+                [ -e '$staged'/\"\$f\" ] && continue
+                cp -p \"\$f\" '$staged'/ 2>/dev/null || true
+            done
+        done
+    " >/dev/null 2>&1 || true
+    return 0
+}
+
 # pull_hub_to_local - hub becomes local. Snapshot first, temp dir, then swap.
 pull_hub_to_local() {
     local target="$1" tmp src
@@ -1199,6 +1243,7 @@ pull_hub_to_local() {
             --link-dest="$target" -e "ssh $(ssh_opts)" "$src" "$tmp/" >/dev/null
     fi
 
+    preserve_excluded "$target" "$tmp"
     swap_into_place "$tmp" "$target"
     log INFO pull "hub -> local complete"
 }
@@ -1218,11 +1263,13 @@ push_local_to_hub() {
     if [ "$IS_HUB" -eq 1 ]; then
         run_rsync push -a --delete $(rsync_excludes) \
             --link-dest="$CFG_HUB_PATH" "$src/" "$tmp/" >/dev/null
+        preserve_excluded "$CFG_HUB_PATH" "$tmp"
         swap_into_place "$tmp" "$CFG_HUB_PATH"
     else
         dst="$(ssh_target):$tmp/"
         run_rsync push -a --delete $(rsync_excludes) \
             --link-dest="$CFG_HUB_PATH" -e "ssh $(ssh_opts)" "$src/" "$dst" >/dev/null
+        preserve_excluded_hub "$tmp"
         IN_SWAP=1
         hub_exec "
             set -e
