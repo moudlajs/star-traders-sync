@@ -20,8 +20,52 @@ VERBOSE=0
 PASS=0; FAIL=0
 trap 'rm -rf "$SB"' EXIT
 
-# This machine must self-detect as the hub so no ssh is needed.
-HUBNAME="$(hostname -s | tr '[:upper:]' '[:lower:]')"
+# Every case needs this machine to self-detect as the hub, so no ssh is
+# involved. That means HUB_HOST must equal whatever the script's own
+# tailscale lookup reports as Self.
+#
+# find_tailscale prefers /Applications/Tailscale.app over PATH, so a stub on
+# PATH cannot override a real App Store install. Where one exists, ask it
+# for the real node name; otherwise stub the whole thing, which is what CI
+# runners need since they have no tailscaled at all.
+TS_APP="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+if [ -x "$TS_APP" ]; then
+    HUBNAME="$("$TS_APP" status --json 2>/dev/null \
+        | python3 -c 'import json,sys;print((json.load(sys.stdin).get("Self",{}).get("HostName") or "").lower())' 2>/dev/null)"
+    if [ -z "$HUBNAME" ]; then
+        printf 'cannot reach the local tailscaled; start Tailscale or remove the app to use the stub\n' >&2
+        exit 1
+    fi
+    printf 'using the installed Tailscale, node name: %s\n' "$HUBNAME"
+else
+    HUBNAME="$(hostname -s | tr '[:upper:]' '[:lower:]')"
+    printf 'no Tailscale app present, stubbing it; node name: %s\n' "$HUBNAME"
+fi
+
+# The suite exercises sync logic, not Tailscale, and CI runners have no
+# tailscaled. Stub it so the tests do not depend on a live tailnet: it
+# reports this machine as Self, Running, with the hub name the cases use.
+mkdir -p "$SB/bin"
+cat > "$SB/bin/tailscale" <<STUB
+#!/bin/bash
+case "\$*" in
+    *"status --json"*)
+        cat <<JSON
+{"BackendState":"Running",
+ "Self":{"HostName":"$HUBNAME","DNSName":"$HUBNAME.test.ts.net.",
+         "TailscaleIPs":["100.64.0.1"],"Online":true},
+ "Peer":{}}
+JSON
+        ;;
+    *"status"*)  printf '100.64.0.1  %s  test  macOS  -\n' "$HUBNAME" ;;
+    *"ping"*)    printf 'pong from %s (100.64.0.1) in 1ms\n' "$HUBNAME" ;;
+    *"version"*) printf 'stub\n' ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$SB/bin/tailscale"
+PATH="$SB/bin:$PATH"
+export PATH
 
 newcase() {
     CASE="$SB/$1"
