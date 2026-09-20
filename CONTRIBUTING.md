@@ -48,12 +48,28 @@ nothing; the bodies in this repo's history are the model.
 
 ## Branches
 
+`<type>/<short-description>`, lowercase. CI rejects anything else.
+
 ```
-fix/<short-description>
-feat/<short-description>
-docs/<short-description>
-infra/<short-description>
+feat  fix  hotfix  docs  test  ci  refactor  chore  infra  release
 ```
+
+```
+fix/hub-lock-leak
+feat/sts-update
+infra/ci-and-release
+```
+
+## What CI enforces
+
+Both of the conventions above are checked, not just documented:
+
+- **PR title** must match Conventional Commits. It becomes the squash
+  commit subject on `main`, so it is the thing that actually matters.
+- **Branch name** must match the pattern above.
+
+`main` is protected: the `check` job must pass, the branch must be up to
+date, and force-pushes and deletions are blocked.
 
 ## Pull requests
 

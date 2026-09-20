@@ -1,0 +1,63 @@
+name: Claude review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    # Skip drafts, and for comments only fire on an explicit @claude mention.
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # Minted with `claude setup-token` - uses the Claude subscription,
+          # not a metered API key.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review this pull request against the rules in CLAUDE.md and
+            CONTRIBUTING.md, both of which are in the repository.
+
+            The absolute requirement: running the wrong command at the wrong
+            time may refuse to work, but must NEVER lose a save file. Weigh
+            every change against that first.
+
+            Prioritise, in order:
+
+            1. Data loss. Any path where a save directory could be deleted,
+               truncated or overwritten without a verified snapshot existing
+               first. Trace rm -rf, mv, and rsync --delete. Check that
+               transfers still stage into a temp directory and are moved into
+               place only on success.
+            2. Locking. The hub lock must be released on every exit path,
+               must not be held while the game is being played, and must
+               never be removed when it belongs to another machine.
+            3. set -e and bash 3.2 correctness. Note that bash exempts A in
+               "A && B" from errexit, but the list's status still becomes a
+               function's return value. No bash 4+ features: macOS ships 3.2.
+            4. Whether a bug fix arrived with the regression test case that
+               would have caught it. CONTRIBUTING.md requires this.
+
+            CLAUDE.md lists environment facts already verified the hard way
+            (openrsync vs GNU rsync, BSD find, cpio through symlinks, macOS
+            shlock). Do not re-litigate those; do check that new code honours
+            them.
+
+            Be specific: file:line, a concrete triggering scenario, and a
+            suggested fix. Say plainly if you find nothing significant rather
+            than padding the review. Do not approve or merge.
