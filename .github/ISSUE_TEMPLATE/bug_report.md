@@ -2,6 +2,7 @@
 name: Bug report
 about: Something went wrong
 labels: bug
+assignees: moudlajs
 ---
 
 <!--

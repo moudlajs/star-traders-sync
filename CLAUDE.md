@@ -68,6 +68,25 @@ Do not re-derive these the hard way:
 - The hub lock must be released before `sts play` waits for the game, or
   the other machine is blocked for the whole session.
 
+## When you open a pull request here
+
+Answer every review comment and resolve the thread - see CONTRIBUTING.md.
+Replying at top level while leaving the inline threads open does not count;
+it looks answered from a distance and unfinished up close.
+
+```bash
+# list threads and whether they are resolved
+gh api graphql -f query='{ repository(owner:"OWNER", name:"REPO") {
+  pullRequest(number:N) { reviewThreads(first:20) {
+    nodes { id isResolved path line } } } } }'
+
+# reply in-thread, then resolve it
+gh api graphql -f query='mutation { addPullRequestReviewThreadReply(
+  input:{pullRequestReviewThreadId:"THREAD_ID", body:"..."}) { comment { id } } }'
+gh api graphql -f query='mutation { resolveReviewThread(
+  input:{threadId:"THREAD_ID"}) { thread { isResolved } } }'
+```
+
 ## When reviewing your own work here
 
 Three independent adversarial reviews found real data-loss bugs in code

@@ -82,6 +82,22 @@ date, and force-pushes and deletions are blocked.
   Conventional Commits format above.
 - The PR body should say what was verified, not just what was changed.
 
+## Review comments
+
+Every review comment gets a reply, and the thread gets resolved. Both, not
+one or the other: a reply with the thread left open reads as unfinished,
+and a resolve with no reply reads as dismissal.
+
+Three outcomes, all acceptable, none silent:
+
+- **Fixed** - reply saying what changed, and in which commit. Resolve.
+- **Not fixing** - reply saying why. Resolve.
+- **Fixing later** - open an issue, reply with its number. Resolve.
+
+This holds for review comments from Claude as much as from a person. A
+review that finds a real bug and gets no response is worse than no review,
+because the next one is easier to ignore.
+
 ## Testing
 
 ```bash

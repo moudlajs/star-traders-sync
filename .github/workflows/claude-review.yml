@@ -2,9 +2,17 @@ name: Claude review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # ready_for_review is the one that was missing: without it, a PR opened
+    # as a draft and later marked ready was never reviewed at all.
+    types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
+
+# A review takes minutes. Without this, pushing three times in quick
+# succession starts three reviews of increasingly stale diffs.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
