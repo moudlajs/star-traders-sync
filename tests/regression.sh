@@ -391,6 +391,42 @@ check "nested paths: doctor rejects them"                1 "$STS" doctor
 check "  push rejects them too"                         11 "$STS" push
 check "  and both give the same reason"                  0 sh -c '"$1" doctor 2>&1 | grep -q "is inside HUB_PATH"' _ "$STS"
 
+# The same set -e class again, on two paths the suite could not previously
+# reach: a launchd job that is loaded but has never run emits no
+# "last exit code" line, and a tailscale that prints anything other than
+# clean JSON. Both aborted the whole report.
+newcase doctor_stubs
+mkdir -p "$CASE/stub"
+cat > "$CASE/stub/launchctl" <<'STUB'
+#!/bin/bash
+# A job that is loaded but has never run: no "last exit code" line at all.
+case "$1" in
+    print) printf 'state = not running\npath = /dev/null\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/launchctl"
+PATH_SAVED="$PATH"
+PATH="$CASE/stub:$PATH"
+check "launchd job loaded but never run: report survives"  0 "$STS" doctor
+check "  summary still printed"                            0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
+PATH="$PATH_SAVED"
+
+cat > "$CASE/stub/tailscale" <<'STUB'
+#!/bin/bash
+# Something printed ahead of the JSON, as older clients and warnings do.
+case "$*" in
+    *"status --json"*) printf 'warning: something\n{ not valid json\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale"
+PATH="$CASE/stub:$PATH"
+check "malformed tailscale JSON: report survives"          1 "$STS" doctor
+check "  says it could not read the status"                0 sh -c '"$1" doctor 2>&1 | grep -q "not valid JSON"' _ "$STS"
+check "  summary still printed"                            0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
+PATH="$PATH_SAVED"
+
 # --------------------------------------------------------------------------
 section "backup"
 newcase backup

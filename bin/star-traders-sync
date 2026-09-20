@@ -1961,26 +1961,24 @@ doc_config() {
     fi
     doc_ok "$CONFIG_FILE"
 
-    # Parse it the same way load_config does, but collect problems.
-    local lineno=0 line key bad=0
-    while IFS= read -r line || [ -n "$line" ]; do
-        lineno=$((lineno + 1))
-        line="${line%$'\r'}"
-        case "$line" in ''|'#'*) continue ;; esac
-        case "$line" in *=*) ;; *)
-            doc_fail "line $lineno is not KEY=value: $line"; bad=1; continue ;;
-        esac
-        key="$(printf '%s' "${line%%=*}" | tr -d '[:space:]')"
-        if ! config_key_known "$key"; then
-            doc_fail "line $lineno: unknown key '$key'"
-            doc_do "compare against config.example; the file is parsed, not sourced"
-            bad=1
-        fi
-    done < "$CONFIG_FILE"
-    [ "$bad" -eq 1 ] && return 1
-
-    # Safe to load now.
-    load_config 2>/dev/null || { doc_fail "config could not be loaded"; return 1; }
+    # Ask the real parser whether it would succeed, in a subshell where its
+    # die() ends only that subshell. A hand-rolled mirror of load_config's
+    # checks would silently drift the moment load_config gained a rule, and
+    # doctor would regain the truncated-report bug for good.
+    local lerr lrc
+    set +e
+    lerr="$( load_config 2>&1 )"
+    lrc=$?
+    set -e
+    if [ $lrc -ne 0 ]; then
+        doc_fail "config cannot be parsed"
+        printf '%s\n' "$lerr" | grep -v '^exit code' | sed 's/^error: //' \
+            | while IFS= read -r l; do [ -n "$l" ] && doc_do "$l"; done
+        doc_do "the file is parsed, not sourced - no shell syntax, see config.example"
+        return 1
+    fi
+    # It parses, so this cannot die.
+    load_config
 
     # Placeholders are the single most common half-finished install.
     local k v placeholders=""
@@ -2130,7 +2128,12 @@ doc_tailscale() {
         return 1
     }
     state="$(printf '%s' "$json" | python3 -c \
-        'import json,sys;print(json.load(sys.stdin).get("BackendState",""))' 2>/dev/null)"
+        'import json,sys;print(json.load(sys.stdin).get("BackendState",""))' 2>/dev/null || true)"
+    if [ -z "$state" ]; then
+        doc_fail "could not read tailscale status - the output was not valid JSON"
+        doc_do "check it by hand: $TS_BIN status --json | head -3"
+        return 1
+    fi
     if [ "$state" != "Running" ]; then
         doc_fail "tailscale is $state, not Running"
         doc_do "log in:  $TS_BIN up"
@@ -2140,7 +2143,11 @@ doc_tailscale() {
 
     local self
     self="$(printf '%s' "$json" | python3 -c \
-        'import json,sys;print((json.load(sys.stdin).get("Self",{}).get("HostName") or ""))' 2>/dev/null)"
+        'import json,sys;print((json.load(sys.stdin).get("Self",{}).get("HostName") or ""))' 2>/dev/null || true)"
+    if [ -z "$self" ]; then
+        doc_fail "tailscale is running but did not report this machine's name"
+        return 1
+    fi
     doc_ok "running, this machine is '$self'"
 
     # Is this the hub?
@@ -2311,11 +2318,14 @@ doc_hub_only() {
     local label="com.github.moudlajs.star-traders-sync.backup"
     if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
         local ec
-        ec="$(launchctl print "gui/$(id -u)/$label" 2>/dev/null | grep -oE 'last exit code = [0-9]+' | grep -oE '[0-9]+$')"
-        if [ "${ec:-0}" = "0" ]; then
+        ec="$(launchctl print "gui/$(id -u)/$label" 2>/dev/null | grep -oE 'last exit code = [0-9]+' | grep -oE '[0-9]+$' || true)"
+        if [ -z "$ec" ]; then
+            doc_ok "daily backup job is loaded, has not run yet"
+            doc_do "run it now to be sure it works: launchctl kickstart -k gui/$(id -u)/$label"
+        elif [ "$ec" = "0" ]; then
             doc_ok "daily backup job is loaded, last run exited 0"
         else
-            doc_warn "daily backup job is loaded, last run exited ${ec:-unknown}"
+            doc_warn "daily backup job is loaded, last run exited $ec"
             doc_do "see ~/Library/Logs/star-traders-sync/backup.launchd.err"
             [ "${ec:-0}" = "70" ] && doc_do "exit 70 usually means the disk was unplugged, or macOS denied access to it"
         fi
