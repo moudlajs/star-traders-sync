@@ -67,6 +67,57 @@ jobs:
       - name: Regression suite
         run: ./tests/regression.sh -v
 
+  conventions:
+    # PR title becomes the squash commit subject, so it is the thing that
+    # actually has to follow Conventional Commits. Branch naming is checked
+    # alongside it. Both are documented in CONTRIBUTING.md.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: PR title follows Conventional Commits
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "title: $TITLE"
+          if ! printf '%s' "$TITLE" | grep -qE '^(feat|fix|docs|test|ci|refactor|perf|chore|build|revert)(\([a-z0-9-]+\))?!?: .+'; then
+            cat <<'MSG'
+          PR title must follow Conventional Commits, because it becomes the
+          squash commit subject on main.
+
+            <type>(<optional scope>): <subject>
+
+          Types: feat fix docs test ci refactor perf chore build revert
+          Scopes used here: sync lock backup snapshot config play
+
+          Examples:
+            fix(lock): release the hub lock on every early return
+            feat(backup): mark completed backups
+            docs: cut config.example from 190 lines to 97
+          MSG
+            exit 1
+          fi
+          echo "ok"
+
+      - name: Branch name follows the convention
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          echo "branch: $BRANCH"
+          if ! printf '%s' "$BRANCH" | grep -qE '^(feat|fix|hotfix|docs|test|ci|refactor|chore|infra|release)/[a-z0-9._-]+$'; then
+            cat <<'MSG'
+          Branch must be <type>/<short-description>, lowercase.
+
+          Allowed: feat fix hotfix docs test ci refactor chore infra release
+
+          Examples:
+            fix/hub-lock-leak
+            feat/sts-update
+            infra/ci-and-release
+          MSG
+            exit 1
+          fi
+          echo "ok"
+
   shellcheck:
     runs-on: ubuntu-latest
     # Advisory for now: the script predates shellcheck and has a backlog.
