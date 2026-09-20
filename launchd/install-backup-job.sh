@@ -60,6 +60,35 @@ fi
 STS="$HOME/bin/$PROG"
 [ -x "$STS" ] || fail "$STS not found or not executable - run ./install.sh first"
 
+# A launchd job that runs a shell script is, to macOS privacy protection,
+# just /bin/bash - so granting it access to a removable volume grants it to
+# every shell script on the machine. Build a small launcher binary instead,
+# so the grant lands on one ad-hoc-signed executable that does nothing but
+# start this script.
+SUPPORT="$HOME/Library/Application Support/$PROG"
+LAUNCHER="$SUPPORT/sts-backup-launcher"
+SRC="$(cd "$(dirname "$0")" && pwd)/backup-launcher.c"
+
+if [ -f "$SRC" ] && command -v clang >/dev/null 2>&1; then
+    mkdir -p "$SUPPORT"
+    if clang -O2 -Wall -Wextra -DSTS_SCRIPT="\"$STS\"" -o "$LAUNCHER" "$SRC" 2>/dev/null \
+       && codesign -s - -f "$LAUNCHER" >/dev/null 2>&1; then
+        note "built and signed $LAUNCHER"
+        PROGRAM_ARGS="    <string>$LAUNCHER</string>"
+        GRANT_TARGET="$LAUNCHER"
+    else
+        note "could not build the launcher; falling back to running the script directly"
+        PROGRAM_ARGS="    <string>$STS</string>
+    <string>backup</string>"
+        GRANT_TARGET="/bin/bash"
+    fi
+else
+    note "no clang available; the job will run the script directly"
+    PROGRAM_ARGS="    <string>$STS</string>
+    <string>backup</string>"
+    GRANT_TARGET="/bin/bash"
+fi
+
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 
 # BACKUP_MOUNT_WAIT matters for a scheduled run: the job can fire moments
@@ -91,8 +120,7 @@ cat > "$PLIST" <<PEOF
 
   <key>ProgramArguments</key>
   <array>
-    <string>$STS</string>
-    <string>backup</string>
+$PROGRAM_ARGS
   </array>
 
   <key>EnvironmentVariables</key>
@@ -142,6 +170,9 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 note "job loaded, scheduled daily at $(printf '%02d:%02d' "$HOUR" "$MINUTE")"
 
 printf '\nRunning it once now to prove it works under launchd, not just in your shell:\n\n'
+# Truncate first, so what is shown below is this run and not a previous one.
+: > "$LOG_DIR/backup.launchd.out"
+: > "$LOG_DIR/backup.launchd.err"
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
 sleep 8
 
@@ -158,6 +189,20 @@ if [ -s "$LOG_DIR/backup.launchd.out" ]; then
 fi
 
 cat <<MSG
+
+macOS denies a launchd job access to removable volumes, with no prompt.
+If the test run above failed with "Operation not permitted", grant it:
+
+  System Settings > Privacy & Security > Full Disk Access
+  press Cmd-Shift-G in the file picker and paste:
+
+      $GRANT_TARGET
+
+  then reload the job so launchd picks up the new decision:
+
+      launchctl bootout gui/$(id -u)/$LABEL
+      launchctl bootstrap gui/$(id -u) $PLIST
+      launchctl kickstart -k gui/$(id -u)/$LABEL
 
 Installed. Useful commands:
 

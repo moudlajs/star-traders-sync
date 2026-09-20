@@ -87,6 +87,7 @@ HELD_HUB_LOCK=0
 HUB_LOCK_NONCE=""
 HUB_LOCK_TRIES=0     # bounds the clear-then-retry path in acquire_hub_lock
 IN_SWAP=0            # 1 while a directory swap is half-done - see on_exit
+BACKUP_PENDING=""    # a backup directory that is not yet known to be good
 DYING=0              # 1 once die() has been entered, so on_err stays quiet
 CLEANUP_PATHS=""      # newline separated, removed by the EXIT trap
 
@@ -203,6 +204,10 @@ on_exit() {
         # Still release the lock: the guard protects data, not the lock file.
         [ -n "$LOCAL_LOCK_FILE" ] && rm -f "$LOCAL_LOCK_FILE" 2>/dev/null
         return $code
+    fi
+    if [ -n "$BACKUP_PENDING" ] && [ -d "$BACKUP_PENDING" ]; then
+        log WARN backup "removing incomplete backup $BACKUP_PENDING"
+        rm -rf "$BACKUP_PENDING" 2>/dev/null || true
     fi
     local p
     printf '%s\n' "$CLEANUP_PATHS" | while IFS= read -r p; do
@@ -2165,6 +2170,20 @@ cmd_backup() {
     local prev
     prev="$(list_complete_backups | tail -1)"
 
+    local can_link=1 lt_a lt_b
+    lt_a="$CFG_BACKUP_DEST/.sts-linktest"
+    lt_b="$CFG_BACKUP_DEST/.sts-linktest-2"
+    rm -f "$lt_a" "$lt_b" 2>/dev/null || true
+    if : > "$lt_a" 2>/dev/null && ln "$lt_a" "$lt_b" 2>/dev/null; then
+        can_link=1
+    else
+        can_link=0
+    fi
+    rm -f "$lt_a" "$lt_b" 2>/dev/null || true
+    if [ "$can_link" -eq 0 ]; then
+        log INFO backup "$CFG_BACKUP_DEST does not support hard links (exFAT or similar) - each backup is a full copy"
+    fi
+
     local stamp dest suffix mkerr
     stamp="$(iso_now)"
     dest="$CFG_BACKUP_DEST/$stamp"
@@ -2196,7 +2215,8 @@ cmd_backup() {
     done
 
     say "backing up $CFG_HUB_PATH ($src_n files) -> $dest"
-    if [ -n "$prev" ]; then
+    BACKUP_PENDING="$dest"
+    if [ -n "$prev" ] && [ "$can_link" -eq 1 ]; then
         run_rsync backup -a --link-dest="$CFG_BACKUP_DEST/$prev" \
             "$CFG_HUB_PATH/" "$dest/" >/dev/null
         log INFO backup "hardlinked unchanged files against $prev"
@@ -2215,6 +2235,7 @@ cmd_backup() {
 
     # The marker is written last. Anything without it was interrupted.
     date -u +%Y-%m-%dT%H:%M:%SZ > "$dest/.sts-complete"
+    BACKUP_PENDING=""
 
     # Prune only timestamp-shaped, completed backups, newest kept.
     if [ "$CFG_BACKUP_KEEP" -gt 0 ]; then
