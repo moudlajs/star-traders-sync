@@ -9,7 +9,7 @@
 # Plain bash 3.2. No bash 4 features: no associative arrays, no ${x^^},
 # no mapfile, no <<<.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 readonly STS_VERSION="1.0.0"
 readonly PROG="star-traders-sync"
@@ -82,6 +82,8 @@ TS_BIN=""
 
 LOCAL_LOCK_FILE=""
 HELD_HUB_LOCK=0
+HUB_LOCK_NONCE=""
+IN_SWAP=0            # 1 while a directory swap is half-done - see on_exit
 CLEANUP_PATHS=""      # newline separated, removed by the EXIT trap
 
 # Config values, all prefixed CFG_. Defaults for optional keys only.
@@ -89,7 +91,6 @@ CFG_HUB_HOST=""
 CFG_HUB_USER=""
 CFG_HUB_PATH=""
 CFG_LOCAL_SAVE_PATH=""
-CFG_LOCAL_SAVE_PATH_MODS=""
 CFG_STEAM_APPID=""
 CFG_GAME_PROCESS_NAME=""
 CFG_GAME_START_TIMEOUT="90"
@@ -138,7 +139,7 @@ rotate_log() {
         [ -f "$LOG_FILE.$prev" ] && mv -f "$LOG_FILE.$prev" "$LOG_FILE.$i"
         i=$prev
     done
-    mv -f "$LOG_FILE" "$LOG_FILE.1"
+    mv -f "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null || true
 }
 
 # log LEVEL STEP MESSAGE...
@@ -185,6 +186,15 @@ on_err() {
 on_exit() {
     local code=$?
     release_hub_lock
+    # While a swap is in flight the staged copy may be the ONLY complete copy
+    # of the saves. Never sweep it away on a signal; leave a breadcrumb that
+    # the next run recovers from instead.
+    if [ "$IN_SWAP" -eq 1 ]; then
+        log ERROR trap "interrupted mid-swap - staged data left in place deliberately, run $PROG again to recover"
+        printf 'error: interrupted while swapping directories.\n' >&2
+        printf 'Nothing was deleted. Re-run %s and it will recover.\n' "$PROG" >&2
+        return $code
+    fi
     local p
     printf '%s' "$CLEANUP_PATHS" | while IFS= read -r p; do
         [ -n "$p" ] && rm -rf "$p" 2>/dev/null || true
@@ -196,6 +206,10 @@ on_exit() {
 
 trap 'on_err $LINENO' ERR
 trap on_exit EXIT
+# Without these, a Ctrl-C or a launchd SIGTERM exits 0 and an interrupted
+# transfer is reported as a clean success.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cleanup_later() { CLEANUP_PATHS="$CLEANUP_PATHS
 $1"; }
@@ -208,7 +222,7 @@ $1"; }
 config_key_known() {
     case "$1" in
         HUB_HOST|HUB_USER|HUB_PATH) return 0 ;;
-        LOCAL_SAVE_PATH|LOCAL_SAVE_PATH_MODS) return 0 ;;
+        LOCAL_SAVE_PATH) return 0 ;;
         STEAM_APPID|GAME_PROCESS_NAME|GAME_START_TIMEOUT) return 0 ;;
         SSH_PORT|SSH_EXTRA_OPTS|SSH_CONNECT_TIMEOUT|PREFER_MAGICDNS) return 0 ;;
         SYNC_EXCLUDE) return 0 ;;
@@ -221,7 +235,7 @@ config_key_known() {
 
 config_key_is_path() {
     case "$1" in
-        HUB_PATH|LOCAL_SAVE_PATH|LOCAL_SAVE_PATH_MODS|BACKUP_VOLUME|BACKUP_DEST)
+        HUB_PATH|LOCAL_SAVE_PATH|BACKUP_VOLUME|BACKUP_DEST)
             return 0 ;;
         *) return 1 ;;
     esac
@@ -277,7 +291,7 @@ load_config() {
 
 # Every missing required key is reported at once, not one per run.
 validate_config() {
-    local missing="" k v
+    local missing="" k v name
     for k in HUB_HOST HUB_USER HUB_PATH LOCAL_SAVE_PATH STEAM_APPID \
              GAME_PROCESS_NAME BACKUP_VOLUME BACKUP_DEST; do
         eval "v=\${CFG_$k}"
@@ -315,6 +329,42 @@ validate_config() {
              "HUB_PATH must be absolute - it is evaluated on the hub host, where ~ is the hub user's home, got '$CFG_HUB_PATH'" ;;
     esac
 
+    # Paths reach a remote shell through both ssh and rsync, and openrsync
+    # has no --protect-args. A space would split a transfer in two; a quote,
+    # $, ; or backtick would execute. Restrict them to characters that
+    # survive that round trip intact.
+    for k in HUB_PATH LOCAL_SAVE_PATH BACKUP_VOLUME BACKUP_DEST; do
+        eval "v=\${CFG_$k}"
+        case "$v" in
+            *[!A-Za-z0-9._/@+-]*)
+                die $EX_CONFIG_MALFORMED config \
+                    "$k contains a character that cannot survive being passed to a remote shell: '$v'. Allowed: letters, digits, and . _ / @ + - (no spaces, quotes or shell metacharacters)." ;;
+        esac
+    done
+
+    for name in $CFG_SYNC_EXCLUDE; do
+        case "$name" in
+            *[!A-Za-z0-9._*@+-]*)
+                die $EX_CONFIG_MALFORMED config \
+                    "SYNC_EXCLUDE entry '$name' contains an unsafe character" ;;
+        esac
+    done
+
+    # L4: on the hub, both sides are local paths. If one contained the other,
+    # push would move the live save directory out from under the game.
+    if [ "$CFG_HUB_PATH" = "$CFG_LOCAL_SAVE_PATH" ]; then
+        die $EX_CONFIG_MALFORMED config \
+            "HUB_PATH and LOCAL_SAVE_PATH are the same directory. The hub must be separate from the game's save directory, on every machine including the hub itself."
+    fi
+    case "$CFG_LOCAL_SAVE_PATH/" in
+        "$CFG_HUB_PATH"/*) die $EX_CONFIG_MALFORMED config \
+            "LOCAL_SAVE_PATH ($CFG_LOCAL_SAVE_PATH) is inside HUB_PATH ($CFG_HUB_PATH) - a push would move the live save directory out from under the game" ;;
+    esac
+    case "$CFG_HUB_PATH/" in
+        "$CFG_LOCAL_SAVE_PATH"/*) die $EX_CONFIG_MALFORMED config \
+            "HUB_PATH ($CFG_HUB_PATH) is inside LOCAL_SAVE_PATH ($CFG_LOCAL_SAVE_PATH) - the hub would be synced into itself" ;;
+    esac
+
     # BACKUP_DEST under BACKUP_VOLUME, or the mount check means nothing.
     case "$CFG_BACKUP_DEST" in
         "$CFG_BACKUP_VOLUME"/*) ;;
@@ -348,13 +398,46 @@ check_bash_version() {
 
 check_tools() {
     local missing=""
-    command -v rsync >/dev/null 2>&1 || missing="$missing rsync"
-    command -v ssh   >/dev/null 2>&1 || missing="$missing ssh"
+    command -v rsync   >/dev/null 2>&1 || missing="$missing rsync"
+    command -v ssh     >/dev/null 2>&1 || missing="$missing ssh"
+    command -v python3 >/dev/null 2>&1 || missing="$missing python3"
     if [ -n "$missing" ]; then
         die $EX_TOOL_MISSING preflight \
             "required tools not on PATH:$missing"
     fi
     log DEBUG preflight "rsync=$(command -v rsync) ssh=$(command -v ssh)"
+}
+
+# Recover from a run that died between the two renames of a swap, and clear
+# staging directories left by failed transfers.
+recover_orphans() {
+    local parent old incoming
+    parent="$(dirname "$CFG_LOCAL_SAVE_PATH")"
+
+    if [ ! -d "$CFG_LOCAL_SAVE_PATH" ]; then
+        old=""
+        for cand in "$CFG_LOCAL_SAVE_PATH".sts-old-*; do
+            [ -d "$cand" ] || continue
+            old="$cand"
+            break
+        done
+        if [ -n "$old" ]; then
+            log ERROR recover "interrupted swap detected: $CFG_LOCAL_SAVE_PATH missing, saves parked at $old"
+            printf 'error: a previous run was interrupted while swapping directories.\n' >&2
+            printf '\nYour saves are INTACT at:\n  %s\n' "$old" >&2
+            printf '\nRestore them with:\n  mv %s %s\n' "$old" "$CFG_LOCAL_SAVE_PATH" >&2
+            printf '\nNothing else will run until you do - this is deliberate, so an\n' >&2
+            printf 'empty save directory cannot be created on top of the recovery.\n' >&2
+            exit $EX_LOCAL_SAVE_BAD
+        fi
+    fi
+
+    for incoming in "$parent"/.sts-incoming-*; do
+        [ -d "$incoming" ] || continue
+        log WARN recover "removing stale staging directory $incoming"
+        rm -rf "$incoming"
+    done
+    return 0
 }
 
 # Local save directory must exist, be a directory, and contain something.
@@ -369,11 +452,6 @@ check_local_save_path() {
         "LOCAL_SAVE_PATH is not readable: $p"
 }
 
-local_save_is_empty() {
-    local n
-    n=$(count_files "$CFG_LOCAL_SAVE_PATH")
-    [ "$n" -eq 0 ]
-}
 
 # --------------------------------------------------------------------------
 # Tailscale
@@ -699,9 +777,11 @@ check_hub_path() {
 manifest_snippet() {
     local dir="$1" prunes="" name
     prunes="! -path './$SNAP_DIRNAME/*' ! -name '$LOCK_DIRNAME' ! -path './$LOCK_DIRNAME/*'"
+    set -f   # SYNC_EXCLUDE is a literal name list, never a glob to expand here
     for name in $CFG_SYNC_EXCLUDE; do
         prunes="$prunes ! -name '$name'"
     done
+    set +f
     printf "cd '%s' 2>/dev/null || exit 0; LC_ALL=C find . -type f %s | LC_ALL=C sort | while IFS= read -r f; do printf '%%s  %%s  %%s\\n' \"\$(shasum -a 256 \"\$f\" | cut -d' ' -f1)\" \"\$(stat -f%%z \"\$f\")\" \"\$f\"; done" \
         "$dir" "$prunes"
 }
@@ -766,7 +846,7 @@ acquire_local_lock() {
     log DEBUG lock "local lock held, pid $$"
 }
 
-hub_lock_path() { printf '%s/%s' "$CFG_HUB_PATH" "$LOCK_DIRNAME"; }
+hub_lock_path() { printf '%s/%s' "$(dirname "$CFG_HUB_PATH")" "$LOCK_DIRNAME"; }
 
 # mkdir is atomic on both HFS+ and APFS, and over ssh it stays atomic because
 # it is a single syscall on the far side.
@@ -778,7 +858,7 @@ acquire_hub_lock() {
     out="$(hub_exec "
         lock='$lock'
         if mkdir \"\$lock\" 2>/dev/null; then
-            printf '%s\n%s\n%s\n%s\n' '$(this_host_id)' '$$' '$(iso_now)' \"\$(date -u +%s)\" > '$info'
+            printf '%s\n%s\n%s\n%s\n%s\n' '$(this_host_id)' '$$' '$(iso_now)' \"\$(date -u +%s)\" '$HUB_LOCK_NONCE' > '$info'
             echo STS_LOCK_ACQUIRED
         else
             if [ -f '$info' ]; then cat '$info'; else echo 'unknown'; fi
@@ -837,8 +917,17 @@ acquire_hub_lock() {
 release_hub_lock() {
     [ "$HELD_HUB_LOCK" -eq 1 ] || return 0
     HELD_HUB_LOCK=0
-    hub_exec "rm -rf '$(hub_lock_path)'" >/dev/null 2>&1 || \
-        log WARN lock "could not release the hub lock at $(hub_lock_path) - clear it by hand"
+    local lock info
+    lock="$(hub_lock_path)"
+    info="$lock/owner"
+    # Only remove it if it is still OURS. Deleting someone else's lock is
+    # worse than leaking our own.
+    hub_exec "
+        if [ \"\$(sed -n 5p '$info' 2>/dev/null)\" = '$HUB_LOCK_NONCE' ]; then
+            rm -rf '$lock'
+        fi
+    " >/dev/null 2>&1 || \
+        log WARN lock "could not release the hub lock at $lock - clear it by hand"
     log DEBUG lock "hub lock released"
 }
 
@@ -848,29 +937,68 @@ release_hub_lock() {
 # --------------------------------------------------------------------------
 
 # snapshot_local DIR -> echoes the snapshot path
+#
+# A snapshot that is quietly incomplete is worse than no snapshot, because
+# --delete is gated on it existing. So the file count is asserted, not
+# assumed, and the timestamp directory is created with a plain mkdir so two
+# snapshots in the same second cannot merge into one.
 snapshot_local() {
-    local dir="$1" stamp snaproot snapdir
-    stamp="$(iso_now)"
+    local dir="$1" stamp snaproot snapdir src_n dst_n suffix
     snaproot="$(dirname "$dir")/$SNAP_DIRNAME"
-    snapdir="$snaproot/$stamp"
+    mkdir -p "$snaproot" || die $EX_SNAPSHOT snapshot \
+        "could not create snapshot root $snaproot"
 
-    mkdir -p "$snapdir" || die $EX_SNAPSHOT snapshot \
-        "could not create snapshot directory $snapdir"
-    # cp -Rp, not a hardlink - a snapshot that shares inodes is not a snapshot.
-    if ! (cd "$dir" && find . -type f ! -path "./$SNAP_DIRNAME/*" ! -path "./$LOCK_DIRNAME/*" -print0 | \
+    stamp="$(iso_now)"
+    snapdir="$snaproot/$stamp"
+    suffix=2
+    while ! mkdir "$snapdir" 2>/dev/null; do
+        snapdir="$snaproot/$stamp-$suffix"
+        suffix=$((suffix + 1))
+        if [ "$suffix" -gt 50 ]; then
+            die $EX_SNAPSHOT snapshot "could not create a unique snapshot directory under $snaproot"
+        fi
+    done
+
+    src_n="$(cd "$dir" && find . -type f ! -path "./$SNAP_DIRNAME/*" 2>/dev/null | grep -c . || true)"
+    src_n="${src_n:-0}"
+
+    if ! (cd "$dir" && find . -type f ! -path "./$SNAP_DIRNAME/*" -print0 2>/dev/null | \
           cpio -0 -pdm --quiet "$snapdir" 2>/dev/null); then
+        log WARN snapshot "cpio path failed for $dir, falling back to cp -Rp"
         cp -Rp "$dir"/ "$snapdir"/ 2>/dev/null || die $EX_SNAPSHOT snapshot \
             "could not snapshot $dir into $snapdir"
     fi
+
+    dst_n="$(find "$snapdir" -type f 2>/dev/null | grep -c . || true)"
+    dst_n="${dst_n:-0}"
+    if [ "$dst_n" -lt "$src_n" ]; then
+        die $EX_SNAPSHOT snapshot \
+            "snapshot of $dir is INCOMPLETE - $src_n files in the source, only $dst_n copied to $snapdir. Refusing to overwrite anything. Check permissions on $dir."
+    fi
+
     prune_snapshots_local "$snaproot"
-    log INFO snapshot "local snapshot $snapdir"
+    log INFO snapshot "local snapshot $snapdir ($dst_n files)"
     printf '%s' "$snapdir"
 }
 
 prune_snapshots_local() {
-    local snaproot="$1" keep="$CFG_SNAPSHOT_KEEP" n old
+    local snaproot="$1" keep="$CFG_SNAPSHOT_KEEP" n old live
     [ "$keep" -gt 0 ] || return 0
     [ -d "$snaproot" ] || return 0
+
+    # If the live directory is empty, the snapshots are the only copy left.
+    # Pruning them on a schedule is how a recoverable mistake becomes a
+    # permanent one, so refuse to prune at all in that state.
+    live="$(dirname "$snaproot")"
+    if [ -d "$live" ]; then
+        local livecount
+        livecount="$(find "$live" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
+        if [ "${livecount:-0}" -eq 0 ]; then
+            log WARN snapshot "live directory $live is empty - NOT pruning snapshots, they may be the only copy"
+            return 0
+        fi
+    fi
+
     n="$(ls -1 "$snaproot" 2>/dev/null | grep -c . || true)"
     [ "${n:-0}" -le "$keep" ] && return 0
     ls -1 "$snaproot" | LC_ALL=C sort | head -n $((n - keep)) | while IFS= read -r old
@@ -880,33 +1008,67 @@ prune_snapshots_local() {
             log INFO snapshot "pruned old snapshot $old"
         fi
     done
+    return 0
 }
 
+# The hub twin of the above. The remote snippet sets its own pipefail: the
+# script's is not inherited through ssh, and without it a find that dies
+# partway (an unreadable directory) leaves cpio exiting 0 and a partial
+# snapshot reported as a good one.
 snapshot_hub() {
-    local stamp snaproot snapdir
+    local stamp snaproot snapdir out
     stamp="$(iso_now)"
     snaproot="$(dirname "$CFG_HUB_PATH")/$SNAP_DIRNAME"
     snapdir="$snaproot/$stamp"
 
-    hub_exec "
-        set -e
-        mkdir -p '$snapdir'
+    out="$(hub_exec "
+        set -eo pipefail
+        snaproot='$snaproot'
+        snapdir='$snapdir'
+        mkdir -p \"\$snaproot\"
+        suffix=2
+        while ! mkdir \"\$snapdir\" 2>/dev/null; do
+            snapdir=\"\$snaproot/$stamp-\$suffix\"
+            suffix=\$((suffix + 1))
+            [ \"\$suffix\" -gt 50 ] && { echo STS_SNAP_NODIR; exit 1; }
+        done
         cd '$CFG_HUB_PATH'
-        find . -type f ! -path './$SNAP_DIRNAME/*' ! -path './$LOCK_DIRNAME/*' -print0 \
-            | cpio -0 -pdm '$snapdir' 2>/dev/null \
-            || cp -Rp '$CFG_HUB_PATH'/ '$snapdir'/
+        src_n=\$(find . -type f ! -path './$SNAP_DIRNAME/*' 2>/dev/null | grep -c . || true)
+        if ! find . -type f ! -path './$SNAP_DIRNAME/*' -print0 2>/dev/null \
+             | cpio -0 -pdm \"\$snapdir\" 2>/dev/null; then
+            cp -Rp '$CFG_HUB_PATH'/ \"\$snapdir\"/ 2>/dev/null || { echo STS_SNAP_FAIL; exit 1; }
+        fi
+        dst_n=\$(find \"\$snapdir\" -type f 2>/dev/null | grep -c . || true)
+        if [ \"\${dst_n:-0}\" -lt \"\${src_n:-0}\" ]; then
+            echo \"STS_SNAP_SHORT \$src_n \$dst_n\"
+            exit 1
+        fi
         keep=$CFG_SNAPSHOT_KEEP
-        if [ \"\$keep\" -gt 0 ]; then
-            n=\$(ls -1 '$snaproot' 2>/dev/null | grep -c . || true)
+        livecount=\$(find '$CFG_HUB_PATH' -maxdepth 1 -type f 2>/dev/null | grep -c . || true)
+        if [ \"\$keep\" -gt 0 ] && [ \"\${livecount:-0}\" -gt 0 ]; then
+            n=\$(ls -1 \"\$snaproot\" 2>/dev/null | grep -c . || true)
             if [ \"\${n:-0}\" -gt \"\$keep\" ]; then
-                ls -1 '$snaproot' | LC_ALL=C sort | head -n \$((n - keep)) \
-                  | while IFS= read -r old; do rm -rf '$snaproot'/\"\$old\"; done
+                ls -1 \"\$snaproot\" | LC_ALL=C sort | head -n \$((n - keep)) \
+                  | while IFS= read -r old; do
+                        [ -n \"\$old\" ] || continue
+                        rm -rf \"\$snaproot/\$old\"
+                    done
             fi
         fi
-    " >/dev/null 2>&1 || die $EX_SNAPSHOT snapshot \
-        "could not snapshot the hub directory on $CFG_HUB_HOST into $snapdir"
+        echo \"STS_SNAP_OK \$dst_n \$snapdir\"
+    " 2>&1)" || true
 
-    log INFO snapshot "hub snapshot $snapdir on $CFG_HUB_HOST"
+    case "$out" in
+        *STS_SNAP_OK*)
+            log INFO snapshot "hub snapshot ok on $CFG_HUB_HOST: $(printf '%s' "$out" | tr '\n' ' ')" ;;
+        *STS_SNAP_SHORT*)
+            die $EX_SNAPSHOT snapshot \
+                "hub snapshot is INCOMPLETE ($out) - refusing to overwrite the hub. Check permissions under $CFG_HUB_PATH on $CFG_HUB_HOST." ;;
+        *)
+            die $EX_SNAPSHOT snapshot \
+                "could not snapshot the hub directory on $CFG_HUB_HOST into $snapdir: $out" ;;
+    esac
+
     printf '%s' "$snapdir"
 }
 
@@ -923,9 +1085,11 @@ snapshot_hub() {
 
 rsync_excludes() {
     local out="--exclude=$SNAP_DIRNAME/ --exclude=$LOCK_DIRNAME/" name
+    set -f
     for name in $CFG_SYNC_EXCLUDE; do
         out="$out --exclude=$name"
     done
+    set +f
     printf '%s' "$out"
 }
 
@@ -1017,15 +1181,20 @@ push_local_to_hub() {
         dst="$(ssh_target):$tmp/"
         run_rsync push -a --delete $(rsync_excludes) \
             --link-dest="$CFG_HUB_PATH" -e "ssh $(ssh_opts)" "$src/" "$dst" >/dev/null
+        IN_SWAP=1
         hub_exec "
             set -e
             old='$CFG_HUB_PATH.sts-old-$$'
             rm -rf \"\$old\"
             mv '$CFG_HUB_PATH' \"\$old\"
-            mv '$tmp' '$CFG_HUB_PATH'
+            if ! mv '$tmp' '$CFG_HUB_PATH'; then
+                mv \"\$old\" '$CFG_HUB_PATH'
+                exit 90
+            fi
             rm -rf \"\$old\"
         " || die $EX_HUB_PERMS push \
-            "transfer succeeded but moving it into place on $CFG_HUB_HOST failed - the previous hub content is at $CFG_HUB_PATH.sts-old-$$"
+            "transfer succeeded but moving it into place on $CFG_HUB_HOST failed - the previous hub content was restored, or is at $CFG_HUB_PATH.sts-old-$$"
+        IN_SWAP=0
     fi
     log INFO push "local -> hub complete"
 }
@@ -1035,12 +1204,15 @@ swap_into_place() {
     local tmp="$1" target="$2" old
     old="$target.sts-old-$$"
     rm -rf "$old"
+    IN_SWAP=1
     mv "$target" "$old"
     if ! mv "$tmp" "$target"; then
         mv "$old" "$target"
+        IN_SWAP=0
         die $EX_RSYNC swap \
             "could not move the staged copy into place - the original was restored"
     fi
+    IN_SWAP=0
     rm -rf "$old"
     log DEBUG swap "$tmp -> $target"
 }
@@ -1279,6 +1451,9 @@ cmd_dry_run_plan() {
 
 cmd_pull() {
     check_game_not_running
+    # Lock BEFORE reading either side, so the verdict cannot be computed
+    # against a hub that another machine is about to change.
+    acquire_hub_lock
     check_clock_skew
 
     local lman hman lfp hfp lcount hcount lep hep state verdict
@@ -1290,6 +1465,13 @@ cmd_pull() {
     state="$(state_read)"
     verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
     log INFO pull "verdict=$verdict local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
+
+    # Never let an empty hub empty this machine. Not overridable: there is
+    # no situation where copying nothing over real saves is what you meant.
+    if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then
+        die $EX_HUB_EMPTY pull \
+            "the hub has 0 files and this machine has $lcount - refusing to empty this machine. If the hub really should be the source of truth, seed it first with '$PROG push --force=local' from the machine that has the saves."
+    fi
 
     if [ "$OPT_FORCE" = "local" ]; then
         die $EX_USAGE pull "--force=local makes no sense for 'pull' - it would discard the hub. Use 'sts push --force=local'."
@@ -1334,7 +1516,6 @@ cmd_pull() {
         HUB_ONLY) ;;
     esac
 
-    acquire_hub_lock
     say "pulling $CFG_HUB_HOST:$CFG_HUB_PATH -> $CFG_LOCAL_SAVE_PATH"
     pull_hub_to_local "$CFG_LOCAL_SAVE_PATH"
     release_hub_lock
@@ -1347,6 +1528,7 @@ cmd_pull() {
 
 cmd_push() {
     check_game_not_running
+    acquire_hub_lock
     check_clock_skew
 
     local lman hman lfp hfp lcount hcount lep hep state verdict
@@ -1358,6 +1540,12 @@ cmd_push() {
     state="$(state_read)"
     verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
     log INFO push "verdict=$verdict local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
+
+    # Symmetric guard: never let an empty local directory wipe the hub.
+    if [ "$lcount" -eq 0 ] && [ "$hcount" -gt 0 ]; then
+        die $EX_CONFLICT_FIRSTRUN push \
+            "this machine has 0 files and the hub has $hcount - refusing to empty the hub. If this machine's empty state is correct, delete the hub contents by hand on $CFG_HUB_HOST."
+    fi
 
     if [ "$OPT_FORCE" = "hub" ]; then
         die $EX_USAGE push "--force=hub makes no sense for 'push' - it would discard this machine. Use 'sts pull --force=hub'."
@@ -1410,7 +1598,6 @@ cmd_push() {
         LOCAL_ONLY) ;;
     esac
 
-    acquire_hub_lock
     # The hub directory may legitimately not exist yet on a first seed.
     hub_exec "mkdir -p '$CFG_HUB_PATH'" >/dev/null 2>&1 || true
     say "pushing $CFG_LOCAL_SAVE_PATH -> $CFG_HUB_HOST:$CFG_HUB_PATH"
@@ -1617,6 +1804,8 @@ FLAGS
   --verbose        mirror the log to stderr as well as the log file.
   --force=local    resolve a conflict by keeping THIS machine's saves.
   --force=hub      resolve a conflict by keeping the HUB's saves.
+                   Neither --force can make sts sync FROM an empty side;
+                   that is refused unconditionally.
   --offline-ok     if the hub is offline, allow 'play' to run on the local
                    save. Warns loudly. Nothing is synced in either direction.
   -h, --help       this text.
@@ -1635,11 +1824,12 @@ EXIT CODES
   10  config file missing or unreadable
   11  config malformed: unparseable line, or an unknown key
   12  required config keys missing or empty (all listed at once)
-  13  LOCAL_SAVE_PATH missing, not a directory, or unreadable
+  13  LOCAL_SAVE_PATH missing/not a directory, or a previous run was
+      interrupted mid-swap and the saves need restoring by hand
   14  hub path does not exist on the hub host
   15  running as root (refused)
   16  bash older than 3.2 (refused)
-  17  rsync or ssh not on PATH
+  17  rsync, ssh or python3 not on PATH
 
   Tailscale
   20  tailscale binary not found in /Applications or on PATH
@@ -1656,7 +1846,7 @@ EXIT CODES
   32  hub user cannot read or write the hub directory
   33  rsync exited non-zero (its own code and stderr are printed)
   34  out of disk space on one side
-  63  snapshot failed, so no overwrite was attempted
+  63  snapshot failed or was incomplete, so nothing was overwritten
 
   Game and concurrency
   40  the game is running on this machine
@@ -1667,8 +1857,10 @@ EXIT CODES
 
   Data safety
   60  both sides changed since the last sync - resolve with --force=
-  61  first run on this machine and both sides have saves
-  62  hub is empty; seeding it needs an explicit 'push --force=local'
+  61  first run with saves on both sides, OR this machine is empty and
+      pushing would wipe the hub (refused, not overridable)
+  62  hub is empty; seeding needs 'push --force=local', OR the hub is
+      empty and pulling would wipe this machine (refused, not overridable)
 
   Backup
   70  backup volume not mounted (or not actually a mount point)
@@ -1724,7 +1916,12 @@ main() {
 
     log INFO start "command=$COMMAND dry_run=$OPT_DRY_RUN force='${OPT_FORCE}' offline_ok=$OPT_OFFLINE_OK version=$STS_VERSION"
 
-    check_local_save_path
+    HUB_LOCK_NONCE="$(this_host_id)-$$-$(date -u +%s)"
+
+    if [ "$COMMAND" != "backup" ]; then
+        recover_orphans
+        check_local_save_path
+    fi
     acquire_local_lock
 
     # backup is local to the hub and deliberately does not need the tailnet.
