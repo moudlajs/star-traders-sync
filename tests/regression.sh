@@ -14,6 +14,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 STS="$REPO/bin/star-traders-sync"
 SB="$(mktemp -d "${TMPDIR:-/tmp}/sts-tests.XXXXXX")"
+REAL_HOME="$HOME"
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
@@ -83,7 +84,9 @@ SNAPSHOT_KEEP=3
 BACKUP_VOLUME=$CASE/vol
 BACKUP_DEST=$CASE/vol/b
 EOF
+    mkdir -p "$CASE/home"
     export XDG_CONFIG_HOME="$CASE/cfg" XDG_STATE_HOME="$CASE/state"
+    export HOME="$CASE/home"
     for f in core.db game_1.db map_1.db template_1.json; do
         printf 'v1-%s\n' "$f" > "$CASE/local/$f"
     done
@@ -332,10 +335,259 @@ AFTER="$(find "$CASE/local" "$CASE/hub" -type f -exec shasum {} + | shasum)"
 check "  nothing changed on either side"                 0 test "$BEFORE" = "$AFTER"
 
 # --------------------------------------------------------------------------
+section "doctor"
+newcase doctor_ok
+"$STS" push --force=local >/dev/null 2>&1
+check "healthy machine: doctor exits 0"                  0 "$STS" doctor
+check "  and reports zero problems"                      0 sh -c '"$1" doctor 2>&1 | grep -qE "Everything checks out|0 problem"' _ "$STS"
+
+# A missing config must be reported, not crashed on: doctor exists precisely
+# for the state where nothing else can run.
+newcase doctor_noconfig
+mkdir -p "$CASE/home/bin"
+PATH="$CASE/home/bin:$PATH"
+rm -f "$CASE/cfg/star-traders-sync/config"
+check "no config: doctor exits 1 rather than dying"      1 "$STS" doctor
+check "  names the missing file"                         0 sh -c '"$1" doctor 2>&1 | grep -q "no config at"' _ "$STS"
+check "  and skips the rest instead of guessing"         0 sh -c '"$1" doctor 2>&1 | grep -q "nothing else can be checked"' _ "$STS"
+check "  does not offer a repair that cannot help"       0 sh -c '"$1" doctor 2>&1 | grep -q "None of these can be repaired"' _ "$STS"
+PATH="${PATH#"$CASE/home/bin:"}"
+
+# The most common half-finished install: install.sh ran, config never edited.
+newcase doctor_placeholder
+sed -i '' 's|^HUB_USER=.*|HUB_USER=youruser|' "$CASE/cfg/star-traders-sync/config"
+check "placeholder config: reported as a problem"        1 "$STS" doctor
+check "  names the key still on its placeholder"         0 sh -c '"$1" doctor 2>&1 | grep -q "placeholders.*HUB_USER"' _ "$STS"
+
+# doctor without --fix must change nothing at all.
+newcase doctor_readonly
+rm -rf "$CASE/state"
+# Its own log does not count: that is doctor recording what it did, not
+# changing anything it inspected.
+snap_case() { find "$CASE" -type f ! -path "*/Library/Logs/*" 2>/dev/null | LC_ALL=C sort | shasum; }
+BEFORE="$(snap_case)"
+"$STS" doctor >/dev/null 2>&1 || true
+AFTER="$(snap_case)"
+check "doctor without --fix changes nothing"             0 test "$BEFORE" = "$AFTER"
+
+# --fix may only create things, never destroy.
+newcase doctor_fix
+rm -rf "$CASE/state"
+"$STS" doctor --fix >/dev/null 2>&1 || true
+check "doctor --fix created the state directory"         0 test -d "$CASE/state/star-traders-sync"
+check "  and left the saves alone"                       0 test -f "$CASE/local/core.db"
+
+# The bug that made all of this necessary: doctor's helpers return non-zero
+# for ordinary first-run states, and under set -e a bare call aborted the
+# whole report at the first problem - the one thing doctor exists not to do.
+# The most likely first-run state of all is "the game has never been
+# launched", so there is no save directory yet.
+newcase doctor_continues
+rm -rf "$CASE/local"
+check "a later failure does not truncate the report"     1 "$STS" doctor
+check "  the summary line still prints"                  0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
+check "  the reassurance still prints"                   0 sh -c '"$1" doctor 2>&1 | grep -q "Nothing above was changed"' _ "$STS"
+check "  and later sections still ran"                   0 sh -c '"$1" doctor 2>&1 | grep -q "tailscale"' _ "$STS"
+
+# doctor must reach the same verdict as the real commands. It used to
+# hand-roll a subset of the validation and miss the nesting rule, so it
+# could report the config fine for a config push would refuse.
+newcase doctor_agrees
+mkdir -p "$CASE/hub/saves"
+printf 'x\n' > "$CASE/hub/saves/core.db"
+sed -i '' "s|^LOCAL_SAVE_PATH=.*|LOCAL_SAVE_PATH=$CASE/hub/saves|" "$CASE/cfg/star-traders-sync/config"
+check "nested paths: doctor rejects them"                1 "$STS" doctor
+check "  push rejects them too"                         11 "$STS" push
+check "  and both give the same reason"                  0 sh -c '"$1" doctor 2>&1 | grep -q "is inside HUB_PATH"' _ "$STS"
+
+# The same set -e class again, on two paths the suite could not previously
+# reach: a launchd job that is loaded but has never run emits no
+# "last exit code" line, and a tailscale that prints anything other than
+# clean JSON. Both aborted the whole report.
+newcase doctor_stubs
+mkdir -p "$CASE/stub"
+cat > "$CASE/stub/launchctl" <<'STUB'
+#!/bin/bash
+# A job that is loaded but has never run: no "last exit code" line at all.
+case "$1" in
+    print) printf 'state = not running\npath = /dev/null\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/launchctl"
+PATH_SAVED="$PATH"
+PATH="$CASE/stub:$PATH"
+check "launchd job loaded but never run: report survives"  0 "$STS" doctor
+check "  summary still printed"                            0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
+PATH="$PATH_SAVED"
+
+cat > "$CASE/stub/tailscale" <<'STUB'
+#!/bin/bash
+# Something printed ahead of the JSON, as older clients and warnings do.
+case "$*" in
+    *"status --json"*) printf 'warning: something\n{ not valid json\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale"
+PATH="$CASE/stub:$PATH"
+check "malformed tailscale JSON: report survives"          1 "$STS" doctor
+check "  says it could not read the status"                0 sh -c '"$1" doctor 2>&1 | grep -q "not valid JSON"' _ "$STS"
+check "  summary still printed"                            0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
+PATH="$PATH_SAVED"
+
+# doctor used to compare only HostName when deciding whether this machine is
+# the hub, while every other command also accepts the short MagicDNS label.
+# When the two differ - a rename in the admin console, or Tailscale
+# suffixing -1 to resolve a name collision between two Macs - doctor decided
+# the hub was remote, tried to ssh to itself, and skipped every hub check
+# without saying so. The default stub gives both names the same value, which
+# is why nothing caught it.
+newcase doctor_hubname
+mkdir -p "$CASE/stub"
+cat > "$CASE/stub/tailscale" <<STUB
+#!/bin/bash
+case "\$*" in
+    *"status --json"*)
+        cat <<JSON
+{"BackendState":"Running",
+ "Self":{"HostName":"renamed-in-admin-console",
+         "DNSName":"$HUBNAME.test.ts.net.",
+         "TailscaleIPs":["100.64.0.1"],"Online":true},
+ "Peer":{}}
+JSON
+        ;;
+    *"ping"*) printf 'pong\n' ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale"
+PATH_SAVED="$PATH"; PATH="$CASE/stub:$PATH"
+check "hub recognised by DNS name when HostName differs"   0 sh -c '"$1" doctor 2>&1 | grep -q "IS the hub"' _ "$STS"
+check "  so the hub checks actually run"                   0 sh -c '"$1" doctor 2>&1 | grep -q "hub duties"' _ "$STS"
+check "  and it does not try to ssh to itself"             1 sh -c '"$1" doctor 2>&1 | grep -q "cannot ssh to the hub"' _ "$STS"
+PATH="$PATH_SAVED"
+
+check "--fix is rejected on commands other than doctor"    2 "$STS" status --fix
+
+# Until now every case made the test machine self-detect as the hub, so
+# doc_ssh always took its early return and the entire ssh path - not just
+# its failure branch - had zero coverage. That is how an unguarded
+# assignment survived three reviews in a row.
+newcase doctor_ssh
+mkdir -p "$CASE/stub"
+sed -i '' 's|^HUB_HOST=.*|HUB_HOST=some-other-machine|' "$CASE/cfg/star-traders-sync/config"
+cat > "$CASE/stub/tailscale" <<'STUB'
+#!/bin/bash
+case "$*" in
+    *"status --json"*)
+        cat <<JSON
+{"BackendState":"Running",
+ "Self":{"HostName":"this-client","DNSName":"this-client.test.ts.net.",
+         "TailscaleIPs":["100.64.0.9"],"Online":true},
+ "Peer":{"x":{"HostName":"some-other-machine",
+              "DNSName":"some-other-machine.test.ts.net.",
+              "TailscaleIPs":["100.64.0.1"],"Online":true}}}
+JSON
+        ;;
+    *"ping"*) printf 'pong\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+# Host key "trusted", auth succeeds, but the hub probe loses the connection -
+# the exact sequence that used to kill the report mid-way.
+cat > "$CASE/stub/ssh-keygen" <<'STUB'
+#!/bin/bash
+case "$*" in
+    *-F*) printf 'found\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+STUB
+cat > "$CASE/stub/ssh" <<'STUB'
+#!/bin/bash
+case "$*" in
+    *"echo STS_OK"*) printf 'STS_OK\n'; exit 0 ;;
+    *"bash -s"*)     printf 'client_loop: send disconnect\n' >&2; exit 255 ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale" "$CASE/stub/ssh-keygen" "$CASE/stub/ssh"
+
+# Self-contained HOME. doc_ssh looks for ~/.ssh/id_ed25519, which exists on
+# a developer machine and not on a fresh CI runner - so this case passed
+# locally and failed in CI, which is the test depending on the environment
+# rather than on the code.
+mkdir -p "$CASE/home/.ssh"
+: > "$CASE/home/.ssh/id_ed25519"
+DOCTOR_SSH_CASE="$CASE"
+
+doctor_ssh_says() {
+    # Capture first, then match. grep -q closes the pipe as soon as it hits,
+    # and under pipefail that surfaces as SIGPIPE (141) from doctor.
+    local out
+    out="$(HOME="$DOCTOR_SSH_CASE/home" \
+           PATH="$DOCTOR_SSH_CASE/stub:$PATH" \
+           XDG_CONFIG_HOME="$DOCTOR_SSH_CASE/cfg" \
+           XDG_STATE_HOME="$DOCTOR_SSH_CASE/state" \
+           "$STS" doctor 2>&1 || true)"
+    printf '%s' "$out" | grep -q "$1"
+}
+
+check "non-hub machine: the ssh path actually runs"        0 doctor_ssh_says "key auth works"
+check "connection lost mid-probe: report survives"         0 doctor_ssh_says "problem"
+check "  and says what happened"                           0 doctor_ssh_says "lost the connection"
+check "  reassurance still printed"                        0 doctor_ssh_says "Nothing above was changed"
+
+# The fifth-round fix that this covers closed a real path to losing saves:
+# --fix recreating HUB_PATH while a swap has it renamed aside turns the
+# in-flight `mv staged hub` into a move INTO the new empty directory. mv
+# exits 0, so the swap's own check reports success, and the pre-swap copy
+# is then deleted. It had no test until now.
+newcase doctor_hub_busy
+"$STS" push --force=local >/dev/null 2>&1
+rm -rf "$CASE/hub"                 # what a swap leaves behind, briefly
+mkdir -p "$CASE/.sts-lock"         # ... while holding the hub lock
+HUB_BUSY_OUT="$("$STS" doctor --fix 2>&1 || true)"
+check "hub locked: --fix refuses to recreate HUB_PATH"   1 test -d "$CASE/hub"
+check "  and says why"                                   0 sh -c 'printf "%s" "$1" | grep -q "a sync is running"' _ "$HUB_BUSY_OUT"
+check "  report still completes"                         0 sh -c 'printf "%s" "$1" | grep -q "Nothing above was changed"' _ "$HUB_BUSY_OUT"
+
+rm -rf "$CASE/.sts-lock"           # lock released, the repair is allowed
+"$STS" doctor --fix >/dev/null 2>&1 || true
+check "hub unlocked: --fix creates HUB_PATH"             0 test -d "$CASE/hub"
+
+# doc_state_dirs carries its own copy of acquire_local_lock's kill -0
+# liveness check. The existing lock cases only exercise the original, and
+# doctor_fix cannot reach this one because it deletes the state directory
+# first, so [ -d "$lockdir" ] is never true there.
+newcase doctor_stale_lock
+mkdir -p "$CASE/state/star-traders-sync/local.lock.d"
+printf '%s\n' "$$" > "$CASE/state/star-traders-sync/local.lock"
+LIVE_OUT="$("$STS" doctor 2>&1 || true)"
+check "a live sts is reported, not cleared"              0 sh -c 'printf "%s" "$1" | grep -q "another sts is running"' _ "$LIVE_OUT"
+check "  and its lock is left alone"                     0 test -d "$CASE/state/star-traders-sync/local.lock.d"
+
+printf '99999\n' > "$CASE/state/star-traders-sync/local.lock"
+check "a dead owner's lock is reported stale"            0 sh -c '"$1" doctor 2>&1 | grep -q "owner 99999 is gone"' _ "$STS"
+check "  but not cleared without --fix"                  0 test -d "$CASE/state/star-traders-sync/local.lock.d"
+"$STS" doctor --fix >/dev/null 2>&1 || true
+check "  and cleared with --fix"                         1 test -d "$CASE/state/star-traders-sync/local.lock.d"
+
+# --------------------------------------------------------------------------
 section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1
 check "backup refuses a non-mount-point volume"         70 "$STS" backup
+
+# The suite must leave nothing behind outside its sandbox. doctor --fix can
+# append to a shell rc, so this is not hypothetical.
+if [ -n "$(find "$REAL_HOME" -maxdepth 1 -name '.zshrc.sts-backup' -newer "$SB" 2>/dev/null)" ]; then
+    printf '\n  FAIL the suite modified %s/.zshrc\n' "$REAL_HOME"
+    FAIL=$((FAIL + 1))
+else
+    PASS=$((PASS + 1))
+    printf '  ok   the suite left the real home untouched\n'
+fi
 
 printf '\n%s: %s passed, %s failed\n' "$(basename "$0")" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -73,6 +73,7 @@ OPT_DRY_RUN=0
 OPT_VERBOSE=0
 OPT_FORCE=""          # "", "local" or "hub"
 OPT_OFFLINE_OK=0
+OPT_FIX=0
 COMMAND=""
 
 IS_HUB=0              # 1 when this machine is the hub host
@@ -703,6 +704,25 @@ resolve_hub_endpoint() {
 readonly SNAP_DIRNAME="star-traders-sync-snapshots"
 readonly LOCK_DIRNAME=".sts-lock"
 
+# Does CFG_HUB_HOST name this machine?
+#
+# Compared case-insensitively against BOTH the node's HostName and the short
+# MagicDNS label, because they can differ: a rename in the admin console
+# changes one and not the other, and Tailscale suffixes -1 or -2 when two
+# machines collide on a name - entirely possible with two Macs.
+#
+# One copy, used by detect_self_is_hub and by doctor. Doctor previously had
+# its own version comparing HostName only, so on a machine where the two
+# names differed it decided the hub was remote, tried to ssh to itself, and
+# skipped every hub check without saying so.
+hub_host_matches() {
+    local host="$1" dns="$2" want
+    want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    dns="$(printf '%s' "$dns" | tr '[:upper:]' '[:lower:]')"
+    [ "$want" = "$host" ] || [ "$want" = "$dns" ]
+}
+
 detect_self_is_hub() {
     local self_host self_dns
     local json
@@ -712,14 +732,7 @@ detect_self_is_hub() {
     self_dns="$(printf '%s' "$json" | python3 -c \
         'import json,sys; print((json.load(sys.stdin).get("Self",{}).get("DNSName") or "").rstrip(".").split(".")[0])')"
 
-    # Case-insensitive: `tailscale status` shows a lowercase node name while
-    # the Self.HostName field keeps the machine's own capitalisation.
-    local want lo_host lo_dns
-    want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
-    lo_host="$(printf '%s' "$self_host" | tr '[:upper:]' '[:lower:]')"
-    lo_dns="$(printf '%s' "$self_dns" | tr '[:upper:]' '[:lower:]')"
-
-    if [ "$want" = "$lo_host" ] || [ "$want" = "$lo_dns" ]; then
+    if hub_host_matches "$self_host" "$self_dns"; then
         IS_HUB=1
         HUB_ENDPOINT_KIND="local"
         log INFO hub "this machine is the hub ($self_host) - using local paths, no ssh"
@@ -1798,6 +1811,630 @@ conflict_report() {
 }
 
 # --------------------------------------------------------------------------
+# sts doctor
+#
+# Everything else in this script aborts on the first problem, which makes
+# setting up a machine a loop: fix one thing, re-run, discover the next.
+# doctor runs every check, aborts on none, and prints one report.
+#
+# Two rules it does not break:
+#   - read-only unless --fix is given
+#   - --fix only does things that are safe, reversible and idempotent. It
+#     never accepts a host key, changes system settings, or grants
+#     permissions. Those it explains and hands back to you.
+# --------------------------------------------------------------------------
+
+DOC_FAIL=0
+DOC_WARN=0
+DOC_FIXED=0
+DOC_SKIP=0
+DOC_FIXABLE=0        # problems --fix could actually repair
+
+doc_section() { printf '\n  %s\n' "$1"; }
+doc_ok()   { printf '    ok    %s\n' "$*"; }
+doc_note() { printf '    note  %s\n' "$*"; }
+doc_warn() { DOC_WARN=$((DOC_WARN + 1)); printf '    warn  %s\n' "$*"; }
+doc_fail() { DOC_FAIL=$((DOC_FAIL + 1)); printf '    FAIL  %s\n' "$*"; }
+doc_fixed(){ DOC_FIXED=$((DOC_FIXED + 1)); printf '    fixed %s\n' "$*"; }
+doc_skip() {
+    DOC_SKIP=$((DOC_SKIP + 1))
+    printf '    --    skipped, needs: %s\n' "$*"
+}
+# The indented remediation under a failure.
+doc_do()   { printf '          %s\n' "$*"; }
+
+# doc_try DESCRIPTION COMMAND... - run a repair only under --fix.
+# Prints what it would do otherwise, so a dry doctor still teaches.
+doc_try() {
+    local what="$1"; shift
+    if [ "$OPT_FIX" -eq 1 ]; then
+        if "$@" >/dev/null 2>&1; then
+            doc_fixed "$what"
+            return 0
+        fi
+        doc_fail "could not $what"
+        return 1
+    fi
+    DOC_FIXABLE=$((DOC_FIXABLE + 1))
+    doc_do "sts doctor --fix   will: $what"
+    return 1
+}
+
+# --------------------------------------------------------------------------
+
+doc_environment() {
+    doc_section "environment"
+
+    if [ "$(id -u)" -eq 0 ]; then
+        doc_fail "running as root"
+        doc_do "run as your normal user; root would leave files you cannot rewrite"
+    else
+        doc_ok "running as $(whoami), not root"
+    fi
+
+    local maj min
+    maj="${BASH_VERSINFO[0]}"; min="${BASH_VERSINFO[1]}"
+    if [ "$maj" -lt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -lt 2 ]; }; then
+        doc_fail "bash $BASH_VERSION is too old, 3.2 required"
+    else
+        doc_ok "bash $maj.$min"
+    fi
+
+    local t missing=""
+    for t in rsync ssh python3 shasum cpio; do
+        command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+    done
+    if [ -n "$missing" ]; then
+        doc_fail "not on PATH:$missing"
+        doc_do "these ship with macOS; python3 needs the Xcode command line tools:"
+        doc_do "    xcode-select --install"
+    else
+        doc_ok "rsync, ssh, python3, shasum, cpio"
+        case "$(rsync --version 2>&1 | head -1)" in
+            *openrsync*) doc_note "rsync is openrsync (macOS built-in)" ;;
+        esac
+    fi
+
+    # ~/bin on PATH. Appending one line to a shell rc is reversible and
+    # idempotent, so --fix will do it - but it shows the exact line first
+    # and keeps a backup, because silently editing someone's shell config
+    # is how installers earn their reputation.
+    case ":$PATH:" in
+        *":$HOME/bin:"*) doc_ok "~/bin is on PATH" ;;
+        *)
+            # Distinguish "never configured" from "configured, but this
+            # shell started before it" - otherwise doctor tells you to add
+            # a line that is already there.
+            if [ -f "$HOME/.zshrc" ] && grep -qF 'HOME/bin' "$HOME/.zshrc" 2>/dev/null; then
+                doc_warn "~/bin is in ~/.zshrc but not in this shell's PATH"
+                doc_do "this shell started before the line was added. Open a new one, or:"
+                doc_do "    exec zsh"
+            else
+                doc_warn "~/bin is not on PATH, so 'sts' will not resolve"
+                if [ "$OPT_FIX" -eq 1 ]; then
+                    doc_fix_path || true
+                else
+                    DOC_FIXABLE=$((DOC_FIXABLE + 1))
+                    doc_do "sts doctor --fix   will append to ~/.zshrc (with a backup):"
+                    doc_do "    export PATH=\"\$HOME/bin:\$PATH\""
+                fi
+            fi ;;
+    esac
+
+    if [ -L "$HOME/bin/sts" ]; then
+        local tgt
+        tgt="$(readlink "$HOME/bin/sts" || true)"
+        if [ -x "$tgt" ]; then
+            doc_ok "sts -> $tgt"
+        else
+            doc_fail "~/bin/sts points at $tgt, which is missing or not executable"
+            doc_do "re-run ./install.sh from the repository"
+        fi
+    elif [ -e "$HOME/bin/sts" ]; then
+        doc_warn "~/bin/sts exists but is not a symlink; install.sh will not touch it"
+    else
+        doc_warn "sts is not installed in ~/bin"
+        doc_do "run ./install.sh from the repository"
+    fi
+}
+
+doc_fix_path() {
+    local rc="$HOME/.zshrc" line='export PATH="$HOME/bin:$PATH"'
+    if [ -f "$rc" ] && grep -qF 'HOME/bin' "$rc" 2>/dev/null; then
+        doc_note "~/.zshrc already mentions ~/bin; not adding it twice"
+        doc_do "open a new shell, or: export PATH=\"\$HOME/bin:\$PATH\""
+        return 0
+    fi
+    [ -f "$rc" ] && cp "$rc" "$rc.sts-backup" 2>/dev/null
+    {
+        printf '\n# star-traders-sync: sts and star-traders-sync live in ~/bin\n'
+        printf '%s\n' "$line"
+    } >> "$rc" 2>/dev/null || { doc_fail "could not write $rc"; return 1; }
+    doc_fixed "appended to ~/.zshrc (backup at ~/.zshrc.sts-backup)"
+    doc_do "open a new shell, or: exec zsh"
+}
+
+# Returns 0 when the config is present and usable. Unlike load_config it
+# reports every problem instead of dying on the first, and it never exits -
+# doctor has to keep going and check the rest.
+DOC_CONFIG_OK=0
+
+doc_config() {
+    doc_section "config"
+
+    if [ ! -e "$CONFIG_FILE" ]; then
+        doc_fail "no config at $CONFIG_FILE"
+        doc_do "run ./install.sh from the repository, which writes a starting one"
+        return 1
+    fi
+    if [ ! -r "$CONFIG_FILE" ]; then
+        doc_fail "$CONFIG_FILE is not readable by $(whoami)"
+        return 1
+    fi
+    doc_ok "$CONFIG_FILE"
+
+    # Ask the real parser whether it would succeed, in a subshell where its
+    # die() ends only that subshell. A hand-rolled mirror of load_config's
+    # checks would silently drift the moment load_config gained a rule, and
+    # doctor would regain the truncated-report bug for good.
+    local lerr lrc
+    set +e
+    lerr="$( load_config 2>&1 )"
+    lrc=$?
+    set -e
+    if [ $lrc -ne 0 ]; then
+        doc_fail "config cannot be parsed"
+        printf '%s\n' "$lerr" | grep -v '^exit code' | sed 's/^error: //' \
+            | while IFS= read -r l; do [ -n "$l" ] && doc_do "$l"; done
+        doc_do "the file is parsed, not sourced - no shell syntax, see config.example"
+        return 1
+    fi
+    # It parses, so this cannot die.
+    load_config
+
+    # Placeholders are the single most common half-finished install.
+    local k v placeholders=""
+    for k in HUB_HOST HUB_USER HUB_PATH BACKUP_VOLUME BACKUP_DEST; do
+        eval "v=\${CFG_$k}"
+        case "$v" in
+            *my-mac-mini*|*my-macbook*|*youruser*|*YourDisk*|*tailnet-name*|/Volumes/Backup*)
+                placeholders="$placeholders $k" ;;
+        esac
+    done
+    if [ -n "$placeholders" ]; then
+        doc_fail "still set to the example placeholders:$placeholders"
+        doc_do "edit $CONFIG_FILE"
+        doc_do "HUB_HOST is the tailscale node name of the machine hosting the hub"
+        doc_do "  see: tailscale status"
+        doc_do "HUB_USER is your account name ON THAT machine"
+        return 1
+    fi
+
+    local missing=""
+    for k in HUB_HOST HUB_USER HUB_PATH LOCAL_SAVE_PATH STEAM_APPID \
+             GAME_PROCESS_NAME BACKUP_VOLUME BACKUP_DEST; do
+        eval "v=\${CFG_$k}"
+        [ -n "$v" ] || missing="$missing $k"
+    done
+    if [ -n "$missing" ]; then
+        doc_fail "required keys missing or empty:$missing"
+        doc_do "edit $CONFIG_FILE"
+        return 1
+    fi
+    doc_ok "all required keys set"
+
+    # The real validator, not a hand-rolled subset. die() inside $( ) only
+    # ends the subshell, so doctor gets the message and keeps going.
+    # Reimplementing these checks is what let the nesting rule - the one
+    # that stops a push moving the live save directory out from under the
+    # game - go unchecked here in the first place.
+    local verr vrc
+    set +e
+    verr="$( validate_config 2>&1 )"
+    vrc=$?
+    set -e
+    if [ $vrc -ne 0 ]; then
+        doc_fail "config is not valid"
+        printf '%s\n' "$verr" | grep -v '^exit code' | sed 's/^error: //' \
+            | while IFS= read -r l; do [ -n "$l" ] && doc_do "$l"; done
+        return 1
+    fi
+    doc_ok "config passes every validation rule"
+
+    DOC_CONFIG_OK=1
+    return 0
+}
+
+doc_state_dirs() {
+    doc_section "state and logs"
+    local d
+    for d in "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"; do
+        if [ -d "$d" ] && [ -w "$d" ]; then
+            doc_ok "$d"
+        elif [ -e "$d" ]; then
+            doc_fail "$d exists but is not a writable directory"
+        else
+            if ! doc_try "create $d" mkdir -p "$d"; then
+                doc_warn "$d does not exist yet"
+            fi
+        fi
+    done
+
+    # A leaked local lock is the one thing that wedges every later run, and
+    # it is trivially safe to clear once its owner is gone.
+    local lockdir="$STATE_DIR/local.lock.d" holder
+    if [ -d "$lockdir" ]; then
+        holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
+        case "$holder" in ''|*[!0-9]*) holder="" ;; esac
+        if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+            doc_note "another sts is running right now (pid $holder)"
+        else
+            doc_warn "a stale local lock is present (owner ${holder:-unknown} is gone)"
+            doc_try "clear the stale local lock" rm -rf "$lockdir" "$STATE_DIR/local.lock" || true
+        fi
+    else
+        doc_ok "no stale local lock"
+    fi
+}
+
+doc_save_dir() {
+    doc_section "game"
+    local p="$CFG_LOCAL_SAVE_PATH"
+
+    if [ ! -e "$p" ]; then
+        doc_fail "save directory does not exist: $p"
+        doc_do "launch the game once so it creates it, then re-run"
+        doc_do "if the path is wrong, find the real one:"
+        doc_do "    ls -la ~/Library | grep -i star"
+        return 1
+    fi
+    if [ ! -d "$p" ]; then
+        doc_fail "$p is not a directory"
+        return 1
+    fi
+
+    local count
+    count="$(find "$p" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
+    if [ "${count:-0}" -eq 0 ]; then
+        doc_warn "save directory is empty: $p"
+        doc_do "launch the game once, or check the path is right"
+    else
+        doc_ok "save directory, ${count} files"
+    fi
+
+    # The appid is checkable without launching anything.
+    local found=0 lib
+    for lib in "$HOME/Library/Application Support/Steam" /Volumes/*/SteamLibrary; do
+        [ -f "$lib/steamapps/appmanifest_$CFG_STEAM_APPID.acf" ] && found=1 && break
+    done
+    if [ "$found" -eq 1 ]; then
+        doc_ok "Steam appid $CFG_STEAM_APPID is installed"
+    else
+        doc_warn "no Steam manifest found for appid $CFG_STEAM_APPID"
+        doc_do "sts play needs it; pull and push do not"
+        doc_do "check with: open steam://rungameid/$CFG_STEAM_APPID"
+    fi
+    return 0
+}
+
+DOC_TS_OK=0
+DOC_IS_HUB=0
+
+# Is a sync in progress on the hub right now?
+#
+# doctor takes no locks - it is meant to be safe to run at any moment - but
+# that means --fix must not create HUB_PATH while a swap has it renamed
+# aside. push_local_to_hub and swap_into_place both leave that path briefly
+# absent, and recreating it there turns the in-flight `mv staged hub` into a
+# move INTO the new empty directory rather than a replacement. mv exits 0,
+# the swap's own check sees success, and the pre-swap copy is then deleted.
+hub_is_busy() {
+    local lock; lock="$(hub_lock_path)"
+    if [ "$DOC_IS_HUB" -eq 1 ]; then
+        [ -d "$lock" ]
+    else
+        hub_exec_args '[ -d "$1" ]' "$lock" >/dev/null 2>&1
+    fi
+}
+
+doc_tailscale() {
+    doc_section "tailscale"
+
+    if [ -x "$TS_APP_PATH" ]; then
+        TS_BIN="$TS_APP_PATH"; doc_ok "found the App Store app"
+    elif command -v tailscale >/dev/null 2>&1; then
+        TS_BIN="$(command -v tailscale)"; doc_ok "found $TS_BIN"
+    else
+        doc_fail "tailscale is not installed"
+        doc_do "install the Tailscale app from the App Store, or: brew install tailscale"
+        return 1
+    fi
+
+    local json state
+    json="$("$TS_BIN" status --json 2>&1)" || {
+        doc_fail "tailscaled is not running"
+        doc_do "start the Tailscale app, or: sudo tailscaled install-system-daemon"
+        return 1
+    }
+    state="$(printf '%s' "$json" | python3 -c \
+        'import json,sys;print(json.load(sys.stdin).get("BackendState",""))' 2>/dev/null || true)"
+    if [ -z "$state" ]; then
+        doc_fail "could not read tailscale status - the output was not valid JSON"
+        doc_do "check it by hand: $TS_BIN status --json | head -3"
+        return 1
+    fi
+    if [ "$state" != "Running" ]; then
+        doc_fail "tailscale is $state, not Running"
+        doc_do "log in:  $TS_BIN up"
+        doc_do "this is interactive and opens a browser, so doctor will not do it for you"
+        return 1
+    fi
+
+    local self
+    self="$(printf '%s' "$json" | python3 -c \
+        'import json,sys;print((json.load(sys.stdin).get("Self",{}).get("HostName") or ""))' 2>/dev/null || true)"
+    if [ -z "$self" ]; then
+        doc_fail "tailscale is running but did not report this machine's name"
+        return 1
+    fi
+    doc_ok "running, this machine is '$self'"
+
+    # Is this the hub? Uses the same comparison every other command uses,
+    # so doctor cannot reach a different verdict than push and pull do.
+    local self_dns
+    self_dns="$(printf '%s' "$json" | python3 -c \
+        'import json,sys;print((json.load(sys.stdin).get("Self",{}).get("DNSName") or "").rstrip(".").split(".")[0])' 2>/dev/null || true)"
+    if hub_host_matches "$self" "$self_dns"; then
+        DOC_IS_HUB=1
+        IS_HUB=1
+        doc_ok "this machine IS the hub, so no ssh is involved"
+        DOC_TS_OK=1
+        return 0
+    fi
+
+    local peer
+    peer="$(ts_find_peer "$json" "$CFG_HUB_HOST" || true)"
+    if [ -z "$peer" ]; then
+        doc_fail "hub '$CFG_HUB_HOST' is not in this tailnet at all"
+        doc_do "check HUB_HOST against the node names in:"
+        doc_do "    $TS_BIN status"
+        doc_do "both machines must be on the SAME tailnet; Apple IDs are irrelevant"
+        return 1
+    fi
+
+    HUB_DNS="$(printf '%s' "$peer" | cut -f1)"
+    HUB_IP="$(printf '%s' "$peer" | cut -f2)"
+    local online; online="$(printf '%s' "$peer" | cut -f3)"
+
+    if [ "$online" != "1" ]; then
+        doc_fail "hub '$CFG_HUB_HOST' is in the tailnet but offline"
+        doc_do "wake it, or check Tailscale is running there"
+        return 1
+    fi
+    doc_ok "hub '$CFG_HUB_HOST' is online at $HUB_IP"
+
+    if [ -n "$HUB_DNS" ] && ping -c1 -t2 "$HUB_DNS" >/dev/null 2>&1; then
+        HUB_ENDPOINT="$HUB_DNS"; HUB_ENDPOINT_KIND="magicdns"
+        doc_ok "MagicDNS resolves: $HUB_DNS"
+    else
+        HUB_ENDPOINT="$HUB_IP"; HUB_ENDPOINT_KIND="tailnet-ip"
+        doc_note "MagicDNS does not resolve here, using the tailnet IP $HUB_IP"
+        doc_note "normal when tailscaled came from Homebrew; not a problem"
+    fi
+
+    if "$TS_BIN" ping --c 2 --timeout 5s "$HUB_IP" >/dev/null 2>&1; then
+        doc_ok "tailscale ping reaches the hub"
+    else
+        doc_fail "hub says online but tailscale ping fails"
+        doc_do "    $TS_BIN ping $HUB_IP"
+        return 1
+    fi
+
+    DOC_TS_OK=1
+    return 0
+}
+
+doc_ssh() {
+    doc_section "ssh to the hub"
+
+    if [ "$DOC_IS_HUB" -eq 1 ]; then
+        doc_ok "not needed, this machine is the hub"
+        return 0
+    fi
+    if [ "$DOC_TS_OK" -eq 0 ]; then
+        doc_skip "a reachable hub"
+        return 1
+    fi
+
+    local key="$HOME/.ssh/id_ed25519"
+    if [ -f "$key" ]; then
+        doc_ok "ssh key $key"
+    else
+        doc_warn "no ssh key at $key"
+        if ! doc_try "generate an ssh key" ssh-keygen -t ed25519 -N "" -C "sts@$(hostname -s)" -f "$key"; then
+            doc_do "or by hand: ssh-keygen -t ed25519 -C \"sts@$(hostname -s)\""
+            return 1
+        fi
+    fi
+
+    # Host key. Never accepted automatically - but if the same machine is
+    # already trusted under its other address, that is a comparison we can
+    # do for the user instead of making them eyeball two hashes.
+    if ssh-keygen -F "$HUB_ENDPOINT" >/dev/null 2>&1; then
+        doc_ok "host key for $HUB_ENDPOINT is trusted"
+    else
+        doc_fail "host key for $HUB_ENDPOINT is not trusted yet"
+        hostkey_help "$HUB_ENDPOINT" 2>&1 | sed 's/^/          /'
+        doc_skip "a trusted host key"
+        return 1
+    fi
+
+    local out rc
+    set +e
+    # shellcheck disable=SC2086
+    out="$(ssh $(ssh_opts) "$(ssh_target)" 'echo STS_OK' 2>&1)"
+    rc=$?
+    set -e
+    if [ $rc -eq 0 ] && [ "$out" = "STS_OK" ]; then
+        doc_ok "key auth works: $(ssh_target)"
+    else
+        doc_fail "cannot ssh to the hub without a password"
+        case "$out" in
+            *"Permission denied"*)
+                doc_do "your key is not on the hub yet. Run, and enter the HUB's password:"
+                doc_do "    ssh-copy-id -i $HOME/.ssh/id_ed25519.pub $(ssh_target)"
+                doc_do "doctor will not do this: it needs a password it must not handle" ;;
+            *"Connection refused"*)
+                doc_do "Remote Login is off on the hub. On the hub:"
+                doc_do "    System Settings > General > Sharing > Remote Login"
+                doc_do "then check your user is allowed:"
+                doc_do "    dseditgroup -o checkmember -m $CFG_HUB_USER com.apple.access_ssh" ;;
+            *)
+                doc_do "ssh said: $(printf '%s' "$out" | head -1)"
+                doc_do "reproduce it by hand: $(ssh_repro_cmd)" ;;
+        esac
+        doc_skip "working ssh"
+        return 1
+    fi
+
+    # Hub directory. Guarded like every other risky substitution here: this
+    # runs ssh, and a connection that drops between the auth probe above and
+    # this line would otherwise kill the whole report - on a machine already
+    # having connectivity trouble, which is exactly when doctor is run.
+    local probe prc
+    set +e
+    probe="$(hub_exec_args '
+        d="$1"
+        [ -e "$d" ] || { echo NOENT; exit 0; }
+        [ -d "$d" ] || { echo NOTDIR; exit 0; }
+        [ -w "$d" ] || { echo NOWRITE; exit 0; }
+        echo OK
+    ' "$CFG_HUB_PATH" 2>&1)"
+    prc=$?
+    set -e
+    if [ $prc -ne 0 ]; then
+        doc_fail "lost the connection while probing the hub directory"
+        doc_do "$(printf '%s' "$probe" | head -1)"
+        doc_do "re-run when the hub is reachable: $(ssh_repro_cmd)"
+        return 1
+    fi
+    case "$probe" in
+        *OK*)      doc_ok "hub directory $CFG_HUB_PATH is writable" ;;
+        *NOENT*)
+            doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"
+            if hub_is_busy; then
+                doc_do "a sync is running on the hub right now - not creating it"
+                doc_do "re-run once that finishes"
+            else
+                doc_try "create $CFG_HUB_PATH on $CFG_HUB_HOST" \
+                    hub_exec_args 'mkdir -p "$1"' "$CFG_HUB_PATH" \
+                    || doc_do "or seed it: sts push --force=local"
+            fi ;;
+        *NOTDIR*)  doc_fail "$CFG_HUB_PATH exists on the hub but is not a directory" ;;
+        *NOWRITE*) doc_fail "$CFG_HUB_USER cannot write $CFG_HUB_PATH on the hub" ;;
+        *)         doc_fail "could not probe the hub directory: $probe" ;;
+    esac
+    return 0
+}
+
+doc_hub_only() {
+    [ "$DOC_IS_HUB" -eq 1 ] || return 0
+    doc_section "hub duties (this machine)"
+
+    if [ -d "$CFG_HUB_PATH" ]; then
+        local n
+        n="$(find "$CFG_HUB_PATH" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
+        doc_ok "hub directory, ${n:-0} files"
+    elif hub_is_busy; then
+        doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"
+        doc_do "a sync is running right now, which moves it aside briefly"
+        doc_do "not creating it - that would turn the in-flight swap into a nested move"
+        doc_do "re-run once the sync finishes"
+    else
+        doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"
+        doc_try "create $CFG_HUB_PATH" mkdir -p "$CFG_HUB_PATH" \
+            || doc_do "or seed it from the machine holding the saves: sts push --force=local"
+    fi
+
+    if backup_volume_mounted; then
+        doc_ok "backup volume $CFG_BACKUP_VOLUME is mounted and writable"
+        case "$(diskutil info "$CFG_BACKUP_VOLUME" 2>/dev/null | grep 'File System Personality' | awk '{print $NF}')" in
+            ExFAT|MS-DOS|FAT32)
+                doc_note "the backup volume has no hard links, so each backup is a full copy" ;;
+        esac
+    else
+        doc_warn "backup volume $CFG_BACKUP_VOLUME is not mounted"
+        doc_do "plug the disk in; sts backup refuses rather than writing to the internal disk"
+    fi
+
+    local label="com.github.moudlajs.star-traders-sync.backup"
+    if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+        local ec
+        ec="$(launchctl print "gui/$(id -u)/$label" 2>/dev/null | grep -oE 'last exit code = [0-9]+' | grep -oE '[0-9]+$' || true)"
+        if [ -z "$ec" ]; then
+            doc_ok "daily backup job is loaded, has not run yet"
+            doc_do "run it now to be sure it works: launchctl kickstart -k gui/$(id -u)/$label"
+        elif [ "$ec" = "0" ]; then
+            doc_ok "daily backup job is loaded, last run exited 0"
+        else
+            doc_warn "daily backup job is loaded, last run exited $ec"
+            doc_do "see ~/Library/Logs/star-traders-sync/backup.launchd.err"
+            [ "${ec:-0}" = "70" ] && doc_do "exit 70 usually means the disk was unplugged, or macOS denied access to it"
+        fi
+    else
+        doc_warn "the daily backup job is not installed"
+        doc_do "./launchd/install-backup-job.sh"
+    fi
+    return 0
+}
+
+cmd_doctor() {
+    printf '%s %s - checking this machine\n' "$PROG" "$STS_VERSION"
+    [ "$OPT_FIX" -eq 1 ] && printf '(--fix: safe repairs will be applied)\n'
+
+    # Every one of these returns non-zero for ordinary states - no save
+    # directory yet, no ssh yet. Under set -e a bare call aborts the whole
+    # report at the first problem, which is the one thing doctor exists not
+    # to do. The || true is load-bearing, not defensive noise.
+    doc_environment || true
+
+    if doc_config; then
+        doc_state_dirs || true
+        doc_save_dir || true
+        if doc_tailscale; then
+            doc_ssh || true
+            doc_hub_only || true
+        else
+            doc_section "ssh to the hub"; doc_skip "a working tailscale"
+        fi
+    else
+        doc_section "everything else"
+        doc_skip "a valid config"
+        printf '    --    nothing else can be checked until the config is right\n'
+    fi
+
+    printf '\n'
+    if [ "$DOC_FAIL" -eq 0 ] && [ "$DOC_WARN" -eq 0 ]; then
+        printf '  Everything checks out. Try:  sts status\n'
+    else
+        printf '  %s problem(s), %s warning(s)' "$DOC_FAIL" "$DOC_WARN"
+        [ "$DOC_FIXED" -gt 0 ] && printf ', %s fixed' "$DOC_FIXED"
+        [ "$DOC_SKIP" -gt 0 ]  && printf ', %s check(s) skipped' "$DOC_SKIP"
+        printf '\n'
+        if [ "$OPT_FIX" -eq 0 ] && [ "$DOC_FIXABLE" -gt 0 ]; then
+            printf '  %s of these can be repaired automatically:  sts doctor --fix\n' "$DOC_FIXABLE"
+        elif [ "$OPT_FIX" -eq 0 ] && [ "$DOC_FAIL" -gt 0 ]; then
+            printf '  None of these can be repaired automatically; follow the steps above.\n'
+        fi
+        printf '  Nothing above was changed except where it says "fixed".\n'
+    fi
+    printf '\n'
+
+    log INFO doctor "fail=$DOC_FAIL warn=$DOC_WARN fixed=$DOC_FIXED skipped=$DOC_SKIP"
+    [ "$DOC_FAIL" -eq 0 ]
+}
+
+# --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
 
@@ -2443,6 +3080,9 @@ USAGE
   sts <command> [flags]
 
 COMMANDS
+  doctor    check every prerequisite on this machine and say exactly how to
+            fix each problem. Read-only unless --fix is given. Run this first
+            on a new machine, and whenever something is not working.
   status    read-only. Local and hub file counts, newest timestamps,
             fingerprints, which side is newer, hub lock state, tailscale
             state and whether the game is running. Changes nothing.
@@ -2461,6 +3101,9 @@ FLAGS
                    that is refused unconditionally.
   --offline-ok     if the hub is offline, allow 'play' to run on the local
                    save. Warns loudly. Nothing is synced in either direction.
+  --fix            with 'doctor', apply the repairs that are safe, reversible
+                   and idempotent. Never accepts a host key, changes system
+                   settings, or grants permissions - those it explains.
   -h, --help       this text.
   --version        print version and exit.
 
@@ -2530,12 +3173,13 @@ USAGE_EOF
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            status|pull|push|play|backup)
+            status|pull|push|play|backup|doctor)
                 [ -n "$COMMAND" ] && { printf 'error: more than one command given: %s and %s\n' "$COMMAND" "$1" >&2; exit $EX_USAGE; }
                 COMMAND="$1" ;;
             --dry-run)    OPT_DRY_RUN=1 ;;
             --verbose|-v) OPT_VERBOSE=1 ;;
             --offline-ok) OPT_OFFLINE_OK=1 ;;
+            --fix)        OPT_FIX=1 ;;
             --force=local) OPT_FORCE="local" ;;
             --force=hub)   OPT_FORCE="hub" ;;
             --force=*)
@@ -2566,6 +3210,14 @@ parse_args() {
             printf 'error: --force=hub makes no sense for "push" - it would discard this machine.\n' >&2
             printf 'Use:  %s pull --force=hub\n' "$PROG" >&2
             exit $EX_USAGE ;;
+        *) ;;
+    esac
+    if [ "$OPT_FIX" -eq 1 ] && [ "$COMMAND" != "doctor" ]; then
+        printf 'error: --fix only applies to "doctor".\n' >&2
+        printf 'Use:  %s doctor --fix\n' "$PROG" >&2
+        exit $EX_USAGE
+    fi
+    case "$COMMAND:$OPT_FORCE" in
         play:local|play:hub)
             printf 'error: --force cannot be used with "play", which pulls before and pushes after.\n' >&2
             printf 'Resolve the conflict explicitly first, then play:\n' >&2
@@ -2577,6 +3229,13 @@ parse_args() {
 
 main() {
     parse_args "$@"
+
+    # doctor runs before every other check, because the things those checks
+    # abort on are exactly what it exists to report.
+    if [ "$COMMAND" = "doctor" ]; then
+        cmd_doctor
+        exit $?
+    fi
 
     # Cheapest, most fundamental refusals first - these need no config.
     check_not_root

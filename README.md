@@ -139,6 +139,7 @@ resolve by hand, and never something this tool tries to be clever about.
 
 | Command | Effect |
 |---|---|
+| `sts doctor` | check every prerequisite and say exactly how to fix each problem. Read-only. `--fix` applies the safe repairs. |
 | `sts status` | read-only. File counts, newest timestamps, fingerprints, which side is newer, hub lock, tailscale state, whether the game is running. |
 | `sts pull` | hub → this machine. Run before playing. |
 | `sts push` | this machine → hub. Run after playing. |
@@ -154,6 +155,65 @@ resolve by hand, and never something this tool tries to be clever about.
 | `--force=local` | resolve a conflict by keeping this machine's saves |
 | `--force=hub` | resolve a conflict by keeping the hub's saves |
 | `--offline-ok` | let `play` run on the local save when the hub is unreachable |
+
+## Setting up a machine
+
+```bash
+sts doctor
+```
+
+Run it first on a new machine, and any time something is not working. It
+checks everything in dependency order, **never stops at the first problem**,
+and prints one report:
+
+```
+  environment
+    ok    bash 3.2
+    ok    rsync, ssh, python3, shasum, cpio
+    warn  ~/bin is not on PATH, so 'sts' will not resolve
+          sts doctor --fix   will append to ~/.zshrc (with a backup)
+
+  config
+    FAIL  still set to the example placeholders: HUB_USER HUB_PATH
+          edit ~/.config/star-traders-sync/config
+          HUB_HOST is the tailscale node name of the machine hosting the hub
+            see: tailscale status
+
+  ssh to the hub
+    FAIL  cannot ssh to the hub without a password
+          your key is not on the hub yet. Run, and enter the HUB's password:
+              ssh-copy-id -i ~/.ssh/id_ed25519.pub youruser@100.x.y.z
+    --    skipped, needs: working ssh
+```
+
+A check that depends on a failed one is reported as **skipped**, not failed.
+Telling you "key auth failed" when the real problem is an untrusted host key
+sends you down the wrong path.
+
+`sts doctor --fix` applies only repairs that are safe, reversible and
+idempotent:
+
+| Will fix | Will never fix |
+|---|---|
+| create the config, state and log directories | accept an SSH host key |
+| generate `~/.ssh/id_ed25519` | enable Remote Login |
+| create the hub directory, once ssh works | grant Full Disk Access |
+| add `~/bin` to `~/.zshrc`, with a backup | log in to Tailscale |
+| clear a stale local lock whose owner is gone | |
+
+The right-hand column is either a security decision or needs an
+administrator, so doctor prints the exact command or click path and tells
+you which later checks it skipped as a result.
+
+### What has to match across the two machines
+
+| | Must match? | |
+|---|---|---|
+| **Tailscale tailnet** | **yes** | the machines have to see each other |
+| Steam account | practically | you need the game installed on both |
+| **Apple ID** | **no** | nothing here touches iCloud |
+| macOS version | no | tested on 15.x |
+| Username | no | `HUB_USER` is the hub's account; `~/` expands per machine |
 
 ## Everyday use
 
