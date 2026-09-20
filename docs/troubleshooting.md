@@ -65,7 +65,7 @@ to know what a particular failure means before it happens.
 | 15 | `hub host is offline` | 25 | Wake it. Or `sts play --offline-ok` to play on the local save — nothing syncs, and it warns loudly. |
 | 16 | `tailscale ping failed` | 26 | The peer claims to be online but is unreachable. Check the hub's network. |
 | 17 | `MagicDNS did not resolve, using tailnet IP` | 0 | Not an error. Expected when `tailscaled` came from Homebrew, which does not install a system resolver. The IP from `tailscale status --json` is used and logged. |
-| 18 | `could not ssh to the hub non-interactively` | 30 | The exact command to reproduce by hand is printed. If it prompts for a password, key auth is not set up — see **One-time SSH setup**. |
+| 18 | `could not ssh to the hub non-interactively` | 30 | The exact command to reproduce by hand is printed. If it prompts for a password, key auth is not set up — see [One-time SSH setup](../README.md#one-time-ssh-setup-on-each-client). |
 | 19 | `host key is not trusted yet` | 31 | Never auto-accepted. Verify out of band with the two commands printed, then add it to `known_hosts`. |
 | 20 | `host key has CHANGED` | 31 | Either the hub was reinstalled or something is wrong. Verify on the hub itself before running the `ssh-keygen -R` it suggests. |
 | 21 | `hub user cannot READ/WRITE <path>` | 32 | Fix ownership and mode on the hub. |

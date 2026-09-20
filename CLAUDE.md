@@ -17,7 +17,7 @@ never lose a save.**
 
 When a change could plausibly destroy data, the correct behaviour is to
 refuse with a distinct exit code and an explanation, never to guess. Every
-such refusal already has a row in the README troubleshooting table; add one
+such refusal already has a row in the docs/troubleshooting.md table; add one
 if you introduce a new state.
 
 ## Before you change `bin/star-traders-sync`

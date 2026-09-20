@@ -31,7 +31,7 @@ One script, identical on both machines. All differences live in
 
 ## Finding your save directory
 
-Never copy a path out of this README into the config without checking it.
+Never copy a path out of this file into the config without checking it.
 On both machines tested it is `~/Library/StarTradersFrontiers` — directly
 under `~/Library`, **not** under `Application Support` — but verify:
 
