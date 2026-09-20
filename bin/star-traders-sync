@@ -975,7 +975,7 @@ this_host_id() { printf '%s' "$(hostname -s)"; }
 # the hub to recover. A value generated once and kept in the state
 # directory does not move.
 stable_host_id() {
-    local f="$STATE_DIR/host-id" id
+    local f="$STATE_DIR/host-id" tmp id
     if [ -f "$f" ]; then
         id="$(head -1 "$f" 2>/dev/null || true)"
         case "$id" in
@@ -985,8 +985,36 @@ stable_host_id() {
     mkdir -p "$STATE_DIR" 2>/dev/null || true
     id="$(uuidgen 2>/dev/null || true)"
     [ -n "$id" ] || id="$(this_host_id)-$$-$(date -u +%s)"
-    printf '%s\n' "$id" > "$f" 2>/dev/null || true
-    printf '%s' "$id"
+
+    # The first write has to be atomic. `backup` and the sync commands hold
+    # different local locks on purpose, so a nightly backup can overlap a
+    # manual push; on a machine that has no id yet, both would generate one
+    # and a plain `>` would be last-writer-wins. The loser would then carry
+    # an id in memory that is not the one on disk, and a lock it left behind
+    # would afterwards look like another machine's - reintroducing exactly
+    # the permanent lockout this function exists to prevent.
+    #
+    # ln(1) is atomic and fails if the target exists, so the loser of the
+    # race finds out and adopts the winner's id instead of its own.
+    # mktemp, not "$f.$$": two processes can share a pid-derived name (a
+    # subshell inherits its parent's $$), and then one would link a file the
+    # other had already overwritten - returning an id that is not the one on
+    # disk, which is the very failure this is guarding against.
+    tmp="$(mktemp "$f.XXXXXX" 2>/dev/null || true)"
+    [ -n "$tmp" ] || tmp="$f.$$.$RANDOM"
+    if printf '%s\n' "$id" > "$tmp" 2>/dev/null && ln "$tmp" "$f" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null || true
+        printf '%s' "$id"
+        return 0
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+
+    # Either someone else won the race, or the file could not be created.
+    id="$(head -1 "$f" 2>/dev/null || true)"
+    case "$id" in
+        ?*) printf '%s' "$id" ;;
+        *)  printf '%s' "$(this_host_id)" ;;   # no persistence: degrade to the old behaviour
+    esac
 }
 
 # shlock ships with macOS and handles a stale pid for us.

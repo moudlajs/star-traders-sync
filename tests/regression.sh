@@ -186,6 +186,44 @@ printf 'LOCK_TTL_SECONDS=1\n' >> "$CASE/cfg/star-traders-sync/config"
 check "our own stale lock cleared despite a renamed host"  0 "$STS" pull
 check "  lock released"                                    1 test -d "$CASE/.sts-lock"
 
+# An owner file written by a version predating the stable id has five lines
+# and no id. The comparison must fall back to the hostname, or an upgrade
+# performed while a lock is held would orphan that lock.
+mkdir -p "$CASE/.sts-lock"
+printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\nnonce\n' "$(hostname -s)" \
+    > "$CASE/.sts-lock/owner"
+check "old 5-line owner file: ours by hostname, TTL clears"  0 "$STS" pull
+check "  lock released"                                      1 test -d "$CASE/.sts-lock"
+
+mkdir -p "$CASE/.sts-lock"
+printf 'some-other-machine\n1234\n2020-01-01T00:00:00Z\n1577836800\nnonce\n' \
+    > "$CASE/.sts-lock/owner"
+check "old 5-line owner file from another host: refused"    50 "$STS" pull
+check "  and not cleared"                                    0 test -d "$CASE/.sts-lock"
+rm -rf "$CASE/.sts-lock"
+
+# The id's first write must be atomic: backup and the sync commands hold
+# different local locks, so they can reach this concurrently on a machine
+# that has no id yet.
+newcase hostid_race
+RACE="$CASE/racefn.sh"
+sed -n '/^stable_host_id() {/,/^}/p' "$STS" > "$RACE"
+mkdir -p "$CASE/raceout"
+i=1
+while [ "$i" -le 20 ]; do
+    (
+        STATE_DIR="$CASE/racestate"
+        . "$RACE"
+        this_host_id() { echo testhost; }
+        stable_host_id > "$CASE/raceout/$i"
+    ) &
+    i=$((i + 1))
+done
+wait
+RACE_DISTINCT="$(cat "$CASE"/raceout/* 2>/dev/null | sort -u | grep -c . || echo 0)"
+check "20 concurrent first-runs agree on one id"             0 test "$RACE_DISTINCT" = "1"
+check "  and it matches what is on disk"                     0 sh -c 'test "$(cat "$1"/raceout/1)" = "$(cat "$1"/racestate/host-id)"' _ "$CASE"
+
 # --------------------------------------------------------------------------
 section "interrupted swaps"
 newcase orphan
