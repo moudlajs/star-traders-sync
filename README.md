@@ -193,6 +193,33 @@ you which later checks it skipped as a result.
 | macOS version | no | tested on 15.x |
 | Username | no | `HUB_USER` is the hub's account; `~/` expands per machine |
 
+### First time: seeding the hub
+
+The hub starts empty, and filling it is a one-way decision, so it is never
+done silently. From the machine that holds your real saves:
+
+```bash
+sts push --force=local
+```
+
+Then on the **other** machine, the first `sts pull` will report a
+**conflict**. That is correct, not a bug: the game creates `core.db` and
+the templates the first time it launches, even with no campaigns, so that
+machine genuinely has a save directory of its own and the tool will not
+guess which one you meant. Resolve it once:
+
+```bash
+sts pull --force=hub
+```
+
+After that, `sts play` handles everything and you should never need a
+`--force` flag again unless you forget to push before switching machines.
+
+**Getting these backwards overwrites real saves with an empty directory.**
+The rule: `--force=local` on the machine whose saves you want to keep;
+`--force=hub` on the machine you want to overwrite. `sts status` tells you
+which side has what before you commit to either.
+
 ## Scheduled backups (hub host only)
 
 ```bash
