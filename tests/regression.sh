@@ -332,6 +332,43 @@ AFTER="$(find "$CASE/local" "$CASE/hub" -type f -exec shasum {} + | shasum)"
 check "  nothing changed on either side"                 0 test "$BEFORE" = "$AFTER"
 
 # --------------------------------------------------------------------------
+section "doctor"
+newcase doctor_ok
+"$STS" push --force=local >/dev/null 2>&1
+check "healthy machine: doctor exits 0"                  0 "$STS" doctor
+check "  and reports zero problems"                      0 sh -c '"$1" doctor 2>&1 | grep -qE "Everything checks out|0 problem"' _ "$STS"
+
+# A missing config must be reported, not crashed on: doctor exists precisely
+# for the state where nothing else can run.
+newcase doctor_noconfig
+rm -f "$CASE/cfg/star-traders-sync/config"
+check "no config: doctor exits 1 rather than dying"      1 "$STS" doctor
+check "  names the missing file"                         0 sh -c '"$1" doctor 2>&1 | grep -q "no config at"' _ "$STS"
+check "  and skips the rest instead of guessing"         0 sh -c '"$1" doctor 2>&1 | grep -q "nothing else can be checked"' _ "$STS"
+check "  does not offer a repair that cannot help"       0 sh -c '"$1" doctor 2>&1 | grep -q "None of these can be repaired"' _ "$STS"
+
+# The most common half-finished install: install.sh ran, config never edited.
+newcase doctor_placeholder
+sed -i '' 's|^HUB_USER=.*|HUB_USER=youruser|' "$CASE/cfg/star-traders-sync/config"
+check "placeholder config: reported as a problem"        1 "$STS" doctor
+check "  names the key still on its placeholder"         0 sh -c '"$1" doctor 2>&1 | grep -q "placeholders.*HUB_USER"' _ "$STS"
+
+# doctor without --fix must change nothing at all.
+newcase doctor_readonly
+rm -rf "$CASE/state"
+BEFORE="$(find "$CASE" -type f 2>/dev/null | LC_ALL=C sort | shasum)"
+"$STS" doctor >/dev/null 2>&1 || true
+AFTER="$(find "$CASE" -type f 2>/dev/null | LC_ALL=C sort | shasum)"
+check "doctor without --fix changes nothing"             0 test "$BEFORE" = "$AFTER"
+
+# --fix may only create things, never destroy.
+newcase doctor_fix
+rm -rf "$CASE/state"
+"$STS" doctor --fix >/dev/null 2>&1 || true
+check "doctor --fix created the state directory"         0 test -d "$CASE/state/star-traders-sync"
+check "  and left the saves alone"                       0 test -f "$CASE/local/core.db"
+
+# --------------------------------------------------------------------------
 section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1
