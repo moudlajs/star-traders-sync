@@ -58,9 +58,11 @@ HUB_PATH=/Users/dontlookatme/star-traders-sync-hub
 #   ls -la ~/Library/StarTradersFrontiers/
 LOCAL_SAVE_PATH=~/Library/StarTradersFrontiers
 
-# The mods build (StarTradersFrontiers_Mods.app) uses a separate directory,
-# ~/Library/StarTradersFrontiers_Mods. Leave this empty unless you play it.
-LOCAL_SAVE_PATH_MODS=
+# The mods build (StarTradersFrontiers_Mods.app) keeps its saves in a
+# separate directory, ~/Library/StarTradersFrontiers_Mods. It is NOT synced
+# and there is deliberately no config key for it: a key that silently does
+# nothing is worse than no key, because you would set it and believe your
+# mods saves were protected. Sync that directory by hand if you need it.
 
 
 # ---------------------------------------------------------------------------

@@ -189,11 +189,11 @@ sts pull --force=hub
 | 10 | config file missing or unreadable |
 | 11 | config malformed: unparseable line or unknown key |
 | 12 | required config keys missing or empty (all listed at once) |
-| 13 | `LOCAL_SAVE_PATH` missing, not a directory, or unreadable |
+| 13 | `LOCAL_SAVE_PATH` missing/not a directory, or a run was interrupted mid-swap |
 | 14 | hub path does not exist on the hub host |
 | 15 | running as root (refused) |
 | 16 | bash older than 3.2 (refused) |
-| 17 | `rsync` or `ssh` not on `PATH` |
+| 17 | `rsync`, `ssh` or `python3` not on `PATH` |
 | 20 | tailscale binary not found |
 | 21 | `tailscaled` not running |
 | 22 | node logged out or Stopped, still down after one `tailscale up` |
@@ -212,9 +212,9 @@ sts pull --force=hub
 | 51 | hub lock could not be created |
 | 52 | another `sts` already running on this machine |
 | 60 | both sides changed since the last sync |
-| 61 | first run on this machine and both sides have saves |
-| 62 | hub is empty; seeding needs `push --force=local` |
-| 63 | snapshot failed, so no overwrite was attempted |
+| 61 | first run with saves on both sides, or this machine is empty and pushing would wipe the hub |
+| 62 | hub is empty; seeding needs `push --force=local`, or the hub is empty and pulling would wipe this machine |
+| 63 | snapshot failed or was incomplete, so nothing was overwritten |
 | 70 | backup volume not mounted |
 | 71 | `backup` run on a machine that is not the hub host |
 
@@ -261,6 +261,12 @@ sts pull --force=hub
 | 37 | `the hub's clock is Ns away from this machine's` | 0 | Warning. Timestamps shown become unreliable; the decision is made on content fingerprints, which do not care about clocks. |
 | 38 | `<volume> exists but is NOT a mount point` | 70 | The disk is unplugged, and `/Volumes/T9` is a plain empty directory on the internal disk. Detected by comparing device ids, not by `-d`. Nothing is written. |
 | 39 | `backup only runs on the hub host` | 71 | Run it on the mini. |
+| 40 | `the hub has 0 files and this machine has N` | 62 | Syncing *from* an empty side is refused unconditionally — `--force=hub` will not override it. An empty hub means something went wrong there, not that your saves should be deleted. |
+| 41 | `this machine has 0 files and the hub has N` | 61 | The symmetric case. Refused the same way. |
+| 42 | `snapshot ... is INCOMPLETE - N files in the source, only M copied` | 63 | Some files could not be read, so the snapshot cannot protect them. Nothing was overwritten. Fix permissions on the source directory. |
+| 43 | `a previous run was interrupted while swapping directories` | 13 | Your saves are intact under `<path>.sts-old-<pid>`. The exact `mv` to restore them is printed. Nothing else runs until you do. |
+| 44 | `HUB_PATH contains a character that cannot survive...` | 11 | Paths are passed to a remote shell and openrsync has no `--protect-args`. Use only letters, digits and `. _ / @ + -` — no spaces or quotes. |
+| 45 | `HUB_PATH and LOCAL_SAVE_PATH are the same directory` | 11 | The hub must be separate from the game's save directory on every machine, including the hub itself. Nesting either inside the other is also refused. |
 
 ## Data safety
 
@@ -290,6 +296,23 @@ is 12288 bytes on *both* while holding completely different saves. Size
 and mtime comparison would be actively misleading, so every decision is
 made on a SHA-256 manifest of the directory. Timestamps are shown to you,
 but they are not what the tool reasons about.
+
+**An empty side never propagates.** Syncing *from* a directory with zero
+files is refused unconditionally, and no `--force` overrides it. An empty
+hub means something went wrong on the hub, never that your saves should be
+deleted. The same guard applies in both directions.
+
+**Snapshots are verified, not assumed.** The file count of every snapshot
+is compared against its source, and a short count aborts the run before
+anything is overwritten. This matters because `find | cpio` will happily
+exit 0 after copying only part of a tree when a subdirectory is unreadable.
+
+**An interrupted swap is recoverable.** The moment between the two renames
+is the only time the save directory does not exist. `SIGINT`/`SIGTERM` are
+trapped, the cleanup sweep is suppressed while a swap is in flight, and the
+next run detects the orphaned `<path>.sts-old-<pid>` and refuses to do
+anything until you restore it — so an empty save directory can never be
+created on top of a pending recovery.
 
 **Running the wrong command at the wrong time may refuse to work, but will
 not lose a save.**
