@@ -67,7 +67,7 @@ it checks, and which repairs `--fix` will and will not make, is in
 | **Tailscale tailnet** | **yes** | the machines have to see each other |
 | Steam account | practically | you need the game installed on both |
 | **Apple ID** | **no** | nothing here touches iCloud |
-| macOS version | no | tested on 15.x |
+| macOS version | no | 15.x is what it is developed and tested against |
 | Username | no | `HUB_USER` is the hub's account; `~/` expands per machine |
 
 ## First time: seeding the hub
