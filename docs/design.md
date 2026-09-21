@@ -20,19 +20,19 @@ flowchart TB
     HUB -->|"sts backup — hub host only"| BK
 ```
 
-The hub is a plain directory on the Mac mini. It is **not** a game save
-directory, even on the mini itself. Both machines are clients of it,
-including the mini, which uses a local path copy instead of ssh — every
-other code path is identical.
+The hub is a plain directory on the hub host. It is **not** a game save
+directory, on any machine — including the hub host, which is a client of its
+own hub and reaches it by local path copy instead of ssh. Every other code
+path is identical.
 
-One script, identical on both machines. All differences live in
+One script, identical on every machine. All differences live in
 `~/.config/star-traders-sync/config`.
 
 
 ## Finding your save directory
 
 Never copy a path out of this file into the config without checking it.
-On both machines tested it is `~/Library/StarTradersFrontiers` — directly
+On every machine tested it was `~/Library/StarTradersFrontiers` — directly
 under `~/Library`, **not** under `Application Support` — but verify:
 
 ```bash
@@ -136,9 +136,10 @@ Restoring one, and restoring from a backup, is in
 the target and is moved into place with two renames only after it exits 0.
 A dropped connection leaves the target byte-identical to how it started.
 
-**Fingerprints decide, not timestamps.** On these two machines `core.db`
-is 12288 bytes on *both* while holding completely different saves. Size
-and mtime comparison would be actively misleading, so every decision is
+**Fingerprints decide, not timestamps.** Two save directories holding
+completely different campaigns can have byte-identical file sizes: under test,
+`core.db` was 12288 bytes on both sides while the saves had nothing in common.
+Size and mtime comparison would be actively misleading, so every decision is
 made on a SHA-256 manifest of the directory. Timestamps are shown to you,
 but they are not what the tool reasons about.
 

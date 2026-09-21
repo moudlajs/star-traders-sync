@@ -44,7 +44,7 @@ else
 # Every option, explained, with defaults:
 #   $EXAMPLE
 
-HUB_HOST=my-mac-mini
+HUB_HOST=hub-tailnet-name
 HUB_USER=youruser
 HUB_PATH=/Users/youruser/star-traders-sync-hub
 
@@ -54,8 +54,8 @@ SYNC_EXCLUDE=data.db steam_autocloud.vdf
 STEAM_APPID=335620
 GAME_PROCESS_NAME=StarTradersFrontiers
 
-BACKUP_VOLUME=/Volumes/Backup
-BACKUP_DEST=/Volumes/Backup/Backups/star-traders-sync
+BACKUP_VOLUME=/Volumes/YourDisk
+BACKUP_DEST=/Volumes/YourDisk/Backups/star-traders-sync
 CFGEOF
     CONFIG_CREATED=1
     printf '  config written to %s\n' "$CONFIG_FILE"
