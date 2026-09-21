@@ -106,59 +106,12 @@ client.
 Full procedure, what has to match across the two machines, and seeding the
 hub for the first time: **[docs/install.md](docs/install.md)**
 
-## Scheduled backups (hub host only)
-
-```bash
-./launchd/install-backup-job.sh              # install, load, and test-run it
-./launchd/install-backup-job.sh --uninstall
-```
-
-The plist is generated from your config rather than shipped, because it
-needs absolute paths. Re-run the installer after changing `HUB_PATH`,
-`BACKUP_VOLUME` or `BACKUP_DEST`.
-
-It pins `PATH`, `HOME`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME`, because
-launchd does not read your shell profile. The `XDG_*` ones matter more than
-they look: if the job and your terminal disagree about them, they compute
-different lock paths and the mutual exclusion between a scheduled backup and
-an interactive run silently disappears.
-
-The installer runs the job once after loading, so you find out immediately
-whether it works under launchd rather than discovering it failed at 04:00
-three weeks later.
-
-### macOS will block it from writing to an external disk
-
-A launchd job is denied access to removable volumes **silently, with no
-prompt**. The symptom is:
-
-```
-mkdir: /Volumes/YourDisk/...: Operation not permitted
-```
-
-on a volume that is mounted and writable, from a job whose identical
-command works fine when you run it in a terminal.
-
-To allow it: **System Settings > Privacy & Security > Full Disk Access**,
-then add `/bin/bash` (press ⌘⇧G in the file picker to type the path).
-
-Be aware of what that grants: every bash script run on the machine, not
-just this one. If that is too broad, the alternatives are to keep
-`BACKUP_DEST` on the internal disk, or to run `sts backup` interactively
-rather than on a schedule.
-
-A powered-off Mac misses its slot entirely — launchd only catches up from
-sleep, not from being off:
-
-```bash
-sudo pmset repeat wakeorpoweron MTWRFSU 03:55:00
-```
-
 ---
 
 ## More
 
 - **[docs/install.md](docs/install.md)** — install, ssh setup, what must match, seeding the hub
+- **[docs/backups.md](docs/backups.md)** — scheduled backups to an external disk, and restoring
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** — what `doctor` checks, every exit code, and a row per failure
 - **[docs/design.md](docs/design.md)** — architecture, what lives in the save directory, why conflicts refuse, the openrsync and path notes
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — conventions, testing, how to submit a change
