@@ -98,6 +98,6 @@ which side has what before you commit to either.
 
 ## Next
 
-- Scheduled backups to an external disk, on the hub host: see the README
+- Scheduled backups to an external disk, on the hub host: [backups.md](backups.md)
 - Every exit code and a row per failure: [troubleshooting.md](troubleshooting.md)
 - Why the tool is shaped this way: [design.md](design.md)

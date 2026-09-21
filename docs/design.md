@@ -81,12 +81,8 @@ receiving side is copied to:
 pruned to the last `SNAPSHOT_KEEP` (default 10). `rsync --delete` is only
 ever reached *after* that snapshot exists.
 
-To recover, just copy a snapshot back:
-
-```bash
-ls ~/Library/star-traders-sync-snapshots/
-cp -Rp ~/Library/star-traders-sync-snapshots/<stamp>/ ~/Library/StarTradersFrontiers/
-```
+Restoring one, and restoring from a backup, is in
+[backups.md](backups.md#restoring).
 
 **Transfers are staged.** rsync writes into `.sts-incoming-<pid>` next to
 the target and is moved into place with two renames only after it exits 0.
