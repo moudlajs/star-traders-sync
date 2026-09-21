@@ -111,6 +111,7 @@ hub for the first time: **[docs/install.md](docs/install.md)**
 ## More
 
 - **[docs/install.md](docs/install.md)** — install, ssh setup, what must match, seeding the hub
+- **[docs/configuration.md](docs/configuration.md)** — every config key, its default, and what must match across machines
 - **[docs/backups.md](docs/backups.md)** — scheduled backups to an external disk, and restoring
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** — what `doctor` checks, every exit code, and a row per failure
 - **[docs/design.md](docs/design.md)** — architecture, what lives in the save directory, why conflicts refuse, the openrsync and path notes

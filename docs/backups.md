@@ -101,11 +101,11 @@ ls ~/Library/star-traders-sync-snapshots/
 cp -Rp ~/Library/star-traders-sync-snapshots/<stamp>/ ~/Library/StarTradersFrontiers/
 ```
 
-Snapshots are pruned to the last `SNAPSHOT_KEEP` (default 10). Why they exist
+Snapshots are pruned to the last `SNAPSHOT_KEEP`. Why they exist
 and what is asserted about them is in [design.md](design.md#data-safety).
 
 **From a backup** — a copy of the hub on the external disk, kept for
-`BACKUP_KEEP` runs (default 30). Copy the timestamped directory you want back
+`BACKUP_KEEP` runs. Copy the timestamped directory you want back
 over the hub, then pull it to each machine:
 
 ```bash

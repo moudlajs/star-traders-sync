@@ -1,44 +1,39 @@
-# star-traders-sync - full configuration reference
+# star-traders-sync - example configuration
 #
 # Install to: ~/.config/star-traders-sync/config
-# install.sh writes a short working config for you; this file documents
-# every key that exists. The reasoning behind each one is in README.md.
+# install.sh copies this file there if no config exists. It never overwrites
+# one.
+#
+# Every key, its default, what must match across machines, and the rules the
+# tool enforces: docs/configuration.md
 #
 # Format: KEY=value, one per line. The file is PARSED, never sourced, so no
 # shell syntax, no quotes, no expansion. An unknown key is a hard error.
-# A leading ~/ is expanded in path keys only. Paths may contain only
-# [A-Za-z0-9._/@+-] - no spaces or quotes, because they are handed to a
-# remote shell and openrsync has no --protect-args.
 
 
 # --- Required -------------------------------------------------------------
 
-# Tailscale node name of the machine hosting the hub, as `tailscale status`
-# shows it. When this equals the local machine, the hub is reached by local
-# path copy instead of ssh. Matched case-insensitively.
+# Tailscale node name of the machine hosting the hub. See: tailscale status
 HUB_HOST=my-mac-mini
 
-# SSH user ON THE HUB. Same value on every machine. Ignored on the hub.
+# SSH account ON THE HUB. Ignored when running on the hub itself.
 HUB_USER=youruser
 
-# Absolute path to the hub directory ON THE HUB HOST. Must be absolute: it
-# is evaluated remotely, where ~ is the hub user's home. Must NOT be a game
-# save directory, and must not be nested with LOCAL_SAVE_PATH.
+# The hub directory, ON THE HUB HOST. Must be absolute.
 HUB_PATH=/Users/youruser/star-traders-sync-hub
 
-# Where the game keeps its saves on THIS machine. Verify it rather than
-# trusting this default - see "Finding your save directory" in README.md.
+# The game's save directory on THIS machine. Verify it rather than trusting
+# this value - see "Finding your save directory" in docs/design.md.
 LOCAL_SAVE_PATH=~/Library/StarTradersFrontiers
 
-# Steam appid, from appmanifest_<id>.acf. 335620 = Star Traders: Frontiers.
+# From appmanifest_<id>.acf. 335620 = Star Traders: Frontiers.
 STEAM_APPID=335620
 
-# Process name for `pgrep -x`. push/pull refuse while this is running.
+# Name for pgrep -x. push and pull refuse while it is running.
 GAME_PROCESS_NAME=StarTradersFrontiers
 
-# The mount point that must be present for `sts backup`. Checked by
-# comparing device ids, so an unmounted volume is detected rather than
-# silently written to on the internal disk.
+# Mount point that must be present for sts backup. Required even if you
+# never run one.
 BACKUP_VOLUME=/Volumes/YourDisk
 
 # Where timestamped backups go. Must live under BACKUP_VOLUME.
@@ -47,59 +42,43 @@ BACKUP_DEST=/Volumes/YourDisk/Backups/star-traders-sync
 
 # --- Optional, shown with their defaults ----------------------------------
 
-# Files never transferred in either direction, space separated, matched by
-# name. data.db is static game content versioned with the binary, not a
-# save; syncing it across mismatched game versions would be harmful.
-# steam_autocloud.vdf is an inert Steam marker holding your account id.
-# Excluded files are preserved on both sides rather than deleted.
+# Files never transferred, space separated. Must be the same on both
+# machines - the fingerprint manifests are built with these names excluded.
 SYNC_EXCLUDE=data.db steam_autocloud.vdf
 
-# Seconds `sts play` waits for the game process to appear before declaring
-# it never started. Nothing is pushed in that case.
+# Seconds sts play waits for the game to appear before giving up on it.
 GAME_START_TIMEOUT=90
 
 SSH_PORT=22
 SSH_CONNECT_TIMEOUT=10
 
-# Extra ssh options, space separated. BatchMode, ConnectTimeout and
-# StrictHostKeyChecking are always set by sts and cannot be overridden here.
+# Extra ssh options. BatchMode, ConnectTimeout and StrictHostKeyChecking are
+# always set by sts and cannot be overridden here.
 SSH_EXTRA_OPTS=
 
-# 1 = try MagicDNS first and fall back to the tailnet IP; 0 = always use the
-# IP. The fallback is normal on machines whose tailscaled does not install a
-# system resolver, and sts logs which one it used.
+# 1 = try MagicDNS, fall back to the tailnet IP. 0 = always use the IP.
 PREFER_MAGICDNS=1
 
 # Snapshots kept per side, under <target>/../star-traders-sync-snapshots/.
-# Every overwrite snapshots the target first. Pruning is suspended while the
-# live directory is empty, so the last copy cannot be aged out.
 SNAPSHOT_KEEP=10
 
-# A hub lock left by a crashed run ON THIS MACHINE is cleared once older
-# than this, and that is logged at WARN. A lock held by any other machine is
-# never cleared automatically, at any age.
+# When this machine's own crashed hub lock is cleared. Another machine's lock
+# is never cleared automatically, at any age.
 LOCK_TTL_SECONDS=3600
 
-# Warn when the hub's clock differs by more than this. Decisions are made on
-# content fingerprints, which do not care about clocks; only the timestamps
-# shown to you become unreliable.
+# Warn when the hub's clock differs by more than this many seconds.
 CLOCK_SKEW_TOLERANCE=300
 
 # Timestamped backup directories to keep. 0 disables pruning.
 BACKUP_KEEP=30
 
-# Seconds to wait for BACKUP_VOLUME to appear before giving up. A scheduled
-# backup can fire moments after the machine wakes, before an external disk
-# has remounted; failing instantly would lose the day's backup over a
-# condition that resolves itself in seconds. 0 disables the wait, which is
-# what you want for an interactive run.
-# The launchd job installer sets this to 180.
+# Seconds to wait for BACKUP_VOLUME to appear. The launchd installer raises
+# this to 180; 0 is right for an interactive run.
 BACKUP_MOUNT_WAIT=0
 
 # ~/Library/Logs/star-traders-sync/star-traders-sync.log
 LOG_MAX_BYTES=5242880
 LOG_KEEP=3
 
-# DEBUG, INFO, WARN or ERROR. Affects the log file; --verbose mirrors to
-# stderr regardless.
+# DEBUG, INFO, WARN or ERROR. --verbose mirrors to stderr regardless.
 LOG_LEVEL=INFO
