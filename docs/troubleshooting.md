@@ -125,6 +125,8 @@ you which later checks it skipped as a result.
 | 32 | State file missing or corrupt | — | Treated as a first run, never as "no changes". That means the next sync will ask you to resolve a conflict rather than guess. |
 | 33 | `first run on this machine, and BOTH sides already have saves` | 61 | A conflict, not a fresh start. Both sides are described with file counts and timestamps. Pick with `--force=local` or `--force=hub`. |
 | 34 | `both sides changed since the last sync` | 60 | Nothing is merged and nothing is auto-picked. Read the two summaries, then re-run with `--force=`. |
+| 34a | `only THIS machine changed since the last sync` | 60 | Pulling would discard those changes, so it refuses rather than choosing for you. `push` to send them, or `pull --force=hub` to throw them away. The mirror case on `push` is `only the HUB changed`. |
+| 34b | `the recorded sync state is inconsistent with what is on disk` | 60 | Neither side changed since the last recorded sync, yet they differ. Usually a sync recorded against a hub another machine changed in the same moment, or `SYNC_EXCLUDE` differing between the machines - see [configuration.md](configuration.md#what-must-match-and-what-must-not). **No `--force` overrides this one**; read both summaries and resolve it deliberately. |
 | 35 | `the hub is empty` | 62 | Seeding is a one-way decision and is never silent. `sts push --force=local`. |
 | 36 | `first seed: this machine has no saves` | 0 | A pull is allowed, and logged as a first seed rather than an ordinary pull. |
 | 37 | `the hub's clock is Ns away from this machine's` | 0 | Warning. Timestamps shown become unreliable; the decision is made on content fingerprints, which do not care about clocks. |

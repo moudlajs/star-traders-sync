@@ -5,19 +5,19 @@ if you want to know why it refuses things other sync tools guess at.
 
 ## Architecture
 
-```
-   MacBook  (my-macbook)                    Mac mini  (my-mac-mini)
-   ~/Library/StarTradersFrontiers        ~/Library/StarTradersFrontiers
-            |                                       |
-            |  rsync over ssh                       |  local path copy
-            |  to the tailnet address               |  (same code path)
-            v                                       v
-                  ~/star-traders-sync-hub
-                   single source of truth
-                            |
-                            |  sts backup  (hub host only, daily)
-                            v
-              /Volumes/Backup/Backups/star-traders-sync/<ISO>/
+```mermaid
+flowchart TB
+    subgraph C["a client"]
+        CS["LOCAL_SAVE_PATH<br/>the game's save directory"]
+    end
+    subgraph H["the hub host — HUB_HOST"]
+        HS["LOCAL_SAVE_PATH<br/>the game's save directory"]
+        HUB["HUB_PATH<br/><b>single source of truth</b>"]
+    end
+    BK["BACKUP_DEST/&lt;ISO timestamp&gt;<br/>on BACKUP_VOLUME"]
+    CS <-->|"rsync over ssh<br/>to the tailnet address"| HUB
+    HS <-->|"local path copy<br/>same code path"| HUB
+    HUB -->|"sts backup — hub host only"| BK
 ```
 
 The hub is a plain directory on the Mac mini. It is **not** a game save
@@ -68,6 +68,54 @@ recognisable header. They can never be inspected, diffed or merged — only
 moved whole. That is why a two-sided change is always a conflict you
 resolve by hand, and never something this tool tries to be clever about.
 
+
+## How a transfer runs
+
+`sts pull` in full. `sts push` is the mirror image: the same order, with the
+two sides swapped and `--force=local` in place of `--force=hub`.
+
+Every refusal carries its exit code, so this reads alongside
+[troubleshooting.md](troubleshooting.md#exit-codes). **The order is the
+design** — what gates what is the whole argument, and the paragraphs under
+[Data safety](#data-safety) say why each guard is there.
+
+```mermaid
+flowchart TB
+    START(["sts pull"]) --> GAME{"game running<br/>on this machine?"}
+    GAME -->|yes| X40(["refuse · 40"])
+    GAME -->|no| LOCK{"hub lock"}
+    LOCK -->|"held by another machine"| X50(["refuse · 50"])
+    LOCK -->|acquired| MAN["SHA-256 manifest of each side<br/>· not sizes, not mtimes"]
+    MAN --> EMPTY{"hub empty, and this<br/>machine is not?"}
+    EMPTY -->|yes| X62(["refuse · 62<br/>no --force overrides this"])
+    EMPTY -->|no| CMP{"fingerprints equal?"}
+    CMP -->|yes| OK1(["nothing to do · 0"])
+    CMP -->|no| ST{"compare against the<br/>recorded state"}
+    ST -->|"only the hub changed"| SNAP
+    ST -->|"first run, this machine empty"| SNAP
+    ST -->|"first run, both sides have saves"| F61{"--force=hub?"}
+    ST -->|"this machine changed"| F60{"--force=hub?"}
+    ST -->|"both sides changed"| F60
+    ST -->|"neither changed, yet they differ"| X60D(["refuse · 60<br/>never overridable"])
+    F61 -->|no| X61(["refuse · 61"])
+    F61 -->|yes| SNAP
+    F60 -->|no| X60(["refuse · 60"])
+    F60 -->|yes| SNAP
+    SNAP["snapshot the receiving side"] --> CNT{"snapshot file count<br/>== source?"}
+    CNT -->|short| X63(["abort · 63<br/>nothing was overwritten"])
+    CNT -->|equal| STAGE["rsync into .sts-incoming-PID<br/>beside the target"]
+    STAGE -->|"rsync exit non-zero"| X33(["refuse · 33<br/>target byte-identical"])
+    STAGE -->|"exit 0"| CARRY["carry SYNC_EXCLUDE files<br/>into the staged copy"]
+    CARRY --> SWAP["two renames<br/>target → .sts-old-PID<br/>staged → target"]
+    SWAP -->|interrupted between them| X13(["every later run refuses · 13<br/>until you restore .sts-old-PID"])
+    SWAP --> REC["record both fingerprints<br/>release the hub lock"]
+    REC --> OK2(["complete · 0"])
+```
+
+The hub lock is taken **before** either side is read, so the verdict cannot be
+computed against a hub another machine is in the middle of changing. A clock
+difference beyond `CLOCK_SKEW_TOLERANCE` warns and continues: the timestamps
+shown to you become unreliable, but nothing in this flow depends on them.
 
 ## Data safety
 
