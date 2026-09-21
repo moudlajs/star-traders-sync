@@ -85,6 +85,40 @@ oversight, so the template and a workflow both do this automatically.
 A typo fix does not need this. Anything that changes behaviour, adds a
 guard, or touches CI does.
 
+### Structure
+
+Headings are a **closed set**, in this order. Do not invent new ones per
+issue - four of the open issues had four different shapes, and the result was
+a backlog that could not be skimmed.
+
+| Heading | |
+|---|---|
+| `## Problem` | required. What is wrong or missing and why it matters, with evidence: `file:line`, real output, an exit code. Not a restatement of the title. |
+| `## Proposal` | required. What to do about it. Options with a recommendation when the choice is not obvious. |
+| `## Acceptance criteria` | required. Checkboxes, each testable by someone who did not write the issue. |
+| `## Out of scope` | optional. What a reader would reasonably assume is included and is not. |
+| `## References` | optional. Issue numbers, files, prior art. |
+
+Delete an optional heading rather than leaving it empty.
+
+Bug reports keep their own set - what happened, command and exit code,
+version, which machine, log excerpt, setup, and `## Cause` once known -
+because a report has evidence to collect rather than a proposal to make.
+
+Titles use the same vocabulary as commits, `<type>(<optional scope>):
+<imperative>`, because an issue title is usually what becomes the pull
+request title and then the squash subject on `main`. Lowercase after the
+colon, no trailing period:
+
+```
+docs: cut the README to the everyday path and link out
+fix(lock): release the hub lock on every early return
+feat(backup): mark completed backups so partials cannot join the rotation
+```
+
+The templates in `.github/ISSUE_TEMPLATE/` encode all of this, and blank
+issues are disabled so that picking one is the path of least resistance.
+
 ## Pull requests
 
 - **Open it as a draft.** `gh pr create --draft`, then `gh pr ready <n>`
