@@ -19,7 +19,8 @@ sts status
 place **only if no config exists** — it never overwrites one. If `~/bin`
 is not on your `PATH` it warns and carries on rather than failing.
 
-Every config key is documented in `config.example`.
+Every key, its default and what has to match across the two machines is in
+[configuration.md](configuration.md).
 
 ## One-time SSH setup on each client
 
@@ -99,5 +100,6 @@ which side has what before you commit to either.
 ## Next
 
 - Scheduled backups to an external disk, on the hub host: [backups.md](backups.md)
+- Every config key: [configuration.md](configuration.md)
 - Every exit code and a row per failure: [troubleshooting.md](troubleshooting.md)
 - Why the tool is shaped this way: [design.md](design.md)

@@ -78,7 +78,7 @@ receiving side is copied to:
 <target>/../star-traders-sync-snapshots/<ISO timestamp>/
 ```
 
-pruned to the last `SNAPSHOT_KEEP` (default 10). `rsync --delete` is only
+pruned to the last `SNAPSHOT_KEEP`. `rsync --delete` is only
 ever reached *after* that snapshot exists.
 
 Restoring one, and restoring from a backup, is in
@@ -121,8 +121,8 @@ not lose a save.**
 ~/Library/Logs/star-traders-sync/star-traders-sync.log
 ```
 
-ISO timestamp, level, step, and result, rotated at `LOG_MAX_BYTES`
-(default 5 MB) keeping `LOG_KEEP` (default 3) files. stdout stays short;
+ISO timestamp, level, step, and result, rotated at `LOG_MAX_BYTES` keeping
+`LOG_KEEP` files. stdout stays short;
 detail goes to the log. `--verbose` mirrors the log to stderr.
 
 

@@ -119,7 +119,7 @@ you which later checks it skipped as a result.
 | 26 | `the game never started` | 41 | Nothing is pushed — an unchanged save is not worth recording. Check `STEAM_APPID` and that Steam is installed. |
 | 27 | Game crashed or was force quit during `sts play` | 0 | The save is still pushed. The log says which case it was, detected from a crash report in `~/Library/Logs/DiagnosticReports` newer than the launch. |
 | 28 | `the hub is locked by another machine` | 50 | Who holds it and since when are printed. A lock from another host is **never** cleared automatically, at any age. |
-| 29 | `locked by this machine from an earlier run` | 50 | Cleared automatically once older than `LOCK_TTL_SECONDS` (default 3600), and that clearing is logged at WARN. |
+| 29 | `locked by this machine from an earlier run` | 50 | Cleared automatically once older than `LOCK_TTL_SECONDS`, and that clearing is logged at WARN. |
 | 30 | `could not create the hub lock` | 51 | The hub directory is not writable, or is read-only. |
 | 31 | `another star-traders-sync is already running` | 52 | Local lock via `shlock`. Wait for the other run. |
 | 32 | State file missing or corrupt | — | Treated as a first run, never as "no changes". That means the next sync will ask you to resolve a conflict rather than guess. |
