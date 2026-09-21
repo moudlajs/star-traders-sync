@@ -29,7 +29,7 @@ Types used here:
 |---|---|
 | `feat` | new capability |
 | `fix` | corrected behaviour |
-| `docs` | README, help text, config comments |
+| `docs` | README, docs/, help text, config comments |
 | `test` | the regression suite |
 | `ci` | workflows |
 | `refactor` | no behaviour change |
@@ -125,7 +125,7 @@ because the next one is easier to ignore.
 ```
 
 Every case in that suite corresponds to a bug that was actually found, or
-to a guarantee the README makes. **If you fix a bug, add the case that
+to a guarantee the README or docs/ makes. **If you fix a bug, add the case that
 would have caught it.** Three adversarial reviews found real data-loss
 defects in code that looked careful; the suite is the only thing that stops
 them coming back.
