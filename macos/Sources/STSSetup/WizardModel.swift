@@ -24,6 +24,25 @@ enum Role: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+struct InstallStage: Identifiable {
+    enum State { case pending, running, done, failed }
+    enum Kind { case files, commands, settings, hubFolder }
+
+    let kind: Kind
+    var state: State = .pending
+    var details: [String] = []
+    var id: Kind { kind }
+
+    var title: String {
+        switch kind {
+        case .files:     return "Install the sync tool"
+        case .commands:  return "Add the sts command"
+        case .settings:  return "Save your settings"
+        case .hubFolder: return "Create the hub folder"
+        }
+    }
+}
+
 struct DoctorLine: Identifiable {
     enum Kind { case ok, warn, fail, fixed, note, skip, section, plain }
     let id = UUID()
@@ -84,9 +103,13 @@ final class WizardModel: ObservableObject {
     @Published var connectBusy = false
 
     // Install / check
-    @Published var installLog: [String] = []
+    @Published var stages: [InstallStage] = []
     @Published var installError: String?
     @Published var installed = false
+    /// What was installed, so going back and changing anything makes
+    /// Install run again instead of keeping a stale "done".
+    var installedValues: SetupValues?
+    var installedRole: Role?
     @Published var installBusy = false
     @Published var doctorLines: [DoctorLine] = []
     @Published var doctorRunning = false
@@ -164,6 +187,9 @@ final class WizardModel: ObservableObject {
         case .tailscale: if tsStatus == nil { checkTailscale() }
         case .role:      refreshVolumes(); checkRemoteLogin(); applyDefaultHubPath()
         case .connect:   startConnect()
+        case .install:
+            if installed && (installedValues != values || installedRole != role) { installed = false }
+            if !installed { resetStages() }
         case .check:     runDoctor()
         default: break
         }
@@ -341,38 +367,77 @@ final class WizardModel: ObservableObject {
 
     // MARK: install
 
+    func resetStages() {
+        var kinds: [InstallStage.Kind] = [.files, .commands, .settings]
+        if role == .hub { kinds.append(.hubFolder) }
+        stages = kinds.map { InstallStage(kind: $0) }
+        installError = nil
+    }
+
+    /// Runs the stages in order, one visibly after another. The work is
+    /// real; each stage is only held on screen for a moment so the
+    /// sequence can be followed instead of arriving as one block.
     func install() {
         guard let script = bundledScript, let v = values else { return }
+        resetStages()
         installBusy = true
-        installError = nil
-        installLog = []
-        let layout = self.layout, example = bundledExample, role = self.role, hubPath = self.hubPath
+        let layout = self.layout, example = bundledExample, hubPath = self.hubPath
+        let kinds = stages.map(\.kind)
+        let installingRole = role
+
         Task.detached {
-            var log: [String] = []
-            var err: String?
-            do {
-                if Installer.scriptIsRunning() { throw InstallError.scriptRunning }
-                log += try Installer.installScript(bundledScript: script, bundledExample: example, layout: layout)
-                log += try Installer.writeConfig(v, layout: layout)
-                if role == .hub {
-                    // Creating the hub folder is what doctor --fix would do;
-                    // doing it here means the check step starts green.
-                    let url = URL(fileURLWithPath: hubPath)
-                    if !FileManager.default.fileExists(atPath: url.path) {
-                        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-                        log.append("created the hub folder \(hubPath)")
-                    }
+            if Installer.scriptIsRunning() {
+                await MainActor.run {
+                    self.installError = InstallError.scriptRunning.description
+                    self.installBusy = false
                 }
-            } catch let e as InstallError {
-                err = e.description
-            } catch {
-                err = error.localizedDescription
+                return
             }
-            let lines = log, failure = err
+            for (i, kind) in kinds.enumerated() {
+                await MainActor.run { self.stages[i].state = .running }
+                let started = Date()
+                var details: [String] = []
+                var failure: String?
+                do {
+                    switch kind {
+                    case .files:
+                        details = try Installer.installFiles(bundledScript: script, bundledExample: example, layout: layout)
+                    case .commands:
+                        details = try Installer.linkCommands(layout: layout)
+                    case .settings:
+                        details = try Installer.writeConfig(v, layout: layout)
+                    case .hubFolder:
+                        // What doctor --fix would do; doing it here means
+                        // the check step starts green.
+                        if FileManager.default.fileExists(atPath: hubPath) {
+                            details = ["\(hubPath) already exists"]
+                        } else {
+                            try FileManager.default.createDirectory(atPath: hubPath, withIntermediateDirectories: true)
+                            details = ["created \(hubPath)"]
+                        }
+                    }
+                } catch let e as InstallError {
+                    failure = e.description
+                } catch {
+                    failure = error.localizedDescription
+                }
+                let remaining = 0.45 - Date().timeIntervalSince(started)
+                if remaining > 0 { try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
+
+                let shown = details, err = failure
+                await MainActor.run {
+                    self.stages[i].details = shown
+                    self.stages[i].state = err == nil ? .done : .failed
+                    if let err { self.installError = err }
+                }
+                if failure != nil { break }
+            }
             await MainActor.run {
-                self.installLog = lines
-                self.installError = failure
-                self.installed = failure == nil
+                self.installed = self.stages.allSatisfy { $0.state == .done }
+                if self.installed {
+                    self.installedValues = v
+                    self.installedRole = installingRole
+                }
                 self.installBusy = false
             }
         }

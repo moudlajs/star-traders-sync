@@ -56,25 +56,37 @@ public enum Installer {
     }
 
     /// Copies the bundled script and config.example into Application
-    /// Support and links `sts` and `star-traders-sync` in ~/bin.
-    ///
-    /// Mirrors install.sh's rules: a real file in ~/bin is never replaced.
-    /// It adds one: a link that already points at a working script (a repo
-    /// checkout) is left alone, so a developer's install is not hijacked.
+    /// Support, then links `sts` and `star-traders-sync` in ~/bin.
     /// Returns one human-readable line per thing it did.
     public static func installScript(bundledScript: URL, bundledExample: URL?,
                                      layout: InstallLayout,
                                      fileManager fm: FileManager = .default) throws -> [String] {
-        var report: [String] = []
+        try installFiles(bundledScript: bundledScript, bundledExample: bundledExample,
+                         layout: layout, fileManager: fm)
+            + linkCommands(layout: layout, fileManager: fm)
+    }
 
+    /// Step one: the script and config.example into Application Support.
+    public static func installFiles(bundledScript: URL, bundledExample: URL?,
+                                    layout: InstallLayout,
+                                    fileManager fm: FileManager = .default) throws -> [String] {
         try fm.createDirectory(at: layout.installedScript.deletingLastPathComponent(),
                                withIntermediateDirectories: true)
         try atomicCopy(bundledScript, to: layout.installedScript, mode: 0o755, fm: fm)
-        report.append("installed the sync tool in \(tilde(layout.installedScript.path, layout))")
         if let ex = bundledExample {
             try atomicCopy(ex, to: layout.installedExample, mode: 0o644, fm: fm)
         }
+        return ["installed in \(tilde(layout.installedScript.path, layout))"]
+    }
 
+    /// Step two: `sts` and `star-traders-sync` in ~/bin.
+    ///
+    /// Mirrors install.sh's rules: a real file in ~/bin is never replaced.
+    /// It adds one: a link that already points at a working script (a repo
+    /// checkout) is left alone, so a developer's install is not hijacked.
+    public static func linkCommands(layout: InstallLayout,
+                                    fileManager fm: FileManager = .default) throws -> [String] {
+        var report: [String] = []
         try fm.createDirectory(at: layout.binDir, withIntermediateDirectories: true)
         for name in layout.linkNames {
             let link = layout.binDir.appendingPathComponent(name)
