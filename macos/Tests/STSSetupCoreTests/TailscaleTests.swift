@@ -29,6 +29,12 @@ final class TailscaleTests: XCTestCase {
         XCTAssertEqual(s.me?.nodeName, "x", "falls back to the lowercased HostName without MagicDNS")
     }
 
+    func testWarningBeforeTheJSONIsSkipped() throws {
+        let out = "Warning: client version \"1.94.1\" != tailscaled server version \"1.102.4\"\n"
+            + #"{"BackendState":"Running","Self":{"HostName":"a","DNSName":"a.t.ts.net."},"Peer":{}}"#
+        XCTAssertTrue(try Tailscale.parseStatus(Data(out.utf8)).running)
+    }
+
     func testGarbageIsAnError() {
         XCTAssertThrowsError(try Tailscale.parseStatus(Data("not json".utf8)))
     }

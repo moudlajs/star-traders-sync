@@ -224,6 +224,11 @@ struct TailscalePage: View {
                         Button("Open Tailscale") { m.openURL("file:///Applications/Tailscale.app") }
                     }
                     Button("Check again") { m.checkTailscale() }
+                    if FileManager.default.fileExists(atPath: SetupLog.url.path) {
+                        Button("Show log in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([SetupLog.url])
+                        }
+                    }
                 }
             }
         }
