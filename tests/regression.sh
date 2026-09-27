@@ -612,6 +612,35 @@ check "a refusal keeps its exit code under --json"      11 "$STS" status --json
 check "  and leaves stdout empty"                        0 test -z "$("$STS" status --json 2>/dev/null)"
 
 # --------------------------------------------------------------------------
+section "status --json decision (what pull and push would do)"
+STATEF() { printf '%s' "$CASE/state/star-traders-sync/last-sync.json"; }
+newcase decide
+check "local saves, empty hub: HUB_EMPTY"                0 test "$(jget decision)" = HUB_EMPTY
+"$STS" push --force=local >/dev/null 2>&1
+check "after seeding: INSYNC"                            0 test "$(jget decision)" = INSYNC
+printf 'mine\n' > "$CASE/local/game_1.db"
+check "only this machine changed: LOCAL_ONLY"            0 test "$(jget decision)" = LOCAL_ONLY
+check "  and pull really refuses it"                    60 "$STS" pull
+check "  text status says pull would refuse"             0 sh -c '"$1" status 2>/dev/null | grep -q "pull would refuse"' _ "$STS"
+"$STS" push >/dev/null 2>&1
+printf 'theirs\n' > "$CASE/hub/game_1.db"
+check "only the hub changed: HUB_ONLY"                   0 test "$(jget decision)" = HUB_ONLY
+printf 'mine-again\n' > "$CASE/local/core.db"
+check "both changed: BOTH_CHANGED"                       0 test "$(jget decision)" = BOTH_CHANGED
+check "  and pull really refuses it"                    60 "$STS" pull
+
+newcase decidefirst
+"$STS" push --force=local >/dev/null 2>&1
+check "  the state file the case removes exists"        0 test -f "$(STATEF)"
+rm -f "$(STATEF)"
+sleep 1; printf 'other\n' > "$CASE/local/game_1.db"
+check "never synced, both have saves: FIRSTRUN_CONFLICT" 0 test "$(jget decision)" = FIRSTRUN_CONFLICT
+check "  even though the timestamps say local newer"     0 test "$(jget verdict)" = local_newer
+check "  and pull really refuses it"                    61 "$STS" pull
+rm -f "$CASE/local"/*.db "$CASE/local"/*.json
+check "never synced, this machine empty: FIRST_SEED"     0 test "$(jget decision)" = FIRST_SEED
+
+# --------------------------------------------------------------------------
 section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1
