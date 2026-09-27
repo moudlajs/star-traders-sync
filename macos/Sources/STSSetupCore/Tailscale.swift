@@ -39,7 +39,7 @@ public struct TailscaleStatus {
 public enum TailscaleError: Error, CustomStringConvertible {
     case notInstalled
     case notRunning(String)
-    case badOutput
+    case badOutput(String)
 
     public var description: String {
         switch self {
@@ -47,8 +47,8 @@ public enum TailscaleError: Error, CustomStringConvertible {
             return "Tailscale is not installed on this Mac."
         case .notRunning(let detail):
             return "Tailscale is installed but not running. \(detail)"
-        case .badOutput:
-            return "Tailscale answered, but not with anything readable."
+        case .badOutput(let detail):
+            return "Tailscale answered, but not with anything readable. Details are in ~/Library/Logs/star-traders-sync/setup-app.log.\n\n\(detail)"
         }
     }
 }
@@ -65,8 +65,11 @@ public enum Tailscale {
     }
 
     public static func parseStatus(_ data: Data) throws -> TailscaleStatus {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw TailscaleError.badOutput
+        // Some builds print a warning line before the JSON (a client and
+        // daemon version mismatch does). Parse from the first brace.
+        let body = data.firstIndex(of: UInt8(ascii: "{")).map { data[$0...] } ?? data
+        guard let root = try? JSONSerialization.jsonObject(with: Data(body)) as? [String: Any] else {
+            throw TailscaleError.badOutput(excerpt(data))
         }
         func node(_ any: Any?) -> TailscaleNode? {
             guard let d = any as? [String: Any] else { return nil }
@@ -87,14 +90,45 @@ public enum Tailscale {
                                peers: peerDict.values.compactMap(node))
     }
 
-    public static func status() -> Result<TailscaleStatus, TailscaleError> {
-        guard let bin = findBinary() else { return .failure(.notInstalled) }
-        let r = Shell.run(bin, ["status", "--json"])
-        guard r.ok else { return .failure(.notRunning(r.combined)) }
-        do {
-            return .success(try parseStatus(Data(r.stdout.utf8)))
-        } catch {
-            return .failure(.badOutput)
+    /// Every installed binary, in preference order. The first one that
+    /// answers with readable status wins, so a quirk in one install does
+    /// not block setup when another works.
+    public static func allBinaries(fileManager fm: FileManager = .default) -> [String] {
+        [appBinary, "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale", "/usr/bin/tailscale"]
+            .filter { fm.isExecutableFile(atPath: $0) }
+    }
+
+    public typealias Runner = (_ binary: String, _ args: [String], _ env: [String: String]) -> CommandResult
+
+    public static func status(binaries: [String] = allBinaries(),
+                              runner: Runner = { Shell.run($0, $1, env: $2) },
+                              log: (String) -> Void = { _ in }) -> Result<TailscaleStatus, TailscaleError> {
+        let bins = binaries
+        guard !bins.isEmpty else { return .failure(.notInstalled) }
+
+        var firstError: TailscaleError?
+        for bin in bins {
+            // The app's binary is both the GUI and the CLI. Launched by a
+            // GUI process rather than a shell it may not realise it is
+            // being used as a CLI; TAILSCALE_BE_CLI says so explicitly.
+            let r = runner(bin, ["status", "--json"], ["TAILSCALE_BE_CLI": "1"])
+            log("\(bin) status --json: exit \(r.status)\n--- stdout ---\n\(excerpt(Data(r.stdout.utf8), 4000))\n--- stderr ---\n\(excerpt(Data(r.stderr.utf8), 4000))")
+            if !r.stdout.isEmpty, let s = try? parseStatus(Data(r.stdout.utf8)) {
+                return .success(s)
+            }
+            // Output that is there but unparseable is "unreadable"; no
+            // stdout at all is no answer, whatever the exit code says.
+            let err: TailscaleError = r.stdout.isEmpty
+                ? .notRunning(r.combined)
+                : .badOutput(excerpt(Data(r.combined.utf8)))
+            if firstError == nil { firstError = err }
         }
+        return .failure(firstError!)
+    }
+
+    static func excerpt(_ data: Data, _ limit: Int = 300) -> String {
+        let s = String(decoding: data.prefix(limit), as: UTF8.self)
+        if s.isEmpty { return "(no output)" }
+        return data.count > limit ? s + "…" : s
     }
 }

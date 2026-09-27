@@ -174,7 +174,7 @@ final class WizardModel: ObservableObject {
     func checkTailscale() {
         tsChecking = true
         Task.detached {
-            let r = Tailscale.status()
+            let r = Tailscale.status(log: SetupLog.write)
             await MainActor.run {
                 self.tsChecking = false
                 switch r {
