@@ -11,4 +11,4 @@ Closes #
 
 - [ ] `./tests/regression.sh` passes
 - [ ] If this fixes a bug, it adds the test case that would have caught it
-- [ ] If this adds a failure state, it has an exit code and a README row
+- [ ] If this adds a failure state, it has an exit code and a docs/troubleshooting.md row

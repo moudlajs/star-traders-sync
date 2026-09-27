@@ -6,6 +6,49 @@ how to fix each problem, which is faster than reading a table.
 This page is the reference for when you already have an exit code, or want
 to know what a particular failure means before it happens.
 
+## What doctor checks
+
+Run it first on a new machine. It checks everything in dependency order and
+prints one report:
+
+```
+  environment
+    ok    bash 3.2
+    ok    rsync, ssh, python3, shasum, cpio
+    warn  ~/bin is not on PATH, so 'sts' will not resolve
+          sts doctor --fix   will append to ~/.zshrc (with a backup)
+
+  config
+    FAIL  still set to the example placeholders: HUB_USER HUB_PATH
+          edit ~/.config/star-traders-sync/config
+          HUB_HOST is the tailscale node name of the machine hosting the hub
+            see: tailscale status
+
+  ssh to the hub
+    FAIL  cannot ssh to the hub without a password
+          your key is not on the hub yet. Run, and enter the HUB's password:
+              ssh-copy-id -i ~/.ssh/id_ed25519.pub youruser@100.x.y.z
+    --    skipped, needs: working ssh
+```
+
+A check gated behind a failed one reports **skipped**, not failed — being
+told "key auth failed" when the real problem is an untrusted host key sends
+you down the wrong path.
+
+`--fix` applies only repairs that are safe, reversible and idempotent:
+
+| Will fix | Will never fix |
+|---|---|
+| create the config, state and log directories | accept an SSH host key |
+| generate `~/.ssh/id_ed25519` | enable Remote Login |
+| create the hub directory, once ssh works | grant Full Disk Access |
+| add `~/bin` to `~/.zshrc`, with a backup | log in to Tailscale |
+| clear a stale local lock whose owner is gone | |
+
+The right-hand column is either a security decision or needs an
+administrator, so doctor prints the exact command or click path and tells
+you which later checks it skipped as a result.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -65,7 +108,7 @@ to know what a particular failure means before it happens.
 | 15 | `hub host is offline` | 25 | Wake it. Or `sts play --offline-ok` to play on the local save — nothing syncs, and it warns loudly. |
 | 16 | `tailscale ping failed` | 26 | The peer claims to be online but is unreachable. Check the hub's network. |
 | 17 | `MagicDNS did not resolve, using tailnet IP` | 0 | Not an error. Expected when `tailscaled` came from Homebrew, which does not install a system resolver. The IP from `tailscale status --json` is used and logged. |
-| 18 | `could not ssh to the hub non-interactively` | 30 | The exact command to reproduce by hand is printed. If it prompts for a password, key auth is not set up — see [One-time SSH setup](../README.md#one-time-ssh-setup-on-each-client). |
+| 18 | `could not ssh to the hub non-interactively` | 30 | The exact command to reproduce by hand is printed. If it prompts for a password, key auth is not set up — see [One-time SSH setup](install.md#one-time-ssh-setup-on-each-client). |
 | 19 | `host key is not trusted yet` | 31 | Never auto-accepted. Verify out of band with the two commands printed, then add it to `known_hosts`. |
 | 20 | `host key has CHANGED` | 31 | Either the hub was reinstalled or something is wrong. Verify on the hub itself before running the `ssh-keygen -R` it suggests. |
 | 21 | `hub user cannot READ/WRITE <path>` | 32 | Fix ownership and mode on the hub. |
@@ -76,7 +119,7 @@ to know what a particular failure means before it happens.
 | 26 | `the game never started` | 41 | Nothing is pushed — an unchanged save is not worth recording. Check `STEAM_APPID` and that Steam is installed. |
 | 27 | Game crashed or was force quit during `sts play` | 0 | The save is still pushed. The log says which case it was, detected from a crash report in `~/Library/Logs/DiagnosticReports` newer than the launch. |
 | 28 | `the hub is locked by another machine` | 50 | Who holds it and since when are printed. A lock from another host is **never** cleared automatically, at any age. |
-| 29 | `locked by this machine from an earlier run` | 50 | Cleared automatically once older than `LOCK_TTL_SECONDS` (default 3600), and that clearing is logged at WARN. |
+| 29 | `locked by this machine from an earlier run` | 50 | Cleared automatically once older than [`LOCK_TTL_SECONDS`](configuration.md#all-keys), and that clearing is logged at WARN. |
 | 30 | `could not create the hub lock` | 51 | The hub directory is not writable, or is read-only. |
 | 31 | `another star-traders-sync is already running` | 52 | Local lock via `shlock`. Wait for the other run. |
 | 32 | State file missing or corrupt | — | Treated as a first run, never as "no changes". That means the next sync will ask you to resolve a conflict rather than guess. |

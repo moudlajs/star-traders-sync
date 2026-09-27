@@ -15,8 +15,8 @@ readonly STS_VERSION="1.2.0"
 readonly PROG="star-traders-sync"
 
 # --------------------------------------------------------------------------
-# Exit codes. Every one of these is documented in --help and in the README
-# troubleshooting table. Nothing exits non-zero without one of these.
+# Exit codes. Every one of these is documented in --help and in the
+# docs/troubleshooting.md table. Nothing exits non-zero without one of these.
 # --------------------------------------------------------------------------
 readonly EX_OK=0
 readonly EX_USAGE=2
@@ -364,7 +364,7 @@ validate_config() {
     # rsync hands a remote path to the hub's login shell itself, and
     # openrsync has no --protect-args, so a space still splits a transfer in
     # two and a metacharacter still reaches a shell. Lifting this means
-    # solving that first; see the note in README.
+    # solving that first; see "Notes on paths" in docs/design.md.
     for k in HUB_PATH LOCAL_SAVE_PATH BACKUP_VOLUME BACKUP_DEST; do
         eval "v=\${CFG_$k}"
         case "$v" in
@@ -3162,7 +3162,7 @@ EXIT CODES
   70  backup volume not mounted (or not actually a mount point)
   71  'backup' run on a machine that is not the hub host
 
-Full troubleshooting table: README.md
+Full troubleshooting table: docs/troubleshooting.md
 USAGE_EOF
 }
 
