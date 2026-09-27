@@ -640,6 +640,42 @@ check "  and pull really refuses it"                    61 "$STS" pull
 rm -f "$CASE/local"/*.db "$CASE/local"/*.json
 check "never synced, this machine empty: FIRST_SEED"     0 test "$(jget decision)" = FIRST_SEED
 
+# Emptied after a sync: pull and push refuse in their guards before
+# decide() runs, so status must not report decide()'s HUB_ONLY/LOCAL_ONLY.
+newcase decideemptied
+"$STS" push --force=local >/dev/null 2>&1
+rm -f "$CASE/hub"/*.db "$CASE/hub"/*.json
+check "hub emptied after a sync: HUB_EMPTY, not HUB_ONLY" 0 test "$(jget decision)" = HUB_EMPTY
+check "  and pull really refuses it"                    62 "$STS" pull
+check "  and plain push really refuses it"              62 "$STS" push
+"$STS" push --force=local >/dev/null 2>&1
+rm -f "$CASE/local"/*.db "$CASE/local"/*.json
+check "local emptied after a sync: LOCAL_EMPTIED"        0 test "$(jget decision)" = LOCAL_EMPTIED
+check "  and push really refuses it"                    61 "$STS" push
+check "  and plain pull really refuses it"              60 "$STS" pull
+check "  text says how to restore"                       0 sh -c '"$1" status 2>/dev/null | grep -q "restore them with"' _ "$STS"
+check "  and pull --force=hub really restores"           0 "$STS" pull --force=hub
+check "  after which: INSYNC"                            0 test "$(jget decision)" = INSYNC
+
+# Diverged: neither side changed since the recorded sync, yet they differ.
+# Made by recording a sync, then editing a file on the hub and rewriting
+# the record's hub fingerprint to match the edit.
+newcase decidediverged
+"$STS" push --force=local >/dev/null 2>&1
+printf 'edited\n' > "$CASE/hub/game_1.db"
+NEWHFP="$(jget sides.hub.fingerprint)"
+python3 - "$(STATEF)" "$NEWHFP" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for k in list(d):
+    if "hub" in k and "f" in k:
+        d[k] = sys.argv[2]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+check "recorded state disagrees with disk: DIVERGED_STATE" 0 test "$(jget decision)" = DIVERGED_STATE
+check "  and --force=hub really does not override it"   60 "$STS" pull --force=hub
+check "  text says --force does not help"                0 sh -c '"$1" status 2>/dev/null | grep -q "does not override"' _ "$STS"
+
 # --------------------------------------------------------------------------
 section "backup"
 newcase backup

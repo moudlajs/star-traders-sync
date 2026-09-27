@@ -2445,7 +2445,8 @@ cmd_doctor() {
 # sides.{local,hub}{path,files,campaign_saves,newest,fingerprint},
 # verdict, decision, last_sync{direction,at}|null, hub_lock|null,
 # game_running. verdict says which side is newer; decision is what pull
-# and push would actually do, from decide(), and is what to act on.
+# and push would actually do: decide(), behind the same emptied-side
+# guards they apply first, plus LOCAL_EMPTIED. It is what to act on.
 status_json() {
     local lman="$1" hman="$2" lfp="$3" hfp="$4" lep="$5" hep="$6" state="$7" verdict="$8"
     local lockinfo="$9" gp="${10}" decision="${11}"
@@ -2530,7 +2531,16 @@ cmd_status() {
     local lcount hcount decision
     lcount="$(printf '%s' "$lman" | grep -c . || true)"; lcount="${lcount:-0}"
     hcount="$(printf '%s' "$hman" | grep -c . || true)"; hcount="${hcount:-0}"
-    decision="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
+    # pull and push both check an emptied side BEFORE consulting decide(),
+    # and refuse there whatever it says. Mirror those guards, or status
+    # would report "pull copies the hub's changes" for a wiped hub.
+    if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then
+        decision="HUB_EMPTY"          # pull refuses (62); push needs --force=local
+    elif [ "$lcount" -eq 0 ] && [ "$hcount" -gt 0 ] && [ "$state" != "FIRSTRUN" ]; then
+        decision="LOCAL_EMPTIED"      # push refuses (61); pull needs --force=hub
+    else
+        decision="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
+    fi
 
     local lockinfo gp
     lockinfo="$(hub_exec_args 'cat "$1/owner" 2>/dev/null | head -3 | tr "\n" " "' "$(hub_lock_path)" 2>/dev/null || true)"
@@ -2571,7 +2581,8 @@ cmd_status() {
         HUB_EMPTY)         say "  next sync    : seed the hub with 'sts push --force=local'" ;;
         BOTH_CHANGED)      say "  next sync    : CONFLICT - both changed, choose with --force" ;;
         FIRSTRUN_CONFLICT) say "  next sync    : CONFLICT - first run with saves on both sides, choose with --force" ;;
-        *)                 say "  next sync    : refused - recorded state disagrees with disk, choose with --force" ;;
+        LOCAL_EMPTIED)     say "  next sync    : this machine's saves are gone - restore them with 'sts pull --force=hub'" ;;
+        *)                 say "  next sync    : refused both ways, and --force does not override it - see 'diverged sync state' in docs/troubleshooting.md" ;;
     esac
 
     if [ "$state" = "FIRSTRUN" ]; then
