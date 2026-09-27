@@ -74,7 +74,8 @@ sudo pmset repeat wakeorpoweron MTWRFSU 03:55:00
 
 Quit the game first, and make sure no `sts` is running on **either**
 machine. Every restore below moves the current directory aside instead of
-deleting it, so a restore is itself undoable.
+deleting it, so a restore is itself undoable. The aside copy is named with
+the current time, so restoring twice never moves one into the other.
 
 ### A save on one machine, from a snapshot
 
@@ -84,7 +85,7 @@ named by UTC time.
 
 ```bash
 ls ~/Library/star-traders-sync-snapshots/
-mv ~/Library/StarTradersFrontiers ~/Library/StarTradersFrontiers.before-restore
+mv ~/Library/StarTradersFrontiers ~/Library/StarTradersFrontiers.before-restore-$(date +%s)
 cp -Rp ~/Library/star-traders-sync-snapshots/<stamp> ~/Library/StarTradersFrontiers
 ```
 
@@ -99,7 +100,7 @@ to `HUB_PATH`. Backups are in `BACKUP_DEST`; use only a backup that
 contains a `.sts-complete` file, because one without it was interrupted.
 
 ```bash
-mv <HUB_PATH> <HUB_PATH>.before-restore
+mv <HUB_PATH> <HUB_PATH>.before-restore-$(date +%s)
 cp -Rp <BACKUP_DEST>/<stamp> <HUB_PATH>
 rm -f <HUB_PATH>/.sts-complete
 ```
