@@ -2443,10 +2443,13 @@ cmd_doctor() {
 # app. Values reach python as argv, never interpolated into its source.
 # Fields: version, machine, is_hub, hub{host,path,endpoint_kind},
 # sides.{local,hub}{path,files,campaign_saves,newest,fingerprint},
-# verdict, last_sync{direction,at}|null, hub_lock|null, game_running.
+# verdict, decision, last_sync{direction,at}|null, hub_lock|null,
+# game_running. verdict says which side is newer; decision is what pull
+# and push would actually do: decide(), behind the same emptied-side
+# guards they apply first, plus LOCAL_EMPTIED. It is what to act on.
 status_json() {
     local lman="$1" hman="$2" lfp="$3" hfp="$4" lep="$5" hep="$6" state="$7" verdict="$8"
-    local lockinfo="$9" gp="${10}"
+    local lockinfo="$9" gp="${10}" decision="${11}"
     local lfiles lsaves hfiles hsaves
     lfiles="$(printf '%s' "$lman" | grep -c . || true)"
     lsaves="$(printf '%s' "$lman" | grep -c 'game_[0-9]*\.db$' || true)"
@@ -2457,7 +2460,7 @@ status_json() {
         "$CFG_HUB_HOST" "$CFG_HUB_PATH" "${HUB_ENDPOINT_KIND:-local}" \
         "$CFG_LOCAL_SAVE_PATH" "${lfiles:-0}" "${lsaves:-0}" "${lep:-0}" "$lfp" \
         "${hfiles:-0}" "${hsaves:-0}" "${hep:-0}" "$hfp" \
-        "$verdict" "$state" "$lockinfo" "$gp" >&3 <<'PY'
+        "$verdict" "$state" "$lockinfo" "$gp" "$decision" >&3 <<'PY'
 import json, sys
 a = sys.argv[1:]
 def num(s):
@@ -2485,6 +2488,7 @@ print(json.dumps({
         "hub": side(a[4], a[11], a[12], a[13], a[14]),
     },
     "verdict": a[15],
+    "decision": a[19],
     "last_sync": last,
     "hub_lock": a[17].strip() or None,
     "game_running": a[18].strip() != "",
@@ -2521,12 +2525,29 @@ cmd_status() {
         verdict="differ"
     fi
 
+    # What pull and push would decide, from the same function they call.
+    # The verdict above is about timestamps; this is about what changed
+    # since the last sync, which is what a sync acts on.
+    local lcount hcount decision
+    lcount="$(printf '%s' "$lman" | grep -c . || true)"; lcount="${lcount:-0}"
+    hcount="$(printf '%s' "$hman" | grep -c . || true)"; hcount="${hcount:-0}"
+    # pull and push both check an emptied side BEFORE consulting decide(),
+    # and refuse there whatever it says. Mirror those guards, or status
+    # would report "pull copies the hub's changes" for a wiped hub.
+    if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then
+        decision="HUB_EMPTY"          # pull refuses (62); push needs --force=local
+    elif [ "$lcount" -eq 0 ] && [ "$hcount" -gt 0 ] && [ "$state" != "FIRSTRUN" ]; then
+        decision="LOCAL_EMPTIED"      # push refuses (61); pull needs --force=hub
+    else
+        decision="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
+    fi
+
     local lockinfo gp
     lockinfo="$(hub_exec_args 'cat "$1/owner" 2>/dev/null | head -3 | tr "\n" " "' "$(hub_lock_path)" 2>/dev/null || true)"
     gp="$(pgrep -x "$CFG_GAME_PROCESS_NAME" 2>/dev/null | tr '\n' ' ' || true)"
 
     if [ "$OPT_JSON" -eq 1 ]; then
-        status_json "$lman" "$hman" "$lfp" "$hfp" "$lep" "$hep" "$state" "$verdict" "$lockinfo" "$gp"
+        status_json "$lman" "$hman" "$lfp" "$hfp" "$lep" "$hep" "$state" "$verdict" "$lockinfo" "$gp" "$decision"
         log INFO status "json local=$(printf '%s' "$lfp" | cut -c1-12) hub=$(printf '%s' "$hfp" | cut -c1-12)"
         return 0
     fi
@@ -2550,6 +2571,18 @@ cmd_status() {
         local_newer) say "  verdict      : LOCAL is newer by $((lep - hep))s" ;;
         hub_newer)   say "  verdict      : HUB is newer by $((hep - lep))s" ;;
         *)           say "  verdict      : differ, but timestamps are equal - trust the fingerprints" ;;
+    esac
+
+    case "$decision" in
+        INSYNC)            say "  next sync    : nothing to do" ;;
+        HUB_ONLY)          say "  next sync    : pull copies the hub's changes here" ;;
+        FIRST_SEED)        say "  next sync    : pull first-seeds this machine from the hub" ;;
+        LOCAL_ONLY)        say "  next sync    : push sends this machine's changes; pull would refuse" ;;
+        HUB_EMPTY)         say "  next sync    : seed the hub with 'sts push --force=local'" ;;
+        BOTH_CHANGED)      say "  next sync    : CONFLICT - both changed, choose with --force" ;;
+        FIRSTRUN_CONFLICT) say "  next sync    : CONFLICT - first run with saves on both sides, choose with --force" ;;
+        LOCAL_EMPTIED)     say "  next sync    : this machine's saves are gone - restore them with 'sts pull --force=hub'" ;;
+        *)                 say "  next sync    : refused both ways, and --force does not override it - see 'diverged sync state' in docs/troubleshooting.md" ;;
     esac
 
     if [ "$state" = "FIRSTRUN" ]; then
