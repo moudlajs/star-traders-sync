@@ -574,6 +574,41 @@ check "  but not cleared without --fix"                  0 test -d "$CASE/state/
 check "  and cleared with --fix"                         1 test -d "$CASE/state/star-traders-sync/local.lock.d"
 
 # --------------------------------------------------------------------------
+section "status --json"
+# jget PATH: run status --json with stderr discarded, so this also proves
+# stdout carries only the JSON, then print one dotted field.
+jget() {
+    "$STS" status --json 2>/dev/null | python3 -c '
+import json, sys
+v = json.load(sys.stdin)
+for k in sys.argv[1].split("."):
+    v = v[k]
+print(json.dumps(v) if isinstance(v, (bool, type(None))) else v)' "$1"
+}
+newcase json
+check "hub empty: verdict hub_empty"                     0 test "$(jget verdict)" = hub_empty
+"$STS" push --force=local >/dev/null 2>&1
+check "after seeding: verdict in_sync"                   0 test "$(jget verdict)" = in_sync
+check "  stdout is exactly one JSON object"              0 sh -c '"$1" status --json 2>/dev/null | python3 -c "import json,sys; json.load(sys.stdin)"' _ "$STS"
+check "  local file count excludes SYNC_EXCLUDE"         0 test "$(jget sides.local.files)" = 4
+check "  campaign saves counted"                         0 test "$(jget sides.local.campaign_saves)" = 1
+check "  is_hub is a boolean"                            0 test "$(jget is_hub)" = true
+check "  last sync recorded after the push"              0 test "$(jget last_sync.host)" != ""
+check "  hub lock free"                                  0 test "$(jget hub_lock)" = null
+check "  game not running"                               0 test "$(jget game_running)" = false
+check "  both fingerprints agree"                        0 test "$(jget sides.local.fingerprint)" = "$(jget sides.hub.fingerprint)"
+sleep 1; printf 'newer\n' > "$CASE/local/game_1.db"
+check "local edit: verdict local_newer"                  0 test "$(jget verdict)" = local_newer
+"$STS" push >/dev/null 2>&1
+sleep 1; printf 'hub-newer\n' > "$CASE/hub/game_1.db"
+check "hub edit: verdict hub_newer"                      0 test "$(jget verdict)" = hub_newer
+check "text status agrees with the JSON verdict"         0 sh -c '"$1" status 2>/dev/null | grep -q "HUB is newer"' _ "$STS"
+check "--json is rejected on other commands"             2 "$STS" push --json
+printf 'BOGUS_KEY=1\n' >> "$CASE/cfg/star-traders-sync/config"
+check "a refusal keeps its exit code under --json"      11 "$STS" status --json
+check "  and leaves stdout empty"                        0 test -z "$("$STS" status --json 2>/dev/null)"
+
+# --------------------------------------------------------------------------
 section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1

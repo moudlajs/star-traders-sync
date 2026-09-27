@@ -73,6 +73,7 @@ recoverable.
 | `--force=local` | resolve a conflict by keeping this machine's saves |
 | `--force=hub` | resolve a conflict by keeping the hub's saves |
 | `--offline-ok` | let `play` run on the local save when the hub is unreachable |
+| `--json` | with `status`: one JSON object on stdout, for scripts and the app |
 | `--fix` | `doctor` only: apply the safe repairs |
 
 Something wrong? Run `sts doctor` first. `sts --help` lists every exit code.

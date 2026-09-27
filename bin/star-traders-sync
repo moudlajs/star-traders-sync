@@ -74,6 +74,7 @@ OPT_VERBOSE=0
 OPT_FORCE=""          # "", "local" or "hub"
 OPT_OFFLINE_OK=0
 OPT_FIX=0
+OPT_JSON=0            # status only: one JSON object on stdout, see status_json
 COMMAND=""
 
 IS_HUB=0              # 1 when this machine is the hub host
@@ -2438,6 +2439,57 @@ cmd_doctor() {
 # Commands
 # --------------------------------------------------------------------------
 
+# The same facts cmd_status prints, as one JSON object on fd 3, for the
+# app. Values reach python as argv, never interpolated into its source.
+# Fields: version, machine, is_hub, hub{host,path,endpoint_kind},
+# sides.{local,hub}{path,files,campaign_saves,newest,fingerprint},
+# verdict, last_sync{host,at}|null, hub_lock|null, game_running.
+status_json() {
+    local lman="$1" hman="$2" lfp="$3" hfp="$4" lep="$5" hep="$6" state="$7" verdict="$8"
+    local lockinfo="$9" gp="${10}"
+    local lfiles lsaves hfiles hsaves
+    lfiles="$(printf '%s' "$lman" | grep -c . || true)"
+    lsaves="$(printf '%s' "$lman" | grep -c 'game_[0-9]*\.db$' || true)"
+    hfiles="$(printf '%s' "$hman" | grep -c . || true)"
+    hsaves="$(printf '%s' "$hman" | grep -c 'game_[0-9]*\.db$' || true)"
+
+    python3 - "$STS_VERSION" "$(this_host_id)" "$IS_HUB" \
+        "$CFG_HUB_HOST" "$CFG_HUB_PATH" "${HUB_ENDPOINT_KIND:-local}" \
+        "$CFG_LOCAL_SAVE_PATH" "${lfiles:-0}" "${lsaves:-0}" "${lep:-0}" "$lfp" \
+        "${hfiles:-0}" "${hsaves:-0}" "${hep:-0}" "$hfp" \
+        "$verdict" "$state" "$lockinfo" "$gp" >&3 <<'PY'
+import json, sys
+a = sys.argv[1:]
+def num(s):
+    try:
+        return int(s)
+    except ValueError:
+        return 0
+def side(path, files, saves, newest, fp):
+    return {"path": path, "files": num(files), "campaign_saves": num(saves),
+            "newest": num(newest), "fingerprint": fp}
+state = a[16]
+last = None
+if state != "FIRSTRUN":
+    host, _, at = state.partition("\t")
+    last = {"host": host, "at": num(at)}
+print(json.dumps({
+    "version": a[0],
+    "machine": a[1],
+    "is_hub": a[2] == "1",
+    "hub": {"host": a[3], "path": a[4], "endpoint_kind": a[5]},
+    "sides": {
+        "local": side(a[6], a[7], a[8], a[9], a[10]),
+        "hub": side(a[4], a[11], a[12], a[13], a[14]),
+    },
+    "verdict": a[15],
+    "last_sync": last,
+    "hub_lock": a[17].strip() or None,
+    "game_running": a[18].strip() != "",
+}, indent=2))
+PY
+}
+
 cmd_status() {
     local lman hman lfp hfp lep hep state
     lman="$(manifest_local "$CFG_LOCAL_SAVE_PATH")"
@@ -2449,6 +2501,33 @@ cmd_status() {
     lep="$(newest_mtime_local "$CFG_LOCAL_SAVE_PATH")"
     hep="$(newest_mtime_hub)"
     state="$(state_read)"
+
+    # One decision, two renderings: the text below and status_json must
+    # never disagree about the verdict.
+    local verdict
+    if [ "$lfp" = "$hfp" ]; then
+        verdict="in_sync"
+    elif [ "$hfp" = "empty" ]; then
+        verdict="hub_empty"
+    elif [ "$lfp" = "empty" ]; then
+        verdict="local_empty"
+    elif [ "$lep" -gt "$hep" ]; then
+        verdict="local_newer"
+    elif [ "$hep" -gt "$lep" ]; then
+        verdict="hub_newer"
+    else
+        verdict="differ"
+    fi
+
+    local lockinfo gp
+    lockinfo="$(hub_exec_args 'cat "$1/owner" 2>/dev/null | head -3 | tr "\n" " "' "$(hub_lock_path)" 2>/dev/null || true)"
+    gp="$(pgrep -x "$CFG_GAME_PROCESS_NAME" 2>/dev/null | tr '\n' ' ' || true)"
+
+    if [ "$OPT_JSON" -eq 1 ]; then
+        status_json "$lman" "$hman" "$lfp" "$hfp" "$lep" "$hep" "$state" "$verdict" "$lockinfo" "$gp"
+        log INFO status "json local=$(printf '%s' "$lfp" | cut -c1-12) hub=$(printf '%s' "$hfp" | cut -c1-12)"
+        return 0
+    fi
 
     say "$PROG status"
     say ""
@@ -2462,19 +2541,14 @@ cmd_status() {
     say "    fingerprint: $(printf '%s' "$hfp" | cut -c1-16)"
     say ""
 
-    if [ "$lfp" = "$hfp" ]; then
-        say "  verdict      : in sync"
-    elif [ "$hfp" = "empty" ]; then
-        say "  verdict      : the hub is EMPTY - seed it with 'sts push --force=local'"
-    elif [ "$lfp" = "empty" ]; then
-        say "  verdict      : this machine is EMPTY - 'sts pull' would first-seed it"
-    elif [ "$lep" -gt "$hep" ]; then
-        say "  verdict      : LOCAL is newer by $((lep - hep))s"
-    elif [ "$hep" -gt "$lep" ]; then
-        say "  verdict      : HUB is newer by $((hep - lep))s"
-    else
-        say "  verdict      : differ, but timestamps are equal - trust the fingerprints"
-    fi
+    case "$verdict" in
+        in_sync)     say "  verdict      : in sync" ;;
+        hub_empty)   say "  verdict      : the hub is EMPTY - seed it with 'sts push --force=local'" ;;
+        local_empty) say "  verdict      : this machine is EMPTY - 'sts pull' would first-seed it" ;;
+        local_newer) say "  verdict      : LOCAL is newer by $((lep - hep))s" ;;
+        hub_newer)   say "  verdict      : HUB is newer by $((hep - lep))s" ;;
+        *)           say "  verdict      : differ, but timestamps are equal - trust the fingerprints" ;;
+    esac
 
     if [ "$state" = "FIRSTRUN" ]; then
         say "  last sync    : never recorded on this machine (first run)"
@@ -2482,16 +2556,12 @@ cmd_status() {
         say "  last sync    : $(printf '%s' "$state" | cut -f1) at $(human_time "$(printf '%s' "$state" | cut -f2)")"
     fi
 
-    local lockinfo
-    lockinfo="$(hub_exec_args 'cat "$1/owner" 2>/dev/null | head -3 | tr "\n" " "' "$(hub_lock_path)" 2>/dev/null || true)"
     if [ -n "$lockinfo" ]; then
         say "  hub lock     : HELD by $lockinfo"
     else
         say "  hub lock     : free"
     fi
 
-    local gp
-    gp="$(pgrep -x "$CFG_GAME_PROCESS_NAME" 2>/dev/null | tr '\n' ' ' || true)"
     if [ -n "$gp" ]; then
         say "  game         : RUNNING (pid $gp) - push and pull will refuse"
     else
@@ -3104,6 +3174,9 @@ FLAGS
   --fix            with 'doctor', apply the repairs that are safe, reversible
                    and idempotent. Never accepts a host key, changes system
                    settings, or grants permissions - those it explains.
+  --json           with 'status', print one JSON object on stdout and send
+                   every other message to stderr. For scripts and the app.
+                   A refusal keeps its exit code and prints no JSON.
   -h, --help       this text.
   --version        print version and exit.
 
@@ -3180,6 +3253,7 @@ parse_args() {
             --verbose|-v) OPT_VERBOSE=1 ;;
             --offline-ok) OPT_OFFLINE_OK=1 ;;
             --fix)        OPT_FIX=1 ;;
+            --json)       OPT_JSON=1 ;;
             --force=local) OPT_FORCE="local" ;;
             --force=hub)   OPT_FORCE="hub" ;;
             --force=*)
@@ -3217,6 +3291,11 @@ parse_args() {
         printf 'Use:  %s doctor --fix\n' "$PROG" >&2
         exit $EX_USAGE
     fi
+    if [ "$OPT_JSON" -eq 1 ] && [ "$COMMAND" != "status" ]; then
+        printf 'error: --json only applies to "status".\n' >&2
+        printf 'Use:  %s status --json\n' "$PROG" >&2
+        exit $EX_USAGE
+    fi
     case "$COMMAND:$OPT_FORCE" in
         play:local|play:hub)
             printf 'error: --force cannot be used with "play", which pulls before and pushes after.\n' >&2
@@ -3229,6 +3308,14 @@ parse_args() {
 
 main() {
     parse_args "$@"
+
+    # status --json: stdout carries the JSON object and nothing else. Every
+    # other message this run prints, from any function, goes to stderr, and
+    # status_json writes to the saved stdout on fd 3. A caller can then
+    # parse stdout whenever the exit code is 0, without filtering.
+    if [ "$OPT_JSON" -eq 1 ]; then
+        exec 3>&1 1>&2
+    fi
 
     # doctor runs before every other check, because the things those checks
     # abort on are exactly what it exists to report.
