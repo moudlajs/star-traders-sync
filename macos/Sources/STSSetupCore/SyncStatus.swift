@@ -25,7 +25,9 @@ public struct SyncStatus: Decodable, Equatable {
     }
 
     public struct LastSync: Decodable, Equatable {
-        public let host: String
+        /// "push" or "pull": which way this Mac last synced. The script
+        /// records the direction, not which machine was on the other end.
+        public let direction: String
         public let at: Int
         public var date: Date { Date(timeIntervalSince1970: TimeInterval(at)) }
     }

@@ -201,7 +201,8 @@ struct DashboardView: View {
     func footer(_ s: SyncStatus) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if let last = s.lastSync {
-                Label("Last synced \(relative(last.date)), from \(last.host)", systemImage: "clock")
+                Label("Last synced \(relative(last.date)), \(last.direction == "push" ? "sent to the hub" : "copied from the hub")",
+                      systemImage: "clock")
             } else {
                 Label("This Mac has not synced yet", systemImage: "clock")
             }

@@ -37,10 +37,10 @@ final class SyncStatusTests: XCTestCase {
 
     func testLastSyncAndLock() throws {
         let json = Self.sample
-            .replacingOccurrences(of: "\"last_sync\": null", with: "\"last_sync\": {\"host\": \"workmac\", \"at\": 1790514297}")
+            .replacingOccurrences(of: "\"last_sync\": null", with: "\"last_sync\": {\"direction\": \"push\", \"at\": 1790514297}")
             .replacingOccurrences(of: "\"hub_lock\": null", with: "\"hub_lock\": \"workmac 123\"")
         let s = try SyncStatus.decode(Data(json.utf8))
-        XCTAssertEqual(s.lastSync?.host, "workmac")
+        XCTAssertEqual(s.lastSync?.direction, "push")
         XCTAssertEqual(s.hubLock, "workmac 123")
     }
 
