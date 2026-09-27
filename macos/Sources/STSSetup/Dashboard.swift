@@ -104,7 +104,7 @@ extension SyncStatus.Decision {
         case .firstRunConflict:
             return "This Mac and the hub both have saves and have never synced. Choose which to keep. The other side is kept as a safety copy."
         case .divergedState:
-            return "Neither side changed since the last sync, yet they differ. The sync tool refuses both ways until the sync record is reset; see Health check or the troubleshooting guide."
+            return "Neither side changed since the last sync, yet they differ. The sync tool refuses both ways until this Mac's sync record is reset: see \"diverged sync state\" in the troubleshooting guide."
         case .localEmptied:
             return "The save folder on this Mac is empty, but the hub still has your saves. Restore them from the hub; nothing is sent from this Mac until then."
         }
