@@ -320,7 +320,7 @@ struct RolePage: View {
             }
             .labelsHidden()
             .frame(maxWidth: 320)
-            Text("The hub can copy your saves to an external disk every night. Setting up the nightly job is a Terminal step for now, see the README.")
+            Text("The hub can copy your saves to an external disk every night. Setting up the nightly job is a Terminal step for now, see docs/backups.md on GitHub.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }

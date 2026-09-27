@@ -78,15 +78,9 @@ receiving side is copied to:
 <target>/../star-traders-sync-snapshots/<ISO timestamp>/
 ```
 
-pruned to the last `SNAPSHOT_KEEP` (default 10). `rsync --delete` is only
-ever reached *after* that snapshot exists.
-
-To recover, just copy a snapshot back:
-
-```bash
-ls ~/Library/star-traders-sync-snapshots/
-cp -Rp ~/Library/star-traders-sync-snapshots/<stamp>/ ~/Library/StarTradersFrontiers/
-```
+pruned to the last [`SNAPSHOT_KEEP`](configuration.md#all-keys). `rsync --delete`
+is only ever reached *after* that snapshot exists. How to restore one is in
+[backups.md](backups.md#restoring).
 
 **Transfers are staged.** rsync writes into `.sts-incoming-<pid>` next to
 the target and is moved into place with two renames only after it exits 0.
@@ -115,8 +109,7 @@ next run detects the orphaned `<path>.sts-old-<pid>` and refuses to do
 anything until you restore it — so an empty save directory can never be
 created on top of a pending recovery.
 
-**Running the wrong command at the wrong time may refuse to work, but will
-not lose a save.**
+That is the guarantee the [README](../README.md) opens with.
 
 
 ## Logging
@@ -126,7 +119,7 @@ not lose a save.**
 ```
 
 ISO timestamp, level, step, and result, rotated at `LOG_MAX_BYTES`
-(default 5 MB) keeping `LOG_KEEP` (default 3) files. stdout stays short;
+keeping `LOG_KEEP` files ([defaults](configuration.md#all-keys)). stdout stays short;
 detail goes to the log. `--verbose` mirrors the log to stderr.
 
 
