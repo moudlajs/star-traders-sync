@@ -90,6 +90,13 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertEqual(problems("/Users/dan/Library/StarTradersFrontiersHub"), [], "prefix is not nesting")
         XCTAssertFalse(problems("/x", user: "dan smith").isEmpty)
 
+        // A trailing slash on a ~/ save path is the same folder, and must
+        // get the "same folder" message, not the nesting one.
+        let same = ConfigFile.problems(
+            SetupValues(hubHost: "h", hubUser: "dan", hubPath: "/Users/dan/Library/StarTradersFrontiers"),
+            localSavePath: "~/Library/StarTradersFrontiers/", home: "/Users/dan")
+        XCTAssertEqual(same, ["The hub folder cannot be the game's own save folder."])
+
         // A customised save folder is checked, not the default one.
         let custom = SetupValues(hubHost: "h", hubUser: "dan", hubPath: "/Volumes/Games/hub")
         XCTAssertFalse(ConfigFile.problems(custom, localSavePath: "/Volumes/Games/hub/saves",
