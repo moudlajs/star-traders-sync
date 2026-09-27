@@ -39,14 +39,15 @@ final class SyncStatusTests: XCTestCase {
 
     func testEveryDecisionTheScriptCanPrintDecodes() throws {
         for d in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
-                  "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE"] {
+                  "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE", "LOCAL_EMPTIED"] {
             let json = Self.sample.replacingOccurrences(of: "\"FIRSTRUN_CONFLICT\"", with: "\"\(d)\"")
             XCTAssertNoThrow(try SyncStatus.decode(Data(json.utf8)), d)
         }
     }
 
-    /// Every value decide() can print must be one the app knows, or the
-    /// whole status fails to decode. Read from the script itself.
+    /// Every decision the script can report must be one the app knows, or
+    /// the whole status fails to decode. Read from the script itself: what
+    /// decide() prints, and what cmd_status assigns around it.
     func testDecisionsMatchTheScriptsDecide() throws {
         let script = InstallerTests.repo.appendingPathComponent("bin/star-traders-sync")
         let text = try String(contentsOf: script, encoding: .utf8)
@@ -58,8 +59,14 @@ final class SyncStatusTests: XCTestCase {
         let found = Set(regex.matches(in: body, range: NSRange(body.startIndex..., in: body)).compactMap {
             Range($0.range(at: 1), in: body).map { String(body[$0]) }
         })
+        let assigned = try NSRegularExpression(pattern: "decision=\"([A-Z_]+)\"")
+        let extra = Set(assigned.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range(at: 1), in: text).map { String(text[$0]) }
+        })
+        let all = found.union(extra)
         XCTAssertFalse(found.isEmpty)
-        for d in found { XCTAssertNotNil(SyncStatus.Decision(rawValue: d), "decide() prints \(d), unknown to the app") }
+        XCTAssertTrue(extra.contains("LOCAL_EMPTIED") || !text.contains("LOCAL_EMPTIED"), "assignment scan works")
+        for d in all { XCTAssertNotNil(SyncStatus.Decision(rawValue: d), "decide() prints \(d), unknown to the app") }
     }
 
     func testLastSyncAndLock() throws {

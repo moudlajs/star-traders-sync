@@ -52,6 +52,8 @@ public struct SyncStatus: Decodable, Equatable {
         case firstSeed = "FIRST_SEED"
         case hubEmpty = "HUB_EMPTY"
         case divergedState = "DIVERGED_STATE"
+        /// This Mac was emptied after a sync; the hub still has saves.
+        case localEmptied = "LOCAL_EMPTIED"
 
         /// Needs the user to pick a side (#74).
         public var needsChoice: Bool { [.bothChanged, .firstRunConflict, .divergedState].contains(self) }

@@ -82,6 +82,7 @@ extension SyncStatus.Decision {
         case .bothChanged:      return "Both Macs have new saves"
         case .firstRunConflict: return "Choose which saves to keep"
         case .divergedState:    return "The saves don't match the last sync"
+        case .localEmptied:     return "This Mac's saves are gone"
         }
     }
 
@@ -103,14 +104,16 @@ extension SyncStatus.Decision {
         case .firstRunConflict:
             return "This Mac and the hub both have saves and have never synced. Choose which to keep. The other side is kept as a safety copy."
         case .divergedState:
-            return "Neither side changed since the last sync, yet they differ. Nothing is picked for you: choose which saves to keep."
+            return "Neither side changed since the last sync, yet they differ. The sync tool refuses both ways until the sync record is reset; see Health check or the troubleshooting guide."
+        case .localEmptied:
+            return "The save folder on this Mac is empty, but the hub still has your saves. Restore them from the hub; nothing is sent from this Mac until then."
         }
     }
 
     var symbol: String {
         switch self {
         case .inSync:                   return "checkmark.circle.fill"
-        case .hubOnly, .firstSeed:      return "arrow.down.circle.fill"
+        case .hubOnly, .firstSeed, .localEmptied: return "arrow.down.circle.fill"
         case .localOnly, .hubEmpty:     return "arrow.up.circle.fill"
         default:                        return "exclamationmark.triangle.fill"
         }
@@ -119,7 +122,7 @@ extension SyncStatus.Decision {
     var tint: Color {
         switch self {
         case .inSync:                   return .green
-        case .hubOnly, .firstSeed:      return .blue
+        case .hubOnly, .firstSeed, .localEmptied: return .blue
         case .localOnly, .hubEmpty:     return .orange
         default:                        return .yellow
         }
