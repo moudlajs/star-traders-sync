@@ -100,6 +100,23 @@ final class InstallerTests: XCTestCase {
                         .filter { $0.hasPrefix("config.backup-") }.count, 1)
     }
 
+    func testInstallGoesStaleWhenAnythingChosenChanges() {
+        let v = SetupValues(hubHost: "h", hubUser: "u", hubPath: "/Users/u/hub", backupVolume: "/Volumes/T9")
+        func valid(_ c: SetupValues?, hub: Bool = true) -> Bool {
+            Installer.installStillValid(installed: v, installedAsHub: true, current: c, currentIsHub: hub)
+        }
+        XCTAssertTrue(valid(v), "same values and role stay installed")
+        var c = v; c.hubHost = "other";           XCTAssertFalse(valid(c))
+        c = v; c.hubUser = "other";               XCTAssertFalse(valid(c))
+        c = v; c.hubPath = "/Users/u/other";      XCTAssertFalse(valid(c))
+        c = v; c.backupVolume = nil;              XCTAssertFalse(valid(c))
+        XCTAssertFalse(valid(v, hub: false), "switching role re-runs install")
+        XCTAssertFalse(valid(nil), "no current values: nothing can be valid")
+        XCTAssertFalse(Installer.installStillValid(installed: nil, installedAsHub: nil,
+                                                   current: v, currentIsHub: true),
+                       "never installed")
+    }
+
     /// The strongest check available offline: the real script's own
     /// parser and validator accept what the app writes. Runs `doctor`
     /// (read-only without --fix) against the sandbox and looks for the

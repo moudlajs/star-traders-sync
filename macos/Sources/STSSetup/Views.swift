@@ -411,13 +411,55 @@ struct InstallPage: View {
                     }
                 }
             }
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(m.stages) { StageRow(stage: $0) }
+            }
+            .padding(.vertical, 4)
+            .animation(.easeOut(duration: 0.2), value: m.stages.map(\.state))
+            if let e = m.installError, !m.stages.contains(where: { $0.state == .failed }) {
+                StatusRow(state: .fail, text: e)
+            }
             if !m.installed {
-                Button(m.installBusy ? "Installing…" : "Install") { m.install() }
+                Button(m.installBusy ? "Installing…" : m.installError == nil ? "Install" : "Try again") { m.install() }
                     .controlSize(.large)
                     .disabled(m.installBusy)
+            } else {
+                StatusRow(state: .ok, text: "Installed. Continue to check that everything works.")
             }
-            ForEach(m.installLog, id: \.self) { StatusRow(state: .ok, text: $0) }
-            if let e = m.installError { StatusRow(state: .fail, text: e) }
+        }
+    }
+}
+
+struct StageRow: View {
+    @EnvironmentObject var m: WizardModel
+    let stage: InstallStage
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            icon.frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(stage.title)
+                    .fontWeight(stage.state == .running ? .semibold : .regular)
+                    .foregroundStyle(stage.state == .pending ? .secondary : .primary)
+                ForEach(stage.details, id: \.self) {
+                    Text($0).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if stage.state == .failed, let e = m.installError {
+                    Text(e).font(.callout).foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .transition(.opacity)
+    }
+
+    @ViewBuilder var icon: some View {
+        switch stage.state {
+        case .pending: Image(systemName: "circle").foregroundStyle(.tertiary)
+        case .running: ProgressView().controlSize(.small)
+        case .done:    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed:  Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
         }
     }
 }
