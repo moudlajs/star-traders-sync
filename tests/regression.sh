@@ -593,7 +593,10 @@ check "  stdout is exactly one JSON object"              0 sh -c '"$1" status --
 check "  local file count excludes SYNC_EXCLUDE"         0 test "$(jget sides.local.files)" = 4
 check "  campaign saves counted"                         0 test "$(jget sides.local.campaign_saves)" = 1
 check "  is_hub is a boolean"                            0 test "$(jget is_hub)" = true
-check "  last sync recorded after the push"              0 test "$(jget last_sync.host)" != ""
+check "  last sync direction is push"                    0 test "$(jget last_sync.direction)" = push
+LS_AT="$(jget last_sync.at)"; NOW="$(date +%s)"
+check "  last sync time is now, not the epoch"           0 test "$LS_AT" -gt $((NOW - 300)) -a "$LS_AT" -le $((NOW + 5))
+check "  and agrees with the text status"                0 sh -c '"$1" status 2>/dev/null | grep -q "last sync    : push at "' _ "$STS"
 check "  hub lock free"                                  0 test "$(jget hub_lock)" = null
 check "  game not running"                               0 test "$(jget game_running)" = false
 check "  both fingerprints agree"                        0 test "$(jget sides.local.fingerprint)" = "$(jget sides.hub.fingerprint)"

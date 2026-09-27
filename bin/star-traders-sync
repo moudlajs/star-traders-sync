@@ -2443,7 +2443,7 @@ cmd_doctor() {
 # app. Values reach python as argv, never interpolated into its source.
 # Fields: version, machine, is_hub, hub{host,path,endpoint_kind},
 # sides.{local,hub}{path,files,campaign_saves,newest,fingerprint},
-# verdict, last_sync{host,at}|null, hub_lock|null, game_running.
+# verdict, last_sync{direction,at}|null, hub_lock|null, game_running.
 status_json() {
     local lman="$1" hman="$2" lfp="$3" hfp="$4" lep="$5" hep="$6" state="$7" verdict="$8"
     local lockinfo="$9" gp="${10}"
@@ -2468,11 +2468,13 @@ def num(s):
 def side(path, files, saves, newest, fp):
     return {"path": path, "files": num(files), "campaign_saves": num(saves),
             "newest": num(newest), "fingerprint": fp}
+# state_read prints direction, epoch, local fp, hub fp, tab-separated.
+# It records which way the last sync went, not which machine did it.
 state = a[16]
 last = None
 if state != "FIRSTRUN":
-    host, _, at = state.partition("\t")
-    last = {"host": host, "at": num(at)}
+    fields = state.split("\t")
+    last = {"direction": fields[0], "at": num(fields[1]) if len(fields) > 1 else 0}
 print(json.dumps({
     "version": a[0],
     "machine": a[1],
