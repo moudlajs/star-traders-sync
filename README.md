@@ -89,6 +89,25 @@ Full failure reference: **[docs/troubleshooting.md](docs/troubleshooting.md)**
 
 ## Install
 
+### Not a terminal person?
+
+Download **Star-Traders-Sync-Setup.dmg** from the
+[latest release](https://github.com/moudlajs/star-traders-sync/releases/latest),
+open it, and drag the app to Applications. It walks you through everything
+below: Tailscale, choosing the hub, the ssh key and the config. It finishes
+by running `sts doctor --fix`. Set up the hub Mac first, then each Mac you
+play on. You never touch a save file.
+
+The app is not notarized yet (#61), so macOS blocks the first launch.
+Open it once, then go to **System Settings > Privacy & Security** and
+click **Open Anyway** next to "Star Traders Sync Setup". After that it opens
+normally.
+
+To build it yourself: `macos/build-app.sh` (needs Xcode) writes the `.app`
+and `.dmg` to `macos/build/`.
+
+### From the repository
+
 On each machine:
 
 ```bash

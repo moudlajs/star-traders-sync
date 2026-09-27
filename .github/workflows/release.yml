@@ -27,6 +27,11 @@ jobs:
       - name: Regression suite must pass before a release exists
         run: ./tests/regression.sh
 
+      - name: Build the setup app
+        run: |
+          swift test --package-path macos
+          macos/build-app.sh
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -36,4 +41,5 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             bin/star-traders-sync \
             install.sh \
-            config.example
+            config.example \
+            macos/build/Star-Traders-Sync-Setup.dmg
