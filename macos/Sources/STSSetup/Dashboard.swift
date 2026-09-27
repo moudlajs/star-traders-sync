@@ -12,10 +12,7 @@ final class DashboardModel: ObservableObject {
     @Published var loading = false
     @Published var checkedAt: Date?
 
-    // Health check sheet
-    @Published var doctorLines: [DoctorLine] = []
-    @Published var doctorRunning = false
-    @Published var doctorPassed: Bool?
+    let doctor = DoctorRun()
 
     private var timer: Timer?
 
@@ -63,19 +60,7 @@ final class DashboardModel: ObservableObject {
     }
 
     func runDoctor() {
-        doctorLines = []
-        doctorRunning = true
-        doctorPassed = nil
-        let script = self.script
-        Task.detached {
-            let status = Shell.stream("/bin/bash", [script, "doctor", "--fix"]) { line in
-                Task { @MainActor in self.doctorLines.append(DoctorLine(line)) }
-            }
-            await MainActor.run {
-                self.doctorRunning = false
-                self.doctorPassed = status == 0
-            }
-        }
+        doctor.start(script: script)
     }
 
     func openLogs() {
@@ -130,6 +115,7 @@ extension SyncStatus.Verdict {
 
 func relative(_ date: Date?) -> String {
     guard let date else { return "never" }
+    if abs(date.timeIntervalSinceNow) < 45 { return "just now" }
     let f = RelativeDateTimeFormatter()
     f.unitsStyle = .full
     return f.localizedString(for: date, relativeTo: Date())
@@ -180,20 +166,32 @@ struct DashboardView: View {
                 }
             }
             Spacer()
-            Button { d.refresh() } label: {
-                if d.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
+            HStack(spacing: 14) {
+                Button { d.refresh() } label: {
+                    ZStack {
+                        // Same footprint either way, so nothing shifts.
+                        Image(systemName: "arrow.clockwise").opacity(d.loading ? 0 : 1)
+                        if d.loading { ProgressView().controlSize(.small) }
+                    }
+                    .frame(width: 22, height: 22)
+                }
+                .help("Check again")
+                .disabled(d.loading)
+
+                Menu {
+                    Button("Health check…") { showDoctor = true; d.runDoctor() }
+                    Button("Open logs") { d.openLogs() }
+                    Divider()
+                    Button("Run setup again…") { app.showSetup() }
+                } label: {
+                    Image(systemName: "ellipsis.circle").frame(width: 22, height: 22)
+                }
+                .menuIndicator(.hidden)
+                .help("More")
             }
-            .help("Check again")
-            .disabled(d.loading)
-            Menu {
-                Button("Health check…") { showDoctor = true; d.runDoctor() }
-                Button("Open logs") { d.openLogs() }
-                Divider()
-                Button("Run setup again…") { app.showSetup() }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
+            .buttonStyle(.borderless)
             .menuStyle(.borderlessButton)
+            .font(.system(size: 17, weight: .regular))
             .fixedSize()
         }
         .padding(.horizontal, 24)
@@ -308,25 +306,19 @@ struct DoctorSheet: View {
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Health check").font(.title2).bold()
-            if d.doctorRunning {
-                StatusRow(state: .busy, text: "Checking…")
-            } else if d.doctorPassed == true {
-                StatusRow(state: .ok, text: "Everything checks out.")
-            } else if d.doctorPassed == false {
-                StatusRow(state: .fail, text: "Something needs fixing. Each problem below says what to do.")
-            }
             ScrollView {
-                DoctorOutput(lines: d.doctorLines)
+                DoctorProgressView(run: d.doctor)
+                    .padding(.trailing, 8)
             }
             HStack {
                 Spacer()
-                Button("Check again") { d.runDoctor() }.disabled(d.doctorRunning)
+                Button("Check again") { d.runDoctor() }.disabled(d.doctor.running)
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
-        .frame(width: 640, height: 520)
+        .frame(width: 640, height: 540)
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import STSSetupCore
 
@@ -40,26 +41,6 @@ struct InstallStage: Identifiable {
         case .settings:  return "Save your settings"
         case .hubFolder: return "Create the hub folder"
         }
-    }
-}
-
-struct DoctorLine: Identifiable {
-    enum Kind { case ok, warn, fail, fixed, note, skip, section, plain }
-    let id = UUID()
-    let text: String
-    let kind: Kind
-
-    init(_ raw: String) {
-        text = raw
-        let t = raw.trimmingCharacters(in: .whitespaces)
-        if t.hasPrefix("ok ")        { kind = .ok }
-        else if t.hasPrefix("warn ") { kind = .warn }
-        else if t.hasPrefix("FAIL ") { kind = .fail }
-        else if t.hasPrefix("fixed") { kind = .fixed }
-        else if t.hasPrefix("note ") { kind = .note }
-        else if t.hasPrefix("--")    { kind = .skip }
-        else if raw.hasPrefix("  ") && !raw.hasPrefix("    ") && !t.isEmpty { kind = .section }
-        else                         { kind = .plain }
     }
 }
 
@@ -111,9 +92,8 @@ final class WizardModel: ObservableObject {
     var installedValues: SetupValues?
     var installedRole: Role?
     @Published var installBusy = false
-    @Published var doctorLines: [DoctorLine] = []
-    @Published var doctorRunning = false
-    @Published var doctorPassed: Bool?
+    let doctor = DoctorRun()
+    private var doctorWatch: AnyCancellable?
 
     init() {
         bundledScript = Self.locate("star-traders-sync", repoPath: "bin/star-traders-sync")
@@ -130,6 +110,7 @@ final class WizardModel: ObservableObject {
             backupVolume = v.backupVolume
         }
         refreshVolumes()
+        doctorWatch = doctor.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     // MARK: resources
@@ -166,7 +147,7 @@ final class WizardModel: ObservableObject {
         case .role:      return problems.isEmpty
         case .connect:   return loginWorks
         case .install:   return installed
-        case .check:     return !doctorRunning
+        case .check:     return !doctor.running
         case .done:      return false
         }
     }
@@ -450,19 +431,7 @@ final class WizardModel: ObservableObject {
     // MARK: check
 
     func runDoctor() {
-        doctorLines = []
-        doctorRunning = true
-        doctorPassed = nil
-        let script = layout.installedScript.path
-        Task.detached {
-            let status = Shell.stream("/bin/bash", [script, "doctor", "--fix"]) { line in
-                Task { @MainActor in self.doctorLines.append(DoctorLine(line)) }
-            }
-            await MainActor.run {
-                self.doctorRunning = false
-                self.doctorPassed = status == 0
-            }
-        }
+        doctor.start(script: layout.installedScript.path)
     }
 
     // MARK: system

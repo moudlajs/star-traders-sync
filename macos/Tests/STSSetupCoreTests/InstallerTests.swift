@@ -42,7 +42,6 @@ final class InstallerTests: XCTestCase {
             let link = layout.binDir.appendingPathComponent(name).path
             XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link), layout.installedScript.path)
         }
-        XCTAssertEqual(layout.effectiveScript.path, layout.installedScript.path)
     }
 
     func testReinstallIsIdempotent() throws {
@@ -58,7 +57,6 @@ final class InstallerTests: XCTestCase {
         let report = try install()
         XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), script.path)
         XCTAssertTrue(report.contains { $0.contains("kept ~/bin/sts") })
-        XCTAssertEqual(layout.effectiveScript.path, script.path, "sts keeps running the repo copy")
     }
 
     func testDanglingLinkIsReplaced() throws {

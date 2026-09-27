@@ -18,17 +18,6 @@ public struct InstallLayout {
     public var configDir: URL { home.appendingPathComponent(".config/star-traders-sync") }
     public var configFile: URL { configDir.appendingPathComponent("config") }
     public var linkNames: [String] { ["star-traders-sync", "sts"] }
-
-    /// The script `sts` will actually run: the existing link target if it
-    /// works, otherwise the copy this app installs.
-    public var effectiveScript: URL {
-        let link = binDir.appendingPathComponent("sts")
-        if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path) {
-            let url = URL(fileURLWithPath: target, relativeTo: binDir).standardizedFileURL
-            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
-        }
-        return installedScript
-    }
 }
 
 public enum InstallError: Error, CustomStringConvertible {

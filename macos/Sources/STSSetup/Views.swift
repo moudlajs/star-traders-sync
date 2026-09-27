@@ -147,7 +147,7 @@ struct BottomBar: View {
         HStack {
             if m.step != .welcome && m.step != .done {
                 Button("Back") { m.back() }
-                    .disabled(m.installBusy || m.doctorRunning || m.connectBusy)
+                    .disabled(m.installBusy || m.doctor.running || m.connectBusy)
             }
             Spacer()
             if m.step == .done {
@@ -526,49 +526,11 @@ struct CheckPage: View {
     var body: some View {
         PageTitle(title: "Check",
                   subtitle: "Runs the sync tool's own health check and fixes what it safely can.")
-        VStack(alignment: .leading, spacing: 12) {
-            if m.doctorRunning {
-                StatusRow(state: .busy, text: "Checking…")
-            } else if m.doctorPassed == true {
-                StatusRow(state: .ok, text: "Everything checks out.")
-            } else if m.doctorPassed == false {
-                StatusRow(state: .fail, text: "Something needs fixing. Each problem below says what to do. Fix it, then check again.")
-            }
-            DoctorOutput(lines: m.doctorLines)
-            if !m.doctorRunning {
+        VStack(alignment: .leading, spacing: 14) {
+            DoctorProgressView(run: m.doctor)
+            if !m.doctor.running {
                 Button("Check again") { m.runDoctor() }
             }
-        }
-    }
-
-}
-
-struct DoctorOutput: View {
-    let lines: [DoctorLine]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(lines) { line in
-                Text(line.text.isEmpty ? " " : line.text)
-                    .font(.system(line.kind == .section ? .body : .callout, design: .monospaced))
-                    .fontWeight(line.kind == .section ? .semibold : .regular)
-                    .foregroundStyle(color(line.kind))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-    }
-
-    func color(_ k: DoctorLine.Kind) -> Color {
-        switch k {
-        case .ok, .fixed:  return .green
-        case .warn:        return .orange
-        case .fail:        return .red
-        case .note, .skip: return .secondary
-        default:           return .primary
         }
     }
 }
@@ -577,12 +539,12 @@ struct DonePage: View {
     @EnvironmentObject var m: WizardModel
 
     var body: some View {
-        PageTitle(title: m.doctorPassed == true ? "All set" : "Almost there",
+        PageTitle(title: m.doctor.passed == true ? "All set" : "Almost there",
                   subtitle: m.role == .hub
                     ? "This Mac is the hub. Now run this app on each Mac you play on."
                     : "This Mac is connected to the hub.")
         VStack(alignment: .leading, spacing: 14) {
-            if m.doctorPassed != true {
+            if m.doctor.passed != true {
                 StatusRow(state: .warn, text: "The check still reported problems. Go back to Check to see them.")
             }
             Text("From now on, start the game like this").font(.headline)
