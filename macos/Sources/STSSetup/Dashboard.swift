@@ -19,7 +19,9 @@ final class DashboardModel: ObservableObject {
 
     private var timer: Timer?
 
-    var script: String { layout.effectiveScript.path }
+    /// The app's own copy, kept current by Installer.refreshAppScript,
+    /// never the ~/bin link, which may be an older repo checkout.
+    var script: String { layout.installedScript.path }
 
     func start() {
         refresh()

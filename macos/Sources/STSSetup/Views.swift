@@ -12,8 +12,17 @@ final class AppModel: ObservableObject {
 
     init() {
         let layout = InstallLayout()
-        showingSetup = !FileManager.default.fileExists(atPath: layout.configFile.path)
-            || !FileManager.default.isExecutableFile(atPath: layout.effectiveScript.path)
+        let configured = FileManager.default.fileExists(atPath: layout.configFile.path)
+        if configured {
+            // Includes a Mac set up from the command line, which has a
+            // config but no app copy of the script yet.
+            let bundled = WizardModel.locate("star-traders-sync", repoPath: "bin/star-traders-sync")
+            let copied = Installer.refreshAppScript(bundledScript: bundled,
+                                                    bundledExample: WizardModel.locate("config.example", repoPath: "config.example"),
+                                                    layout: layout)
+            SetupLog.write("launch: app script \(copied ? "refreshed" : "unchanged") from \(bundled?.path ?? "nothing bundled")")
+        }
+        showingSetup = !configured || !FileManager.default.isExecutableFile(atPath: layout.installedScript.path)
     }
 
     func showSetup() {

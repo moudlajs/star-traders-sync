@@ -453,7 +453,7 @@ final class WizardModel: ObservableObject {
         doctorLines = []
         doctorRunning = true
         doctorPassed = nil
-        let script = layout.effectiveScript.path
+        let script = layout.installedScript.path
         Task.detached {
             let status = Shell.stream("/bin/bash", [script, "doctor", "--fix"]) { line in
                 Task { @MainActor in self.doctorLines.append(DoctorLine(line)) }

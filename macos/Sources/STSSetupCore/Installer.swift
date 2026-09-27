@@ -79,6 +79,22 @@ public enum Installer {
         return ["installed in \(tilde(layout.installedScript.path, layout))"]
     }
 
+    /// Keeps the app's own copy of the script in step with the one bundled
+    /// in the app, so the app never talks to a script older than itself.
+    /// `sts` in ~/bin may point at a repo checkout the user maintains; that
+    /// is theirs, and the app neither follows nor replaces it.
+    /// Returns true when it copied. Skipped while any sts is running.
+    @discardableResult
+    public static func refreshAppScript(bundledScript: URL?, bundledExample: URL?, layout: InstallLayout,
+                                        isRunning: () -> Bool = scriptIsRunning,
+                                        fileManager fm: FileManager = .default) -> Bool {
+        guard let bundledScript, let new = try? Data(contentsOf: bundledScript) else { return false }
+        if let old = try? Data(contentsOf: layout.installedScript), old == new { return false }
+        if isRunning() { return false }
+        return (try? installFiles(bundledScript: bundledScript, bundledExample: bundledExample,
+                                  layout: layout, fileManager: fm)) != nil
+    }
+
     /// Step two: `sts` and `star-traders-sync` in ~/bin.
     ///
     /// Mirrors install.sh's rules: a real file in ~/bin is never replaced.
