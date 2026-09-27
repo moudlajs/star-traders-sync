@@ -13,13 +13,15 @@ final class SyncStatusTests: XCTestCase {
         "hub":   {"path": "/Users/d/star-traders-sync-hub", "files": 11, "campaign_saves": 2,
                   "newest": 1790514297, "fingerprint": "34d0"}
       },
-      "verdict": "hub_newer", "last_sync": null, "hub_lock": null, "game_running": false
+      "verdict": "hub_newer", "decision": "FIRSTRUN_CONFLICT", "last_sync": null, "hub_lock": null, "game_running": false
     }
     """
 
     func testDecodesTheScriptsOutput() throws {
         let s = try SyncStatus.decode(Data(Self.sample.utf8))
         XCTAssertEqual(s.verdict, .hubNewer)
+        XCTAssertEqual(s.decision, .firstRunConflict, "the real hub: newer by time, but a sync would refuse")
+        XCTAssertTrue(s.decision.needsChoice)
         XCTAssertTrue(s.isHub)
         XCTAssertEqual(s.hub.endpointKind, "local")
         XCTAssertEqual(s.sides.local.campaignSaves, 2)
@@ -33,6 +35,31 @@ final class SyncStatusTests: XCTestCase {
             let json = Self.sample.replacingOccurrences(of: "\"hub_newer\"", with: "\"\(v)\"")
             XCTAssertNoThrow(try SyncStatus.decode(Data(json.utf8)), v)
         }
+    }
+
+    func testEveryDecisionTheScriptCanPrintDecodes() throws {
+        for d in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
+                  "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE"] {
+            let json = Self.sample.replacingOccurrences(of: "\"FIRSTRUN_CONFLICT\"", with: "\"\(d)\"")
+            XCTAssertNoThrow(try SyncStatus.decode(Data(json.utf8)), d)
+        }
+    }
+
+    /// Every value decide() can print must be one the app knows, or the
+    /// whole status fails to decode. Read from the script itself.
+    func testDecisionsMatchTheScriptsDecide() throws {
+        let script = InstallerTests.repo.appendingPathComponent("bin/star-traders-sync")
+        let text = try String(contentsOf: script, encoding: .utf8)
+        guard let start = text.range(of: "decide() {"), let end = text.range(of: "\n}\n", range: start.upperBound..<text.endIndex) else {
+            return XCTFail("decide() not found")
+        }
+        let body = String(text[start.upperBound..<end.lowerBound])
+        let regex = try NSRegularExpression(pattern: "printf '([A-Z_]+)'")
+        let found = Set(regex.matches(in: body, range: NSRange(body.startIndex..., in: body)).compactMap {
+            Range($0.range(at: 1), in: body).map { String(body[$0]) }
+        })
+        XCTAssertFalse(found.isEmpty)
+        for d in found { XCTAssertNotNil(SyncStatus.Decision(rawValue: d), "decide() prints \(d), unknown to the app") }
     }
 
     func testLastSyncAndLock() throws {

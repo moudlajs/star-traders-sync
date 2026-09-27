@@ -71,44 +71,57 @@ final class DashboardModel: ObservableObject {
 
 // MARK: - presentation
 
-extension SyncStatus.Verdict {
+extension SyncStatus.Decision {
     var headline: String {
         switch self {
-        case .inSync:     return "In sync"
-        case .hubNewer:   return "The hub has newer saves"
-        case .localNewer: return "This Mac has newer saves"
-        case .hubEmpty:   return "The hub has no saves yet"
-        case .localEmpty: return "This Mac has no saves yet"
-        case .differ:     return "The saves differ"
+        case .inSync:           return "In sync"
+        case .hubOnly:          return "The hub has newer saves"
+        case .firstSeed:        return "This Mac has no saves yet"
+        case .localOnly:        return "This Mac has saves the hub doesn't"
+        case .hubEmpty:         return "The hub has no saves yet"
+        case .bothChanged:      return "Both Macs have new saves"
+        case .firstRunConflict: return "Choose which saves to keep"
+        case .divergedState:    return "The saves don't match the last sync"
         }
     }
 
+    /// Only ever says what the script will actually do.
     var explanation: String {
         switch self {
-        case .inSync:     return "This Mac and the hub have exactly the same saves."
-        case .hubNewer:   return "Another Mac played since this one last synced. Its saves are copied here when you next play."
-        case .localEmpty: return "Your saves are copied here from the hub when you next play."
-        case .localNewer: return "This Mac has saves the hub does not have yet. They are sent to the hub after you play."
-        case .hubEmpty:   return "Send this Mac's saves to the hub to start syncing."
-        case .differ:     return "The saves differ but were changed at the same time. Check which ones to keep."
+        case .inSync:
+            return "This Mac and the hub have exactly the same saves."
+        case .hubOnly:
+            return "Another Mac played since this one last synced. Playing here copies its saves to this Mac first."
+        case .firstSeed:
+            return "Playing here copies your saves from the hub first."
+        case .localOnly:
+            return "This Mac changed since the last sync and the hub did not. Send them to the hub; until then a sync from the hub is refused, so nothing here is overwritten."
+        case .hubEmpty:
+            return "Send this Mac's saves to the hub to start syncing."
+        case .bothChanged:
+            return "This Mac and the hub both changed since the last sync. Nothing is merged or picked for you: choose which saves to keep."
+        case .firstRunConflict:
+            return "This Mac and the hub both have saves and have never synced. Choose which to keep. The other side is kept as a safety copy."
+        case .divergedState:
+            return "Neither side changed since the last sync, yet they differ. Nothing is picked for you: choose which saves to keep."
         }
     }
 
     var symbol: String {
         switch self {
-        case .inSync:                 return "checkmark.circle.fill"
-        case .hubNewer, .localEmpty:  return "arrow.down.circle.fill"
-        case .localNewer, .hubEmpty:  return "arrow.up.circle.fill"
-        case .differ:                 return "exclamationmark.triangle.fill"
+        case .inSync:                   return "checkmark.circle.fill"
+        case .hubOnly, .firstSeed:      return "arrow.down.circle.fill"
+        case .localOnly, .hubEmpty:     return "arrow.up.circle.fill"
+        default:                        return "exclamationmark.triangle.fill"
         }
     }
 
     var tint: Color {
         switch self {
-        case .inSync:                 return .green
-        case .hubNewer, .localEmpty:  return .blue
-        case .localNewer, .hubEmpty:  return .orange
-        case .differ:                 return .yellow
+        case .inSync:                   return .green
+        case .hubOnly, .firstSeed:      return .blue
+        case .localOnly, .hubEmpty:     return .orange
+        default:                        return .yellow
         }
     }
 }
@@ -224,7 +237,7 @@ struct VerdictCard: View {
     let status: SyncStatus
 
     var body: some View {
-        let v = status.verdict
+        let v = status.decision
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: v.symbol)
                 .font(.system(size: 34))

@@ -41,12 +41,29 @@ public struct SyncStatus: Decodable, Equatable {
         case differ
     }
 
+    /// What pull and push would do, from the script's decide(). This, not
+    /// the timestamp verdict, is what the app acts on and promises.
+    public enum Decision: String, Decodable {
+        case inSync = "INSYNC"
+        case hubOnly = "HUB_ONLY"
+        case localOnly = "LOCAL_ONLY"
+        case bothChanged = "BOTH_CHANGED"
+        case firstRunConflict = "FIRSTRUN_CONFLICT"
+        case firstSeed = "FIRST_SEED"
+        case hubEmpty = "HUB_EMPTY"
+        case divergedState = "DIVERGED_STATE"
+
+        /// Needs the user to pick a side (#74).
+        public var needsChoice: Bool { [.bothChanged, .firstRunConflict, .divergedState].contains(self) }
+    }
+
     public let version: String
     public let machine: String
     public let isHub: Bool
     public let hub: Hub
     public let sides: Sides
     public let verdict: Verdict
+    public let decision: Decision
     public let lastSync: LastSync?
     public let hubLock: String?
     public let gameRunning: Bool
