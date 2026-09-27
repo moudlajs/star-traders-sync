@@ -230,6 +230,13 @@ final class WizardModel: ObservableObject {
         }
     }
 
+    /// Mounted volumes plus the configured one, so a backup disk that is
+    /// unplugged right now still shows as selected instead of vanishing.
+    var volumeChoices: [String] {
+        guard let current = backupVolume, !volumes.contains(current) else { return volumes }
+        return [current] + volumes
+    }
+
     func checkRemoteLogin() {
         Task.detached {
             let on = Shell.run("/usr/bin/nc", ["-z", "-G", "2", "127.0.0.1", "22"]).ok
@@ -245,8 +252,11 @@ final class WizardModel: ObservableObject {
                                hubPath: hubPath, backupVolume: backupVolume)
         case .client:
             guard let hub = selectedHub else { return nil }
+            // A client never backs up, but a disk already configured here is
+            // kept rather than overwritten with the sentinel: it costs
+            // nothing, and the machine may be switched back to hub later.
             return SetupValues(hubHost: hub.nodeName, hubUser: hubUser,
-                               hubPath: hubPath, backupVolume: nil)
+                               hubPath: hubPath, backupVolume: existingConfig?.backupVolume)
         }
     }
 

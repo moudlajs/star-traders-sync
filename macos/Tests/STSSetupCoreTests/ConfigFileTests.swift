@@ -75,6 +75,18 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertEqual(ConfigFile.values(from: ConfigFile.render(hub, examplePath: "/x")), hub)
     }
 
+    /// Re-running the app on a hub must never switch off a working
+    /// backup because the disk's name looked like a placeholder.
+    func testRealBackupDiskIsNeverDroppedOnPrefill() {
+        for vol in ["/Volumes/Backup", "/Volumes/BackupDrive", "/Volumes/Backup-SSD", "/Volumes/T9"] {
+            let text = "HUB_HOST=h\nHUB_USER=u\nHUB_PATH=/Users/u/hub\nBACKUP_VOLUME=\(vol)\nBACKUP_DEST=\(vol)/b\n"
+            let v = ConfigFile.values(from: text)
+            XCTAssertEqual(v?.backupVolume, vol)
+            // And writing those values back keeps the volume.
+            XCTAssertEqual(ConfigFile.parse(ConfigFile.update(text, with: v!))["BACKUP_VOLUME"], vol)
+        }
+    }
+
     func testProblemsMirrorTheScriptsValidator() {
         func problems(_ path: String, user: String = "dan", vol: String? = nil) -> [String] {
             ConfigFile.problems(SetupValues(hubHost: "h", hubUser: user, hubPath: path, backupVolume: vol),

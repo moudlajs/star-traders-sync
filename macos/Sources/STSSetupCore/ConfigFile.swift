@@ -141,8 +141,11 @@ public enum ConfigFile {
         guard let host = c["HUB_HOST"], let user = c["HUB_USER"], let path = c["HUB_PATH"] else {
             return nil
         }
+        // Only the app's own sentinel means "no disk". Anything else, even
+        // install.sh's /Volumes/Backup, may be a real disk that the nightly
+        // backup depends on, so it is kept and shown, never dropped.
         var volume = c["BACKUP_VOLUME"]
-        if volume == noBackupVolume || volume?.hasPrefix("/Volumes/Backup") == true { volume = nil }
+        if volume == noBackupVolume || volume?.isEmpty == true { volume = nil }
         return SetupValues(hubHost: host, hubUser: user, hubPath: path, backupVolume: volume)
     }
 

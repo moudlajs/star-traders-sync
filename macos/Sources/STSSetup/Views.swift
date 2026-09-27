@@ -313,8 +313,9 @@ struct RolePage: View {
             Text("Backup disk (optional)").font(.headline)
             Picker("Backup disk", selection: $m.backupVolume) {
                 Text("No backup disk").tag(String?.none)
-                ForEach(m.volumes, id: \.self) { v in
-                    Text((v as NSString).lastPathComponent).tag(Optional(v))
+                ForEach(m.volumeChoices, id: \.self) { v in
+                    let name = (v as NSString).lastPathComponent
+                    Text(m.volumes.contains(v) ? name : "\(name) (not connected)").tag(Optional(v))
                 }
             }
             .labelsHidden()
