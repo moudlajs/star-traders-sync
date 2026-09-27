@@ -1,8 +1,9 @@
 // swift-tools-version:5.9
 //
-// Star Traders Sync Setup: a macOS app that installs and configures the
-// star-traders-sync CLI for people who do not use a terminal. Built with
-// `swift build`; `build-app.sh` wraps the binary into a .app and a .dmg.
+// Star Traders Sync: the macOS app for star-traders-sync. It sets a Mac up
+// on first launch, then shows sync status, for people who do not use a
+// terminal. Built with `swift build`; `build-app.sh` wraps the binary into
+// a .app and a .dmg.
 
 import PackageDescription
 

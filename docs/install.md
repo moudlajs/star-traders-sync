@@ -1,21 +1,22 @@
 # Install
 
 Set up the hub Mac first, then each Mac you play on. There are two ways:
-the setup app, or the command line from this repository. Both end with
+the Star Traders Sync app, or the command line from this repository. Both end with
 the same install and the same config.
 
-## With the setup app
+## With the app
 
-Download **Star-Traders-Sync-Setup.dmg** from the
+Download the **.dmg** from the
 [latest release](https://github.com/moudlajs/star-traders-sync/releases/latest),
-open it, and drag the app to Applications. It walks you through
-everything on this page: Tailscale, choosing the hub, the ssh key and the
-config. It finishes by running `sts doctor --fix`. You never touch a save
-file.
+open it, and drag **Star Traders Sync** to Applications. On first launch
+it walks you through everything on this page: Tailscale, choosing the hub,
+the ssh key and the config, and finishes by running `sts doctor --fix`.
+After that it opens to a window showing whether this Mac is in sync with
+the hub. You never touch a save file.
 
 The app is not notarized yet (#61), so macOS blocks the first launch.
 Open it once, then go to **System Settings > Privacy & Security** and
-click **Open Anyway** next to "Star Traders Sync Setup". After that it opens
+click **Open Anyway** next to "Star Traders Sync". After that it opens
 normally.
 
 To build it yourself: `macos/build-app.sh` (needs Xcode) writes the `.app`

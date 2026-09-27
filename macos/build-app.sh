@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Builds "Star Traders Sync Setup.app" and a .dmg around it, with the
+# Builds "Star Traders Sync.app" and a .dmg around it, with the
 # current bin/star-traders-sync bundled inside.
 #
 #   macos/build-app.sh            universal (arm64 + x86_64), needs Xcode
@@ -14,9 +14,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 OUT="$HERE/build"
-NAME="Star Traders Sync Setup"
+NAME="Star Traders Sync"
 APP="$OUT/$NAME.app"
-DMG="$OUT/Star-Traders-Sync-Setup.dmg"
+DMG="$OUT/Star-Traders-Sync.dmg"
 
 ARCHS=(--arch arm64 --arch x86_64)
 [ "${1:-}" = "--native" ] && ARCHS=()
@@ -43,7 +43,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>          <string>STSSetup</string>
-    <key>CFBundleIdentifier</key>          <string>com.github.moudlajs.star-traders-sync.setup</string>
+    <key>CFBundleIdentifier</key>          <string>com.github.moudlajs.star-traders-sync</string>
     <key>CFBundleName</key>                <string>$NAME</string>
     <key>CFBundleDisplayName</key>         <string>$NAME</string>
     <key>CFBundlePackageType</key>         <string>APPL</string>

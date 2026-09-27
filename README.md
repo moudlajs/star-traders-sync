@@ -21,7 +21,7 @@ command at the wrong time may refuse to work. It will not lose a save.
 
 ## Install
 
-Download **Star-Traders-Sync-Setup.dmg** from the
+Download the **.dmg** from the
 [latest release](https://github.com/moudlajs/star-traders-sync/releases/latest)
 and open the app. It sets up Tailscale, the hub, the ssh key and the
 config, then checks everything. Set up the hub Mac first, then each Mac

@@ -10,6 +10,6 @@ config
 *.log
 /tmp/
 
-# macOS setup app
+# macOS app
 /macos/.build/
 /macos/build/

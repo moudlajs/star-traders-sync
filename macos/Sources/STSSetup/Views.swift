@@ -1,9 +1,35 @@
 import STSSetupCore
 import SwiftUI
 
+/// Decides which of the two faces the app shows: the setup wizard on a
+/// Mac that has no config (or when asked to redo setup), the main window
+/// otherwise.
+@MainActor
+final class AppModel: ObservableObject {
+    @Published var showingSetup: Bool
+    @Published var wizard = WizardModel()
+    let dashboard = DashboardModel()
+
+    init() {
+        let layout = InstallLayout()
+        showingSetup = !FileManager.default.fileExists(atPath: layout.configFile.path)
+            || !FileManager.default.isExecutableFile(atPath: layout.effectiveScript.path)
+    }
+
+    func showSetup() {
+        dashboard.stop()
+        wizard = WizardModel()
+        showingSetup = true
+    }
+
+    func finishSetup() {
+        showingSetup = false
+    }
+}
+
 @main
-struct STSSetupApp: App {
-    @StateObject private var model = WizardModel()
+struct StarTradersSyncApp: App {
+    @StateObject private var app = AppModel()
 
     init() {
         // A bare executable (swift run) starts as a background process.
@@ -11,13 +37,26 @@ struct STSSetupApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Star Traders Sync Setup") {
-            ContentView()
-                .environmentObject(model)
+        WindowGroup("Star Traders Sync") {
+            RootView()
+                .environmentObject(app)
+                .environmentObject(app.dashboard)
                 .frame(minWidth: 760, minHeight: 540)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .windowResizability(.contentMinSize)
+    }
+}
+
+struct RootView: View {
+    @EnvironmentObject var app: AppModel
+
+    var body: some View {
+        if app.showingSetup {
+            ContentView().environmentObject(app.wizard)
+        } else {
+            DashboardView()
+        }
     }
 }
 
@@ -57,6 +96,7 @@ struct ContentView: View {
 
 struct Sidebar: View {
     @EnvironmentObject var m: WizardModel
+    @EnvironmentObject var app: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -75,6 +115,12 @@ struct Sidebar: View {
                 }
             }
             Spacer()
+            if m.existingConfig != nil && m.step != .done {
+                // Setup reopened from the main window: leave it unchanged.
+                Button("Cancel") { app.finishSetup() }
+                    .disabled(m.installBusy)
+                    .padding(.bottom, 6)
+            }
             Text("sync tool \(m.scriptVersion)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -86,6 +132,7 @@ struct Sidebar: View {
 
 struct BottomBar: View {
     @EnvironmentObject var m: WizardModel
+    @EnvironmentObject var app: AppModel
 
     var body: some View {
         HStack {
@@ -95,7 +142,7 @@ struct BottomBar: View {
             }
             Spacer()
             if m.step == .done {
-                Button("Close") { NSApp.terminate(nil) }
+                Button("Open Star Traders Sync") { app.finishSetup() }
                     .keyboardShortcut(.defaultAction)
             } else {
                 Button(m.step == .welcome ? "Start" : "Continue") { m.next() }
@@ -478,32 +525,41 @@ struct CheckPage: View {
             } else if m.doctorPassed == false {
                 StatusRow(state: .fail, text: "Something needs fixing. Each problem below says what to do. Fix it, then check again.")
             }
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(m.doctorLines) { line in
-                    Text(line.text.isEmpty ? " " : line.text)
-                        .font(.system(line.kind == .section ? .body : .callout, design: .monospaced))
-                        .fontWeight(line.kind == .section ? .semibold : .regular)
-                        .foregroundStyle(color(line.kind))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+            DoctorOutput(lines: m.doctorLines)
             if !m.doctorRunning {
                 Button("Check again") { m.runDoctor() }
             }
         }
     }
 
+}
+
+struct DoctorOutput: View {
+    let lines: [DoctorLine]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(lines) { line in
+                Text(line.text.isEmpty ? " " : line.text)
+                    .font(.system(line.kind == .section ? .body : .callout, design: .monospaced))
+                    .fontWeight(line.kind == .section ? .semibold : .regular)
+                    .foregroundStyle(color(line.kind))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+    }
+
     func color(_ k: DoctorLine.Kind) -> Color {
         switch k {
-        case .ok, .fixed: return .green
-        case .warn:       return .orange
-        case .fail:       return .red
+        case .ok, .fixed:  return .green
+        case .warn:        return .orange
+        case .fail:        return .red
         case .note, .skip: return .secondary
-        default:          return .primary
+        default:           return .primary
         }
     }
 }
