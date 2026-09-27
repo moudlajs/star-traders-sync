@@ -21,7 +21,9 @@ DMG="$OUT/Star-Traders-Sync-Setup.dmg"
 ARCHS=(--arch arm64 --arch x86_64)
 [ "${1:-}" = "--native" ] && ARCHS=()
 
-VERSION="$(grep -oE '^readonly STS_VERSION="[^"]+"' "$REPO/bin/star-traders-sync" | cut -d'"' -f2)"
+# `|| true`: under pipefail a failed grep would abort here, before the
+# friendlier message below could say what went wrong.
+VERSION="$(grep -oE '^readonly STS_VERSION="[^"]+"' "$REPO/bin/star-traders-sync" | cut -d'"' -f2 || true)"
 [ -n "$VERSION" ] || { echo "error: could not read STS_VERSION" >&2; exit 1; }
 
 echo "building $NAME $VERSION"

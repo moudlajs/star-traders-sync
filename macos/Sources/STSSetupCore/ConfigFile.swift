@@ -183,7 +183,7 @@ public enum ConfigFile {
         return out
     }
 
-    static func expandTilde(_ p: String, home: String) -> String {
+    public static func expandTilde(_ p: String, home: String) -> String {
         if p == "~" { return home }
         if p.hasPrefix("~/") { return home + "/" + p.dropFirst(2) }
         return strip(p)

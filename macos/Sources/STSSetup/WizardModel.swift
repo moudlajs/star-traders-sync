@@ -53,6 +53,9 @@ final class WizardModel: ObservableObject {
 
     @Published var step: Step = .welcome
     @Published var existingConfig: SetupValues?
+    /// The save folder sts will actually use: the existing config's
+    /// LOCAL_SAVE_PATH if it has one, else the default a new config gets.
+    var localSavePath = ConfigFile.defaultSavePath
 
     // Tailscale
     @Published var tsStatus: TailscaleStatus?
@@ -96,6 +99,7 @@ final class WizardModel: ObservableObject {
 
         if let text = try? String(contentsOf: layout.configFile, encoding: .utf8),
            let v = ConfigFile.values(from: text) {
+            if let p = ConfigFile.parse(text)["LOCAL_SAVE_PATH"], !p.isEmpty { localSavePath = p }
             existingConfig = v
             hubUser = v.hubUser
             hubPath = v.hubPath
@@ -250,11 +254,11 @@ final class WizardModel: ObservableObject {
         guard let v = values else {
             return [role == .hub ? "Tailscale has not reported this Mac's name." : "Pick the Mac that holds the hub."]
         }
-        return ConfigFile.problems(v, localSavePath: ConfigFile.defaultSavePath, home: NSHomeDirectory())
+        return ConfigFile.problems(v, localSavePath: localSavePath, home: NSHomeDirectory())
     }
 
     var saveFolderExists: Bool {
-        FileManager.default.fileExists(atPath: NSHomeDirectory() + "/Library/StarTradersFrontiers")
+        FileManager.default.fileExists(atPath: ConfigFile.expandTilde(localSavePath, home: NSHomeDirectory()))
     }
 
     // MARK: connect

@@ -89,6 +89,13 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertFalse(problems("/Users/dan/Library/StarTradersFrontiers/hub").isEmpty, "hub inside save dir")
         XCTAssertEqual(problems("/Users/dan/Library/StarTradersFrontiersHub"), [], "prefix is not nesting")
         XCTAssertFalse(problems("/x", user: "dan smith").isEmpty)
+
+        // A customised save folder is checked, not the default one.
+        let custom = SetupValues(hubHost: "h", hubUser: "dan", hubPath: "/Volumes/Games/hub")
+        XCTAssertFalse(ConfigFile.problems(custom, localSavePath: "/Volumes/Games/hub/saves",
+                                           home: "/Users/dan").isEmpty)
+        XCTAssertEqual(ConfigFile.problems(custom, localSavePath: "~/Library/StarTradersFrontiers",
+                                           home: "/Users/dan"), [])
         XCTAssertFalse(problems("/x", vol: "/Volumes/My Disk").isEmpty)
     }
 }
