@@ -1,0 +1,163 @@
+import Foundation
+
+/// Where things go, rooted at a home directory so tests can use a sandbox.
+public struct InstallLayout {
+    public let home: URL
+
+    public init(home: URL = URL(fileURLWithPath: NSHomeDirectory())) {
+        self.home = home
+    }
+
+    public var supportDir: URL { home.appendingPathComponent("Library/Application Support/star-traders-sync") }
+    public var installedScript: URL { supportDir.appendingPathComponent("bin/star-traders-sync") }
+    public var installedExample: URL { supportDir.appendingPathComponent("config.example") }
+    public var binDir: URL { home.appendingPathComponent("bin") }
+    /// The script honours XDG_CONFIG_HOME, but an app launched from Finder
+    /// never has it set, and neither does a default Terminal. This is the
+    /// path both of them use.
+    public var configDir: URL { home.appendingPathComponent(".config/star-traders-sync") }
+    public var configFile: URL { configDir.appendingPathComponent("config") }
+    public var linkNames: [String] { ["star-traders-sync", "sts"] }
+
+    /// The script `sts` will actually run: the existing link target if it
+    /// works, otherwise the copy this app installs.
+    public var effectiveScript: URL {
+        let link = binDir.appendingPathComponent("sts")
+        if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path) {
+            let url = URL(fileURLWithPath: target, relativeTo: binDir).standardizedFileURL
+            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+        }
+        return installedScript
+    }
+}
+
+public enum InstallError: Error, CustomStringConvertible {
+    case scriptRunning
+    case io(String)
+
+    public var description: String {
+        switch self {
+        case .scriptRunning:
+            return "star-traders-sync is running right now (probably sts play). Quit the game, let it finish pushing, then try again."
+        case .io(let s):
+            return s
+        }
+    }
+}
+
+public enum Installer {
+    /// Is any star-traders-sync process alive? Replacing the script under a
+    /// running bash is how you make it execute garbage (see CLAUDE.md).
+    /// The install below replaces by rename, which is safe for a running
+    /// bash, but a user mid-`sts play` should not be reconfigured anyway.
+    public static func scriptIsRunning() -> Bool {
+        // Matches both names, since `sts play` shows up as .../bin/sts.
+        Shell.run("/usr/bin/pgrep", ["-f", "bin/(star-traders-sync|sts)( |$)"]).ok
+    }
+
+    /// Copies the bundled script and config.example into Application
+    /// Support and links `sts` and `star-traders-sync` in ~/bin.
+    ///
+    /// Mirrors install.sh's rules: a real file in ~/bin is never replaced.
+    /// It adds one: a link that already points at a working script (a repo
+    /// checkout) is left alone, so a developer's install is not hijacked.
+    /// Returns one human-readable line per thing it did.
+    public static func installScript(bundledScript: URL, bundledExample: URL?,
+                                     layout: InstallLayout,
+                                     fileManager fm: FileManager = .default) throws -> [String] {
+        var report: [String] = []
+
+        try fm.createDirectory(at: layout.installedScript.deletingLastPathComponent(),
+                               withIntermediateDirectories: true)
+        try atomicCopy(bundledScript, to: layout.installedScript, mode: 0o755, fm: fm)
+        report.append("installed the sync tool in \(tilde(layout.installedScript.path, layout))")
+        if let ex = bundledExample {
+            try atomicCopy(ex, to: layout.installedExample, mode: 0o644, fm: fm)
+        }
+
+        try fm.createDirectory(at: layout.binDir, withIntermediateDirectories: true)
+        for name in layout.linkNames {
+            let link = layout.binDir.appendingPathComponent(name)
+            let shown = tilde(link.path, layout)
+
+            if let target = try? fm.destinationOfSymbolicLink(atPath: link.path) {
+                let resolved = URL(fileURLWithPath: target, relativeTo: layout.binDir).standardizedFileURL
+                if resolved.path == layout.installedScript.standardizedFileURL.path {
+                    report.append("\(shown) already points at it")
+                    continue
+                }
+                if fm.isExecutableFile(atPath: resolved.path) {
+                    report.append("kept \(shown), which points at your own copy: \(tilde(resolved.path, layout))")
+                    continue
+                }
+                // Dangling: the repo it pointed into is gone.
+                try fm.removeItem(at: link)
+            } else if fm.fileExists(atPath: link.path) {
+                report.append("left \(shown) alone: it is a real file, not a link, so it was not replaced")
+                continue
+            }
+            try fm.createSymbolicLink(at: link, withDestinationURL: layout.installedScript)
+            report.append("linked \(shown)")
+        }
+        return report
+    }
+
+    /// Writes the config. An existing one is backed up next to itself and
+    /// then updated in place, so every tunable the user set survives.
+    public static func writeConfig(_ values: SetupValues, layout: InstallLayout,
+                                   now: Date = Date(),
+                                   fileManager fm: FileManager = .default) throws -> [String] {
+        try fm.createDirectory(at: layout.configDir, withIntermediateDirectories: true)
+        let file = layout.configFile
+        let shown = tilde(file.path, layout)
+
+        if fm.fileExists(atPath: file.path) {
+            let old = try String(contentsOf: file, encoding: .utf8)
+            let new = ConfigFile.update(old, with: values)
+            if new == old { return ["config already up to date: \(shown)"] }
+
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyyMMdd-HHmmss"
+            let backup = layout.configDir.appendingPathComponent("config.backup-\(f.string(from: now))")
+            try fm.copyItem(at: file, to: backup)
+            try atomicWrite(new, to: file, mode: 0o644, fm: fm)
+            return ["backed up your old config to \(tilde(backup.path, layout))",
+                    "updated \(shown)"]
+        }
+        let text = ConfigFile.render(values, examplePath: layout.installedExample.path)
+        try atomicWrite(text, to: file, mode: 0o644, fm: fm)
+        return ["wrote \(shown)"]
+    }
+
+    // MARK: - helpers
+
+    /// Write to a temp file beside the target, then rename over it. A
+    /// running bash keeps reading the old inode, so it never sees a
+    /// half-written script.
+    static func atomicCopy(_ src: URL, to dst: URL, mode: Int, fm: FileManager) throws {
+        let data = try Data(contentsOf: src)
+        try atomicWrite(data, to: dst, mode: mode, fm: fm)
+    }
+
+    static func atomicWrite(_ text: String, to dst: URL, mode: Int, fm: FileManager) throws {
+        try atomicWrite(Data(text.utf8), to: dst, mode: mode, fm: fm)
+    }
+
+    static func atomicWrite(_ data: Data, to dst: URL, mode: Int, fm: FileManager) throws {
+        let tmp = dst.deletingLastPathComponent()
+            .appendingPathComponent(".\(dst.lastPathComponent).tmp-\(getpid())")
+        try data.write(to: tmp)
+        try fm.setAttributes([.posixPermissions: mode], ofItemAtPath: tmp.path)
+        if rename(tmp.path, dst.path) != 0 {
+            let msg = String(cString: strerror(errno))
+            try? fm.removeItem(at: tmp)
+            throw InstallError.io("could not move \(tmp.path) into place: \(msg)")
+        }
+    }
+
+    static func tilde(_ path: String, _ layout: InstallLayout) -> String {
+        let home = layout.home.standardizedFileURL.path
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}

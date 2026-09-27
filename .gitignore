@@ -9,3 +9,7 @@ config
 # Local scratch
 *.log
 /tmp/
+
+# macOS setup app
+/macos/.build/
+/macos/build/
