@@ -98,8 +98,12 @@ public enum Tailscale {
             .filter { fm.isExecutableFile(atPath: $0) }
     }
 
-    public static func status(log: (String) -> Void = { _ in }) -> Result<TailscaleStatus, TailscaleError> {
-        let bins = allBinaries()
+    public typealias Runner = (_ binary: String, _ args: [String], _ env: [String: String]) -> CommandResult
+
+    public static func status(binaries: [String] = allBinaries(),
+                              runner: Runner = { Shell.run($0, $1, env: $2) },
+                              log: (String) -> Void = { _ in }) -> Result<TailscaleStatus, TailscaleError> {
+        let bins = binaries
         guard !bins.isEmpty else { return .failure(.notInstalled) }
 
         var firstError: TailscaleError?
@@ -107,14 +111,16 @@ public enum Tailscale {
             // The app's binary is both the GUI and the CLI. Launched by a
             // GUI process rather than a shell it may not realise it is
             // being used as a CLI; TAILSCALE_BE_CLI says so explicitly.
-            let r = Shell.run(bin, ["status", "--json"], env: ["TAILSCALE_BE_CLI": "1"])
+            let r = runner(bin, ["status", "--json"], ["TAILSCALE_BE_CLI": "1"])
             log("\(bin) status --json: exit \(r.status)\n--- stdout ---\n\(excerpt(Data(r.stdout.utf8), 4000))\n--- stderr ---\n\(excerpt(Data(r.stderr.utf8), 4000))")
             if !r.stdout.isEmpty, let s = try? parseStatus(Data(r.stdout.utf8)) {
                 return .success(s)
             }
-            let err: TailscaleError = r.ok || !r.stdout.isEmpty
-                ? .badOutput(excerpt(Data(r.combined.utf8)))
-                : .notRunning(r.combined)
+            // Output that is there but unparseable is "unreadable"; no
+            // stdout at all is no answer, whatever the exit code says.
+            let err: TailscaleError = r.stdout.isEmpty
+                ? .notRunning(r.combined)
+                : .badOutput(excerpt(Data(r.combined.utf8)))
             if firstError == nil { firstError = err }
         }
         return .failure(firstError!)
