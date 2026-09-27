@@ -188,7 +188,11 @@ final class WizardModel: ObservableObject {
         case .role:      refreshVolumes(); checkRemoteLogin(); applyDefaultHubPath()
         case .connect:   startConnect()
         case .install:
-            if installed && (installedValues != values || installedRole != role) { installed = false }
+            if installed && !Installer.installStillValid(
+                installed: installedValues, installedAsHub: installedRole.map { $0 == .hub },
+                current: values, currentIsHub: role == .hub) {
+                installed = false
+            }
             if !installed { resetStages() }
         case .check:     runDoctor()
         default: break

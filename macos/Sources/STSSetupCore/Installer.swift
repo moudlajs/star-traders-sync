@@ -114,6 +114,16 @@ public enum Installer {
         return report
     }
 
+    /// Does a finished install still describe what the user has chosen?
+    /// False once they go back and change the hub, the account, the hub
+    /// folder, the backup disk or the role, so Install runs again rather
+    /// than showing done for values that were never written.
+    public static func installStillValid(installed: SetupValues?, installedAsHub: Bool?,
+                                         current: SetupValues?, currentIsHub: Bool) -> Bool {
+        guard let installed, let installedAsHub, let current else { return false }
+        return installed == current && installedAsHub == currentIsHub
+    }
+
     /// Writes the config. An existing one is backed up next to itself and
     /// then updated in place, so every tunable the user set survives.
     public static func writeConfig(_ values: SetupValues, layout: InstallLayout,
