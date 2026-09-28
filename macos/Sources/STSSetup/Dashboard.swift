@@ -154,7 +154,7 @@ final class DashboardModel: ObservableObject {
 extension SyncStatus.Decision {
     var headline: String {
         switch self {
-        case .inSync:           return "In sync"
+        case .inSync:           return "Up to date"
         case .hubOnly:          return "The hub has newer saves"
         case .firstSeed:        return "This Mac has no saves yet"
         case .localOnly:        return "This Mac has saves the hub doesn't"
@@ -170,7 +170,7 @@ extension SyncStatus.Decision {
     var explanation: String {
         switch self {
         case .inSync:
-            return "This Mac and the hub have exactly the same saves."
+            return "This Mac has the same saves as the hub. Play whenever you like."
         case .hubOnly:
             return "Another Mac played since this one last synced. Playing here copies its saves to this Mac first."
         case .firstSeed:
@@ -223,37 +223,51 @@ struct DashboardView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var d: DashboardModel
     @State private var showDoctor = false
+    @State private var showDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let p = d.problem { ProblemCard(problem: p) }
-                    if let s = d.status {
-                        VerdictCard(status: s)
-                        if d.run == nil || d.run?.ended == true {
-                            ActionButtons(plan: SyncActions.plan(for: s))
-                        }
-                    }
-                    if let r = d.run {
-                        ActivityCard(run: r)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                    if let s = d.status {
-                        HStack(alignment: .top, spacing: 16) {
-                            SideCard(title: "This Mac", subtitle: s.machine, side: s.sides.local)
-                            SideCard(title: s.isHub ? "Hub (this Mac)" : "Hub", subtitle: s.hub.host, side: s.sides.hub)
-                        }
-                        footer(s)
-                    } else if d.problem == nil {
-                        HStack { ProgressView().controlSize(.small); Text("Checking…") }
-                            .foregroundStyle(.secondary)
-                    }
+        ScrollView {
+            VStack(spacing: 20) {
+                if let p = d.problem {
+                    ProblemCard(problem: p)
                 }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                if let s = d.status {
+                    Hero(status: s)
+                } else if d.problem == nil {
+                    ProgressView().controlSize(.regular).padding(.vertical, 60)
+                }
+                if let r = d.run {
+                    ActivityCard(run: r)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+                if let s = d.status {
+                    details(s)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 16)
+            .frame(maxWidth: .infinity)
+        }
+        .navigationTitle("Star Traders Sync")
+        .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { d.refresh() } label: {
+                    Label("Check again", systemImage: "arrow.clockwise")
+                }
+                .help("Check again")
+                .disabled(d.loading || d.busy)
+
+                Menu {
+                    Button("Health check…") { showDoctor = true; d.runDoctor() }
+                    Button("Open logs") { d.openLogs() }
+                    Divider()
+                    Button("Run setup again…") { app.showSetup() }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .help("More")
             }
         }
         .onAppear { d.start() }
@@ -268,91 +282,87 @@ struct DashboardView: View {
             Text(b.confirmation?.message ?? "")
         }
         .animation(.easeOut(duration: 0.25), value: d.run?.id)
+        .animation(.easeOut(duration: 0.2), value: showDetails)
     }
 
-    var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Star Traders Sync").font(.title2).bold()
-                if let s = d.status {
-                    Text(s.isHub ? "This Mac is the hub" : "Hub: \(s.hub.host)")
-                        .foregroundStyle(.secondary)
+    /// Both sides, for people who want to see them; one click away.
+    @ViewBuilder func details(_ s: SyncStatus) -> some View {
+        VStack(spacing: 10) {
+            Button {
+                showDetails.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Text(showDetails ? "Hide details" : "Details")
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(showDetails ? 180 : 0))
                 }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
-            Spacer()
-            HStack(spacing: 14) {
-                Button { d.refresh() } label: {
-                    ZStack {
-                        // Same footprint either way, so nothing shifts.
-                        Image(systemName: "arrow.clockwise").opacity(d.loading ? 0 : 1)
-                        if d.loading { ProgressView().controlSize(.small) }
-                    }
-                    .frame(width: 22, height: 22)
-                }
-                .help("Check again")
-                .disabled(d.loading)
+            .buttonStyle(.plain)
 
-                Menu {
-                    Button("Health check…") { showDoctor = true; d.runDoctor() }
-                    Button("Open logs") { d.openLogs() }
-                    Divider()
-                    Button("Run setup again…") { app.showSetup() }
-                } label: {
-                    Image(systemName: "ellipsis.circle").frame(width: 22, height: 22)
+            if showDetails {
+                HStack(alignment: .top, spacing: 12) {
+                    SideCard(title: "This Mac", subtitle: s.machine, side: s.sides.local)
+                    SideCard(title: s.isHub ? "Hub (this Mac)" : "Hub", subtitle: s.hub.host, side: s.sides.hub)
                 }
-                .menuIndicator(.hidden)
-                .help("More")
-            }
-            .buttonStyle(.borderless)
-            .menuStyle(.borderlessButton)
-            .font(.system(size: 17, weight: .regular))
-            .fixedSize()
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-    }
-
-    func footer(_ s: SyncStatus) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let last = s.lastSync {
-                Label("Last synced \(relative(last.date)), \(last.direction == "push" ? "sent to the hub" : "copied from the hub")",
-                      systemImage: "clock")
-            } else {
-                Label("This Mac has not synced yet", systemImage: "clock")
-            }
-            if s.gameRunning {
-                Label("Star Traders is running. Saves are synced when you quit it.", systemImage: "gamecontroller")
-            }
-            if let lock = s.hubLock {
-                Label("Another Mac is syncing with the hub right now (\(lock.trimmingCharacters(in: .whitespaces))).", systemImage: "lock")
-            }
-            if let at = d.checkedAt {
-                Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
+                .transition(.opacity)
+                if let at = d.checkedAt {
+                    Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
+                }
             }
         }
-        .foregroundStyle(.secondary)
     }
 }
 
-struct VerdictCard: View {
+/// The centre of the window: what is going on, in one line, and the one
+/// thing to do about it.
+struct Hero: View {
+    @EnvironmentObject var d: DashboardModel
     let status: SyncStatus
 
     var body: some View {
         let v = status.decision
-        HStack(alignment: .top, spacing: 14) {
+        VStack(spacing: 12) {
             Image(systemName: v.symbol)
-                .font(.system(size: 34))
+                .font(.system(size: 54, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(v.tint)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(v.headline).font(.title3).bold()
-                Text(v.explanation).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 8)
+            Text(v.headline)
+                .font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(v.explanation)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if d.run == nil || d.run?.ended == true {
+                ActionButtons(plan: SyncActions.plan(for: status))
+                    .padding(.top, 8)
             }
-            Spacer(minLength: 0)
+
+            VStack(spacing: 4) {
+                if let last = status.lastSync {
+                    Text("Last synced \(relative(last.date)) · \(last.direction == "push" ? "sent to the hub" : "from the hub")")
+                } else {
+                    Text("This Mac has not synced yet")
+                }
+                if status.gameRunning {
+                    Label("Star Traders is running", systemImage: "gamecontroller")
+                }
+                if status.hubLock != nil {
+                    Label("Another Mac is syncing right now", systemImage: "lock")
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.top, 6)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(v.tint.opacity(0.10)))
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -420,11 +430,13 @@ struct DoctorSheet: View {
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             Text("Health check").font(.title2).bold()
-            ScrollView {
+            // Fits its content; scrolls only when an expanded problem makes
+            // it taller than the screen allows.
+            ViewThatFits(in: .vertical) {
                 DoctorProgressView(run: d.doctor)
-                    .padding(.trailing, 8)
+                ScrollView { DoctorProgressView(run: d.doctor).padding(.trailing, 8) }
             }
             HStack {
                 Spacer()
@@ -433,6 +445,7 @@ struct DoctorSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 640, height: 540)
+        .frame(width: 520)
+        .frame(maxHeight: 640)
     }
 }

@@ -36,15 +36,23 @@ struct ActionButtons: View {
     let plan: ActionPlan
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ForEach(plan.buttons) { b in
                     if b.prominent {
-                        Button(b.label) { d.tapped(b) }
-                            .buttonStyle(.borderedProminent)
+                        Button { d.tapped(b) } label: {
+                            Label(b.label, systemImage: b.action == .play ? "play.fill" : "arrow.triangle.2.circlepath")
+                                .labelStyle(.titleAndIcon)
+                                .frame(minWidth: 150)
+                                .padding(.vertical, 3)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(b.action == .play ? .defaultAction : nil)
                     } else {
-                        Button(b.label) { d.tapped(b) }
-                            .buttonStyle(.bordered)
+                        Button { d.tapped(b) } label: {
+                            Text(b.label).padding(.vertical, 3)
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
             }
@@ -52,6 +60,8 @@ struct ActionButtons: View {
             .disabled(d.busy || plan.blockedBecause != nil || d.loading)
             if let why = plan.blockedBecause {
                 Text(why).font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 380)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
