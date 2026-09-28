@@ -79,7 +79,7 @@ struct DoctorProgressView: View {
     @ObservedObject var run: DoctorRun
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             ForEach(run.visibleSections) { section in
                 DoctorSectionRow(section: section)
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -138,13 +138,12 @@ struct DoctorSectionRow: View {
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     icon.frame(width: 18)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(section.displayTitle).fontWeight(.medium).foregroundStyle(.primary)
-                        Text(section.summary).font(.callout).foregroundStyle(.secondary)
-                            .lineLimit(expanded ? nil : 1)
-                            .multilineTextAlignment(.leading)
-                    }
-                    Spacer(minLength: 8)
+                    Text(section.displayTitle).fontWeight(.medium).foregroundStyle(.primary)
+                        .layoutPriority(1)
+                    Spacer(minLength: 12)
+                    Text(section.summary).font(.callout).foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)

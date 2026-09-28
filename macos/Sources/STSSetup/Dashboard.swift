@@ -528,24 +528,31 @@ struct HealthPage: View {
     @EnvironmentObject var d: DashboardModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Button {
-                    withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = false }
-                } label: {
-                    Label("Back", systemImage: "chevron.left")
+        VStack(alignment: .leading, spacing: 14) {
+            // Back, title and Check again on one row.
+            ZStack {
+                Text("Health check").font(.headline)
+                HStack {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = false }
+                    } label: {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button("Check again") { d.runDoctor() }
+                        .controlSize(.small)
+                        .disabled(d.doctor.running)
                 }
-                .buttonStyle(.borderless)
-                .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Check again") { d.runDoctor() }
-                    .disabled(d.doctor.running)
             }
-            Text("Health check").font(.title2).bold()
-            ScrollView {
+            // Collapsed sections are one line each, so the whole report
+            // fits without scrolling; an opened problem may scroll.
+            ViewThatFits(in: .vertical) {
                 DoctorProgressView(run: d.doctor)
-                    .padding(.trailing, 8)
+                ScrollView { DoctorProgressView(run: d.doctor).padding(.trailing, 8) }
             }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
