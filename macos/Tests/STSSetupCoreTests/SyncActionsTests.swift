@@ -109,6 +109,20 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertNil(SyncActions.automatic(for: try status("LOCAL_ONLY", lock: "workmac 1")))
     }
 
+    /// A press queued during a status check runs only if still valid.
+    func testAQueuedPressRunsOnlyIfStillOffered() throws {
+        let play = try XCTUnwrap(SyncActions.plan(for: try status("HUB_ONLY")).buttons.first { $0.action == .play })
+        XCTAssertTrue(SyncActions.stillOffered(play, for: try status("HUB_ONLY")))
+        XCTAssertFalse(SyncActions.stillOffered(play, for: try status("BOTH_CHANGED")), "the situation changed")
+        XCTAssertFalse(SyncActions.stillOffered(play, for: try status("HUB_ONLY", game: true)), "the game started")
+        XCTAssertFalse(SyncActions.stillOffered(play, for: try status("HUB_ONLY", lock: "workmac 1")), "another Mac took the lock")
+
+        var stale = play
+        stale.expected = .localOnly
+        XCTAssertFalse(SyncActions.stillOffered(stale, for: try status("LOCAL_ONLY")),
+                       "same decision, but play is not offered for LOCAL_ONLY")
+    }
+
     func testSituationKeyChangesWithEitherSide() throws {
         let a = try status("HUB_ONLY")
         XCTAssertEqual(SyncActions.situationKey(a), SyncActions.situationKey(try status("HUB_ONLY")))
