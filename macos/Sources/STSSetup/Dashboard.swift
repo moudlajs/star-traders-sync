@@ -54,6 +54,7 @@ final class DashboardModel: ObservableObject {
     var script: String { layout.installedScript.path }
 
     func start() {
+        active = true
         refresh()
         // Coming back to the app is when the user wants to see, and have,
         // the latest; do not wait for the next minute tick.
@@ -72,9 +73,17 @@ final class DashboardModel: ObservableObject {
         }
     }
 
+    /// Stops everything that could start a check, or an automatic sync, on
+    /// its own: the minute timer and the came-to-front observer. Setup
+    /// calls this before it rewrites the config and script.
     func stop() {
+        active = false
         timer?.invalidate()
         timer = nil
+        if let o = activeObserver {
+            NotificationCenter.default.removeObserver(o)
+            activeObserver = nil
+        }
     }
 
     /// Brings the app's copy of the script up to date with the bundled one.
@@ -137,8 +146,12 @@ final class DashboardModel: ObservableObject {
 
     // MARK: actions
 
+    /// False while setup is showing (AppModel sets it), so a status check
+    /// already in flight when setup opened cannot start a sync.
+    var active = true
+
     func considerAutoSync(_ s: SyncStatus) {
-        guard autoSync, !busy, pending == nil, run == nil,
+        guard active, autoSync, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
         guard key != autoFailedKey else { return }
