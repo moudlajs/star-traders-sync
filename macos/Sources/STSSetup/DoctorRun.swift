@@ -79,22 +79,35 @@ struct DoctorProgressView: View {
     @ObservedObject var run: DoctorRun
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            ForEach(run.visibleSections) { section in
-                DoctorSectionRow(section: section)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            if run.running {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small).frame(width: 18)
-                    Text(run.upcoming.map { "Checking \($0.displayTitle.lowercased())…" } ?? "Checking…")
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            // Grouped like a System Settings list: one rounded panel, a row
+            // per section, hairlines between.
+            VStack(spacing: 0) {
+                ForEach(Array(run.visibleSections.enumerated()), id: \.element.id) { i, section in
+                    if i > 0 { Divider().padding(.leading, 40) }
+                    DoctorSectionRow(section: section)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .transition(.opacity)
+                if run.running {
+                    if !run.visibleSections.isEmpty { Divider().padding(.leading, 40) }
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small).frame(width: 18)
+                        Text(run.upcoming.map { "Checking \($0.displayTitle.lowercased())…" } ?? "Checking…")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .transition(.opacity)
+                }
             }
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18)))
+
             if let passed = run.passed {
                 resultBanner(passed)
-                    .padding(.top, 4)
                     .transition(.opacity)
             }
         }
