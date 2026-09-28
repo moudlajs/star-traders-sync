@@ -46,27 +46,26 @@ final class SyncStatusTests: XCTestCase {
     }
 
     /// Every decision the script can report must be one the app knows, or
-    /// the whole status fails to decode. Read from the script itself: what
-    /// decide() prints, and what cmd_status assigns around it.
+    /// the whole status fails to decode. Read from the script itself: every
+    /// value printed by decide() and effective_decision(), the two
+    /// functions that produce a decision.
     func testDecisionsMatchTheScriptsDecide() throws {
         let script = InstallerTests.repo.appendingPathComponent("bin/star-traders-sync")
         let text = try String(contentsOf: script, encoding: .utf8)
-        guard let start = text.range(of: "decide() {"), let end = text.range(of: "\n}\n", range: start.upperBound..<text.endIndex) else {
-            return XCTFail("decide() not found")
+        let printed = try NSRegularExpression(pattern: "printf '([A-Z_]+)'")
+        var found = Set<String>()
+        for name in ["decide", "effective_decision"] {
+            guard let start = text.range(of: "\n\(name)() {"),
+                  let end = text.range(of: "\n}\n", range: start.upperBound..<text.endIndex) else {
+                return XCTFail("\(name)() not found in the script")
+            }
+            let body = String(text[start.upperBound..<end.lowerBound])
+            for m in printed.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
+                if let r = Range(m.range(at: 1), in: body) { found.insert(String(body[r])) }
+            }
         }
-        let body = String(text[start.upperBound..<end.lowerBound])
-        let regex = try NSRegularExpression(pattern: "printf '([A-Z_]+)'")
-        let found = Set(regex.matches(in: body, range: NSRange(body.startIndex..., in: body)).compactMap {
-            Range($0.range(at: 1), in: body).map { String(body[$0]) }
-        })
-        let assigned = try NSRegularExpression(pattern: "decision=\"([A-Z_]+)\"")
-        let extra = Set(assigned.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
-            Range($0.range(at: 1), in: text).map { String(text[$0]) }
-        })
-        let all = found.union(extra)
-        XCTAssertFalse(found.isEmpty)
-        XCTAssertTrue(extra.contains("LOCAL_EMPTIED") || !text.contains("LOCAL_EMPTIED"), "assignment scan works")
-        for d in all { XCTAssertNotNil(SyncStatus.Decision(rawValue: d), "decide() prints \(d), unknown to the app") }
+        XCTAssertTrue(found.contains("INSYNC") && found.contains("LOCAL_EMPTIED"), "both functions were read")
+        for d in found { XCTAssertNotNil(SyncStatus.Decision(rawValue: d), "the script prints \(d), unknown to the app") }
     }
 
     func testLastSyncAndLock() throws {

@@ -127,6 +127,8 @@ public struct SyncProblem: Error, Equatable {
             (title, advice) = ("Choose which saves to keep", "This Mac and the hub both have saves, and they have never synced. Choose which to keep.")
         case 62:
             (title, advice) = ("The hub has no saves yet", "Send this Mac's saves to the hub to start.")
+        case 64:
+            (title, advice) = ("The saves changed while you were choosing", "Another Mac synced in the meantime, so nothing was done. Here is the situation now: choose again.")
         case 63:
             (title, advice) = ("Safety copy failed", "The safety copy taken before overwriting failed, so nothing was overwritten.")
         default:
