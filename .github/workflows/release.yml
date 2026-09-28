@@ -27,7 +27,7 @@ jobs:
       - name: Regression suite must pass before a release exists
         run: ./tests/regression.sh
 
-      - name: Build the setup app
+      - name: Build the app
         run: |
           swift test --package-path macos
           macos/build-app.sh
@@ -42,4 +42,4 @@ jobs:
             bin/star-traders-sync \
             install.sh \
             config.example \
-            macos/build/Star-Traders-Sync-Setup.dmg
+            macos/build/Star-Traders-Sync.dmg

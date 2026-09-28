@@ -1,9 +1,44 @@
 import STSSetupCore
 import SwiftUI
 
+/// Decides which of the two faces the app shows: the setup wizard on a
+/// Mac that has no config (or when asked to redo setup), the main window
+/// otherwise.
+@MainActor
+final class AppModel: ObservableObject {
+    @Published var showingSetup: Bool
+    @Published var wizard = WizardModel()
+    let dashboard = DashboardModel()
+
+    init() {
+        let layout = InstallLayout()
+        let configured = FileManager.default.fileExists(atPath: layout.configFile.path)
+        if configured {
+            // Includes a Mac set up from the command line, which has a
+            // config but no app copy of the script yet.
+            let bundled = WizardModel.locate("star-traders-sync", repoPath: "bin/star-traders-sync")
+            let copied = Installer.refreshAppScript(bundledScript: bundled,
+                                                    bundledExample: WizardModel.locate("config.example", repoPath: "config.example"),
+                                                    layout: layout)
+            SetupLog.write("launch: app script \(copied ? "refreshed" : "unchanged") from \(bundled?.path ?? "nothing bundled")")
+        }
+        showingSetup = !configured || !FileManager.default.isExecutableFile(atPath: layout.installedScript.path)
+    }
+
+    func showSetup() {
+        dashboard.stop()
+        wizard = WizardModel()
+        showingSetup = true
+    }
+
+    func finishSetup() {
+        showingSetup = false
+    }
+}
+
 @main
-struct STSSetupApp: App {
-    @StateObject private var model = WizardModel()
+struct StarTradersSyncApp: App {
+    @StateObject private var app = AppModel()
 
     init() {
         // A bare executable (swift run) starts as a background process.
@@ -11,13 +46,26 @@ struct STSSetupApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Star Traders Sync Setup") {
-            ContentView()
-                .environmentObject(model)
+        WindowGroup("Star Traders Sync") {
+            RootView()
+                .environmentObject(app)
+                .environmentObject(app.dashboard)
                 .frame(minWidth: 760, minHeight: 540)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .windowResizability(.contentMinSize)
+    }
+}
+
+struct RootView: View {
+    @EnvironmentObject var app: AppModel
+
+    var body: some View {
+        if app.showingSetup {
+            ContentView().environmentObject(app.wizard)
+        } else {
+            DashboardView()
+        }
     }
 }
 
@@ -57,6 +105,7 @@ struct ContentView: View {
 
 struct Sidebar: View {
     @EnvironmentObject var m: WizardModel
+    @EnvironmentObject var app: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -75,6 +124,12 @@ struct Sidebar: View {
                 }
             }
             Spacer()
+            if m.existingConfig != nil && m.step != .done {
+                // Setup reopened from the main window: leave it unchanged.
+                Button("Cancel") { app.finishSetup() }
+                    .disabled(m.installBusy)
+                    .padding(.bottom, 6)
+            }
             Text("sync tool \(m.scriptVersion)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -86,16 +141,17 @@ struct Sidebar: View {
 
 struct BottomBar: View {
     @EnvironmentObject var m: WizardModel
+    @EnvironmentObject var app: AppModel
 
     var body: some View {
         HStack {
             if m.step != .welcome && m.step != .done {
                 Button("Back") { m.back() }
-                    .disabled(m.installBusy || m.doctorRunning || m.connectBusy)
+                    .disabled(m.installBusy || m.doctor.running || m.connectBusy)
             }
             Spacer()
             if m.step == .done {
-                Button("Close") { NSApp.terminate(nil) }
+                Button("Open Star Traders Sync") { app.finishSetup() }
                     .keyboardShortcut(.defaultAction)
             } else {
                 Button(m.step == .welcome ? "Start" : "Continue") { m.next() }
@@ -470,40 +526,11 @@ struct CheckPage: View {
     var body: some View {
         PageTitle(title: "Check",
                   subtitle: "Runs the sync tool's own health check and fixes what it safely can.")
-        VStack(alignment: .leading, spacing: 12) {
-            if m.doctorRunning {
-                StatusRow(state: .busy, text: "Checking…")
-            } else if m.doctorPassed == true {
-                StatusRow(state: .ok, text: "Everything checks out.")
-            } else if m.doctorPassed == false {
-                StatusRow(state: .fail, text: "Something needs fixing. Each problem below says what to do. Fix it, then check again.")
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(m.doctorLines) { line in
-                    Text(line.text.isEmpty ? " " : line.text)
-                        .font(.system(line.kind == .section ? .body : .callout, design: .monospaced))
-                        .fontWeight(line.kind == .section ? .semibold : .regular)
-                        .foregroundStyle(color(line.kind))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-            if !m.doctorRunning {
+        VStack(alignment: .leading, spacing: 14) {
+            DoctorProgressView(run: m.doctor)
+            if !m.doctor.running {
                 Button("Check again") { m.runDoctor() }
             }
-        }
-    }
-
-    func color(_ k: DoctorLine.Kind) -> Color {
-        switch k {
-        case .ok, .fixed: return .green
-        case .warn:       return .orange
-        case .fail:       return .red
-        case .note, .skip: return .secondary
-        default:          return .primary
         }
     }
 }
@@ -512,12 +539,12 @@ struct DonePage: View {
     @EnvironmentObject var m: WizardModel
 
     var body: some View {
-        PageTitle(title: m.doctorPassed == true ? "All set" : "Almost there",
+        PageTitle(title: m.doctor.passed == true ? "All set" : "Almost there",
                   subtitle: m.role == .hub
                     ? "This Mac is the hub. Now run this app on each Mac you play on."
                     : "This Mac is connected to the hub.")
         VStack(alignment: .leading, spacing: 14) {
-            if m.doctorPassed != true {
+            if m.doctor.passed != true {
                 StatusRow(state: .warn, text: "The check still reported problems. Go back to Check to see them.")
             }
             Text("From now on, start the game like this").font(.headline)

@@ -77,7 +77,7 @@ public enum ConfigFile {
         let m = Dictionary(uniqueKeysWithValues: managedValues(v))
         let d = Dictionary(uniqueKeysWithValues: requiredDefaults)
         var s = """
-        # star-traders-sync config, written by Star Traders Sync Setup.
+        # star-traders-sync config, written by the Star Traders Sync app.
         # Every option, explained, with defaults:
         #   \(examplePath)
 
@@ -129,7 +129,7 @@ public enum ConfigFile {
         }
         if !appended.isEmpty {
             lines.append("")
-            lines.append("# added by Star Traders Sync Setup")
+            lines.append("# added by the Star Traders Sync app")
             lines += appended
         }
         return lines.joined(separator: "\n") + "\n"

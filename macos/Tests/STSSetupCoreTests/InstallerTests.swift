@@ -42,7 +42,6 @@ final class InstallerTests: XCTestCase {
             let link = layout.binDir.appendingPathComponent(name).path
             XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link), layout.installedScript.path)
         }
-        XCTAssertEqual(layout.effectiveScript.path, layout.installedScript.path)
     }
 
     func testReinstallIsIdempotent() throws {
@@ -58,7 +57,6 @@ final class InstallerTests: XCTestCase {
         let report = try install()
         XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), script.path)
         XCTAssertTrue(report.contains { $0.contains("kept ~/bin/sts") })
-        XCTAssertEqual(layout.effectiveScript.path, script.path, "sts keeps running the repo copy")
     }
 
     func testDanglingLinkIsReplaced() throws {
@@ -67,6 +65,28 @@ final class InstallerTests: XCTestCase {
         try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "/nonexistent/star-traders-sync")
         _ = try install()
         XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), layout.installedScript.path)
+    }
+
+    func testAppScriptIsRefreshedOnlyWhenItDiffers() throws {
+        XCTAssertTrue(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                 layout: layout, isRunning: { false }), "missing: copied")
+        XCTAssertFalse(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                  layout: layout, isRunning: { false }), "identical: left alone")
+        try "old\n".write(to: layout.installedScript, atomically: true, encoding: .utf8)
+        XCTAssertFalse(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                  layout: layout, isRunning: { true }), "sts running: never replaced")
+        XCTAssertEqual(try String(contentsOf: layout.installedScript, encoding: .utf8), "old\n")
+        XCTAssertTrue(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                 layout: layout, isRunning: { false }), "older: replaced")
+        XCTAssertEqual(try Data(contentsOf: layout.installedScript), try Data(contentsOf: script))
+    }
+
+    func testAppScriptRefreshLeavesARepoLinkAlone() throws {
+        try fm.createDirectory(at: layout.binDir, withIntermediateDirectories: true)
+        let link = layout.binDir.appendingPathComponent("sts")
+        try fm.createSymbolicLink(at: link, withDestinationURL: script)
+        Installer.refreshAppScript(bundledScript: script, bundledExample: example, layout: layout, isRunning: { false })
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), script.path)
     }
 
     func testRealFileIsNeverReplaced() throws {
