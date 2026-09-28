@@ -87,18 +87,18 @@ final class DashboardModel: ObservableObject {
 
         guard let args = action.arguments else {
             // resetRecord: the documented manual fix for a diverged state,
-            // done the gentle way: moved aside, never deleted.
-            let record = URL(fileURLWithPath: NSHomeDirectory())
-                .appendingPathComponent(".local/state/star-traders-sync/last-sync.json")
-            let aside = record.deletingLastPathComponent()
-                .appendingPathComponent("last-sync.json.reset-\(Int(Date().timeIntervalSince1970))")
+            // under the same local lock the script takes.
             do {
-                if FileManager.default.fileExists(atPath: record.path) {
-                    try FileManager.default.moveItem(at: record, to: aside)
-                }
+                let aside = try SyncRecord.reset()
+                SetupLog.write("action: resetRecord moved the record to \(aside?.path ?? "nowhere, there was none")")
                 r.finish(status: 0, output: "")
+            } catch let e as SyncRecord.ResetError {
+                // 52 is the script's "another sts is running" code, so the
+                // card explains it the same way.
+                if case .busy = e { r.finish(status: 52, output: "error: \(e.description)") }
+                else { r.finish(status: 1, output: "error: \(e.description)") }
             } catch {
-                r.finish(status: 1, output: "error: could not move \(record.path) aside: \(error.localizedDescription)")
+                r.finish(status: 1, output: "error: \(error.localizedDescription)")
             }
             refresh()
             return
