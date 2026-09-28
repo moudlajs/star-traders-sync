@@ -41,6 +41,10 @@ final class DashboardModel: ObservableObject {
     /// The situation an automatic sync last failed in, so it is not
     /// retried against the very same state until something changes.
     private var autoFailedKey: String?
+    /// A button pressed while a status check was running. Status and every
+    /// action share this Mac's lock, so it runs as soon as the check ends,
+    /// and only if the situation is still the one it was pressed for.
+    private var queued: ActionButton?
     private var activeObserver: NSObjectProtocol?
 
     private var timer: Timer?
@@ -107,8 +111,14 @@ final class DashboardModel: ObservableObject {
                 case .success(let s):
                     self.status = s
                     self.problem = nil
-                    self.considerAutoSync(s)
+                    if let q = self.queued {
+                        self.queued = nil
+                        if q.expected == s.decision { self.tapped(q) }
+                    } else {
+                        self.considerAutoSync(s)
+                    }
                 case .failure(let p):
+                    self.queued = nil
                     self.problem = p
                     // Keep the last good status on screen for a transient
                     // refusal, such as another Mac syncing right now.
@@ -130,6 +140,10 @@ final class DashboardModel: ObservableObject {
     }
 
     func tapped(_ button: ActionButton) {
+        if loading {
+            queued = button
+            return
+        }
         if button.confirmation != nil {
             pending = button
         } else {
@@ -317,10 +331,14 @@ struct DashboardView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { d.refresh() } label: {
-                    Label("Check again", systemImage: "arrow.clockwise")
+                    if d.loading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Check again", systemImage: "arrow.clockwise")
+                    }
                 }
                 .help("Check again")
-                .disabled(d.loading || d.busy)
+                .disabled(d.busy)
 
                 Menu {
                     Toggle("Sync automatically", isOn: $d.autoSync)
@@ -529,9 +547,14 @@ struct SidesStrip: View {
             .padding(.vertical, 12)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.2)))
-            if let at = d.checkedAt {
-                Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
+            Group {
+                if d.loading {
+                    Text("Checking…")
+                } else if let at = d.checkedAt {
+                    Text("Checked \(relative(at))")
+                }
             }
+            .font(.caption).foregroundStyle(.tertiary)
         }
     }
 

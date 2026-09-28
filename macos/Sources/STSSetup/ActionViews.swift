@@ -60,7 +60,9 @@ struct ActionButtons: View {
                 }
             }
             .controlSize(.large)
-            .disabled(d.busy || plan.blockedBecause != nil || d.loading)
+            // Not disabled during a status check: that only dims the button
+            // for a moment. A press then waits for the check (tapped()).
+            .disabled(d.busy || plan.blockedBecause != nil)
             if let why = plan.blockedBecause {
                 Text(why).font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
