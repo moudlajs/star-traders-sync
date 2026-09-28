@@ -23,6 +23,8 @@ final class SyncRecordTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: dir.appendingPathComponent("last-sync.json").path))
         XCTAssertEqual(try String(contentsOf: aside!, encoding: .utf8), "{}", "moved, not rewritten")
         XCTAssertFalse(fm.fileExists(atPath: lockDir.path), "lock released")
+        XCTAssertFalse(fm.fileExists(atPath: dir.appendingPathComponent("local.lock").path),
+                       "pid file removed too, as the script's on_exit does")
     }
 
     func testRefusesWhileALiveStsHoldsTheLock() throws {
@@ -40,6 +42,16 @@ final class SyncRecordTests: XCTestCase {
         try "99999\n".write(to: dir.appendingPathComponent("local.lock"), atomically: true, encoding: .utf8)
         XCTAssertNotNil(try SyncRecord.reset(stateDir: dir, isAlive: { _ in false }))
         XCTAssertFalse(fm.fileExists(atPath: lockDir.path))
+    }
+
+    func testRefusesWhenTheRecordIsNotTheOneShown() throws {
+        try #"{"version": 2, "epoch": 500}"#.write(to: dir.appendingPathComponent("last-sync.json"), atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try SyncRecord.reset(stateDir: dir, expectedEpoch: .some(400))) { e in
+            XCTAssertEqual(e as? SyncRecord.ResetError, .changed)
+        }
+        XCTAssertTrue(fm.fileExists(atPath: dir.appendingPathComponent("last-sync.json").path), "left alone")
+        XCTAssertFalse(fm.fileExists(atPath: lockDir.path), "lock released on refusal too")
+        XCTAssertNotNil(try SyncRecord.reset(stateDir: dir, expectedEpoch: .some(500)), "the one shown: reset")
     }
 
     func testNoRecordIsNotAnError() throws {

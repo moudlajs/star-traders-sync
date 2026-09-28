@@ -60,6 +60,9 @@ public struct ActionButton: Equatable, Identifiable {
     /// The decision this button was offered for. Running it passes this as
     /// --expect-decision, so a stale choice can never run.
     public var expected: SyncStatus.Decision = .inSync
+    /// For resetRecord: the record's epoch as shown (nil for none), so the
+    /// reset refuses if a sync happened since.
+    public var expectedRecordEpoch: Int?
     public let label: String
     public let prominent: Bool
     /// Asked before running; nil runs straight away.
@@ -135,7 +138,10 @@ public enum SyncActions {
                     button: "Reset"))]
         }
 
-        for i in plan.buttons.indices { plan.buttons[i].expected = s.decision }
+        for i in plan.buttons.indices {
+            plan.buttons[i].expected = s.decision
+            plan.buttons[i].expectedRecordEpoch = s.lastSync?.at
+        }
 
         if s.gameRunning {
             plan.blockedBecause = "Star Traders is running. Quit it first; saves are never copied while the game has them open."

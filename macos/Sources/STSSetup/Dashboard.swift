@@ -92,7 +92,7 @@ final class DashboardModel: ObservableObject {
             // resetRecord: the documented manual fix for a diverged state,
             // under the same local lock the script takes.
             do {
-                if let aside = try SyncRecord.reset() {
+                if let aside = try SyncRecord.reset(expectedEpoch: .some(button.expectedRecordEpoch)) {
                     SetupLog.write("action: resetRecord moved the record to \(aside.path)")
                     r.finish(status: 0, output: "")
                 } else {
@@ -105,8 +105,11 @@ final class DashboardModel: ObservableObject {
             } catch let e as SyncRecord.ResetError {
                 // 52 is the script's "another sts is running" code, so the
                 // card explains it the same way.
-                if case .busy = e { r.finish(status: 52, output: "error: \(e.description)") }
-                else { r.finish(status: 1, output: "error: \(e.description)") }
+                switch e {
+                case .busy:    r.finish(status: 52, output: "error: \(e.description)")
+                case .changed: r.finish(status: 64, output: "error: \(e.description)")
+                default:       r.finish(status: 1, output: "error: \(e.description)")
+                }
             } catch {
                 r.finish(status: 1, output: "error: \(error.localizedDescription)")
             }

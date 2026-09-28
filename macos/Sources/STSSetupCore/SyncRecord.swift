@@ -12,12 +12,17 @@ import Foundation
 public enum SyncRecord {
     public enum ResetError: Error, Equatable, CustomStringConvertible {
         case busy(pid: Int32)
+        /// The record is no longer the one the user was shown: something
+        /// synced in the meantime. Nothing was done.
+        case changed
         case io(String)
 
         public var description: String {
             switch self {
             case .busy(let pid):
                 return "The sync tool is running on this Mac right now (pid \(pid)). Wait for it to finish, then try again."
+            case .changed:
+                return "The sync record changed since this was shown, so nothing was reset. Check again."
             case .io(let s):
                 return s
             }
@@ -40,8 +45,14 @@ public enum SyncRecord {
 
     /// Moves last-sync.json to last-sync.json.reset-<epoch>. Returns where
     /// it went, or nil when there was no record. Never deletes anything.
+    ///
+    /// `expectedEpoch` pins it to what the user saw, like --expect-decision
+    /// does for pull and push: the record's epoch as status reported it
+    /// (last_sync.at), or nil for no record. Checked under the lock; a
+    /// different record means a sync happened since, and nothing is done.
     @discardableResult
     public static func reset(stateDir: URL = defaultStateDir, now: Date = Date(),
+                             expectedEpoch: Int?? = .none,
                              isAlive: (Int32) -> Bool = { kill($0, 0) == 0 }) throws -> URL? {
         let fm = FileManager.default
         try? fm.createDirectory(at: stateDir, withIntermediateDirectories: true)
@@ -60,10 +71,21 @@ public enum SyncRecord {
                 throw ResetError.io("Could not take the sync lock at \(lockDir.path).")
             }
         }
-        defer { try? fm.removeItem(at: lockDir) }
+        // Released the way the script's on_exit does it: the directory and
+        // the pid file both.
+        defer {
+            try? fm.removeItem(at: lockDir)
+            try? fm.removeItem(at: lockFile)
+        }
         try? "\(getpid())\n".write(to: lockFile, atomically: false, encoding: .utf8)
 
         let record = stateDir.appendingPathComponent("last-sync.json")
+        if case .some(let expected) = expectedEpoch {
+            let current = (try? Data(contentsOf: record))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                .flatMap { ($0["epoch"] as? NSNumber)?.intValue }
+            if current != expected { throw ResetError.changed }
+        }
         guard fm.fileExists(atPath: record.path) else { return nil }
         let aside = stateDir.appendingPathComponent("last-sync.json.reset-\(Int(now.timeIntervalSince1970))")
         do {
