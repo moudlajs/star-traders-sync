@@ -132,6 +132,11 @@ final class DashboardModel: ObservableObject {
                         self.considerAutoSync(s)
                     }
                 case .failure(let p):
+                    if let q = self.queued {
+                        // Dropping it is the safe choice; say so, rather than
+                        // let the press seem to vanish.
+                        self.notice = "\(q.label) was not started, because of the problem above."
+                    }
                     self.queued = nil
                     self.problem = p
                     // Keep the last good status on screen for a transient
@@ -149,7 +154,9 @@ final class DashboardModel: ObservableObject {
     var active = true
 
     func considerAutoSync(_ s: SyncStatus) {
-        guard active, autoSync, !busy, pending == nil, run == nil,
+        // !loading: a check in flight holds this Mac's lock, and a sync
+        // started now would fail on it and be remembered as a failure.
+        guard active, autoSync, !loading, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
         guard key != autoFailedKey else { return }
@@ -617,6 +624,10 @@ struct ProblemCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.callout)
+            }
+            if let note = d.notice {
+                Text(note).font(.callout).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Button("Try again") { d.refresh() }
