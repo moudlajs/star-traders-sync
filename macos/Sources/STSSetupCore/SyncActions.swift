@@ -173,6 +173,16 @@ public enum SyncActions {
         return b
     }
 
+    /// Whether a button pressed earlier may still run against a fresh
+    /// status: the decision is the one it was pressed for, nothing blocks
+    /// it (game, another Mac), and the fresh plan still offers that action.
+    public static func stillOffered(_ button: ActionButton, for s: SyncStatus) -> Bool {
+        let plan = plan(for: s)
+        return button.expected == s.decision
+            && plan.blockedBecause == nil
+            && plan.buttons.contains { $0.action == button.action }
+    }
+
     /// A key for "the same situation", so a failed automatic sync is not
     /// retried against it over and over: decision plus both fingerprints.
     public static func situationKey(_ s: SyncStatus) -> String {

@@ -105,7 +105,9 @@ final class DashboardModel: ObservableObject {
         // report "a sync is already running". The run's own card says more.
         // Nor while a confirmation is open: the dialog describes the status
         // it was opened for, and the script is pinned to that decision.
-        guard !loading, !busy, pending == nil else { return }
+        // And never while setup is showing (stop() clears active): a run
+        // finishing then must not check a config setup is rewriting.
+        guard active, !loading, !busy, pending == nil else { return }
         loading = true
         let script = self.script
         let layout = self.layout
@@ -125,11 +127,7 @@ final class DashboardModel: ObservableObject {
                         // Only if the fresh status would still offer this very
                         // button, unblocked: same decision, and no game or
                         // other Mac in the way now.
-                        let plan = SyncActions.plan(for: s)
-                        if q.expected == s.decision, plan.blockedBecause == nil,
-                           plan.buttons.contains(where: { $0.action == q.action }) {
-                            self.tapped(q)
-                        }
+                        if SyncActions.stillOffered(q, for: s) { self.tapped(q) }
                     } else {
                         self.considerAutoSync(s)
                     }
@@ -370,6 +368,7 @@ struct DashboardView: View {
                     Button("Open logs") { d.openLogs() }
                     Divider()
                     Button("Run setup again…") { app.showSetup() }
+                        .disabled(d.busy)
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
