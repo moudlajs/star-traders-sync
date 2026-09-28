@@ -40,7 +40,22 @@ final class DashboardModel: ObservableObject {
     }
     /// The situation an automatic sync last failed in, so it is not
     /// retried against the very same state until something changes.
-    private var autoFailedKey: String?
+    private(set) var autoFailedKey: String?
+    private var autoFailedAt: Date?
+    /// A failed automatic sync is not retried against the same situation
+    /// for this long; a network blip then heals on its own.
+    static let autoRetryAfter: TimeInterval = 600
+
+    // Seams for tests: the script calls and the clock. The app uses the
+    // defaults; DashboardModelTests swap in fakes.
+    var fetchStatus: (String) -> Result<SyncStatus, SyncProblem> = { StatusClient.fetch(script: $0) }
+    var runScript: (String, [String], @escaping (String) -> Void) -> Int32 = { script, args, onLine in
+        Shell.stream("/bin/bash", [script] + args, onLine: onLine)
+    }
+    var now: () -> Date = Date.init
+    /// Keeps the app's script current before each check (#101). Tests make
+    /// it a no-op, so they never touch the real Application Support copy.
+    var refreshScript: (InstallLayout) -> Void = { DashboardModel.refreshAppScript(layout: $0, when: "check") }
     /// A button pressed while a status check was running. Status and every
     /// action share this Mac's lock, so it runs as soon as the check ends,
     /// and only if the situation is still the one it was pressed for.
@@ -114,10 +129,14 @@ final class DashboardModel: ObservableObject {
         loading = true
         let script = self.script
         let layout = self.layout
+        // Taken here, called in the detached task: calling the stored
+        // closures through self would run them on the main actor.
+        let fetch = self.fetchStatus
+        let refreshScript = self.refreshScript
         Task.detached {
             // Off the main thread: two file reads, and pgrep.
-            DashboardModel.refreshAppScript(layout: layout, when: "check")
-            let r = StatusClient.fetch(script: script)
+            refreshScript(layout)
+            let r = fetch(script)
             await MainActor.run {
                 self.loading = false
                 self.checkedAt = Date()
@@ -166,7 +185,9 @@ final class DashboardModel: ObservableObject {
         guard active, autoSync, !loading, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
-        guard key != autoFailedKey else { return }
+        if key == autoFailedKey, let at = autoFailedAt, now().timeIntervalSince(at) < Self.autoRetryAfter {
+            return
+        }
         SetupLog.write("automatic: \(b.action.rawValue) for \(s.decision.rawValue)")
         perform(b, automatic: true, situation: key)
     }
@@ -226,9 +247,10 @@ final class DashboardModel: ObservableObject {
         }
 
         SetupLog.write("action: \(action.rawValue) (\(args.joined(separator: " ")))")
+        let run = self.runScript
         Task.detached {
             var output: [String] = []
-            let status = Shell.stream("/bin/bash", [script] + args) { line in
+            let status = run(script, args) { line in
                 output.append(line)
                 Task { @MainActor in r.feed(line) }
             }
@@ -242,6 +264,7 @@ final class DashboardModel: ObservableObject {
                     // Remember a failure so the same state is not retried in
                     // a loop; any change in either side clears it.
                     self.autoFailedKey = status == 0 ? nil : situation
+                    self.autoFailedAt = status == 0 ? nil : self.now()
                 }
                 if status == 0 {
                     if r.progress.gameCrashed {
