@@ -127,7 +127,11 @@ final class DashboardModel: ObservableObject {
                         // Only if the fresh status would still offer this very
                         // button, unblocked: same decision, and no game or
                         // other Mac in the way now.
-                        if SyncActions.stillOffered(q, for: s) { self.tapped(q) }
+                        if SyncActions.stillOffered(q, for: s) {
+                            self.tapped(q)
+                        } else {
+                            self.notice = "\(q.label) was not started: the situation changed. Here it is now."
+                        }
                     } else {
                         self.considerAutoSync(s)
                     }
