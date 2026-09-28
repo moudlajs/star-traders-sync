@@ -113,7 +113,14 @@ final class DashboardModel: ObservableObject {
                     self.problem = nil
                     if let q = self.queued {
                         self.queued = nil
-                        if q.expected == s.decision { self.tapped(q) }
+                        // Only if the fresh status would still offer this very
+                        // button, unblocked: same decision, and no game or
+                        // other Mac in the way now.
+                        let plan = SyncActions.plan(for: s)
+                        if q.expected == s.decision, plan.blockedBecause == nil,
+                           plan.buttons.contains(where: { $0.action == q.action }) {
+                            self.tapped(q)
+                        }
                     } else {
                         self.considerAutoSync(s)
                     }
