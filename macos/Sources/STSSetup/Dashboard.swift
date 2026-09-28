@@ -14,6 +14,13 @@ final class DashboardModel: ObservableObject {
 
     let doctor = DoctorRun()
 
+    /// The action running now, or the last one until dismissed.
+    @Published var run: ActionRun?
+    /// An action waiting for the user to confirm it.
+    @Published var pending: ActionButton?
+
+    var busy: Bool { run.map { !$0.ended } ?? false }
+
     private var timer: Timer?
 
     /// The app's own copy, kept current by Installer.refreshAppScript,
@@ -37,7 +44,11 @@ final class DashboardModel: ObservableObject {
     }
 
     func refresh() {
-        guard !loading else { return }
+        // While sts runs it holds this Mac's lock, and status would only
+        // report "a sync is already running". The run's own card says more.
+        // Nor while a confirmation is open: the dialog describes the status
+        // it was opened for, and the script is pinned to that decision.
+        guard !loading, !busy, pending == nil else { return }
         loading = true
         let script = self.script
         Task.detached {
@@ -57,6 +68,75 @@ final class DashboardModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: actions
+
+    func tapped(_ button: ActionButton) {
+        if button.confirmation != nil {
+            pending = button
+        } else {
+            perform(button)
+        }
+    }
+
+    func perform(_ button: ActionButton) {
+        let action = button.action
+        guard !busy else { return }
+        pending = nil
+        let r = ActionRun(action: action)
+        run = r
+        let script = self.script
+
+        guard let args = action.arguments(expecting: button.expected) else {
+            // resetRecord: the documented manual fix for a diverged state,
+            // under the same local lock the script takes.
+            do {
+                if let aside = try SyncRecord.reset(expectedEpoch: .some(button.expectedRecordEpoch)) {
+                    SetupLog.write("action: resetRecord moved the record to \(aside.path)")
+                    r.finish(status: 0, output: "")
+                } else {
+                    // Not a success: nothing was reset, so say so rather
+                    // than leave the user in the same state with a tick.
+                    let path = SyncRecord.defaultStateDir.appendingPathComponent("last-sync.json").path
+                    SetupLog.write("action: resetRecord found no record at \(path)")
+                    r.finish(status: 1, output: "error: there is no sync record at \(path) to reset")
+                }
+            } catch let e as SyncRecord.ResetError {
+                // 52 is the script's "another sts is running" code, so the
+                // card explains it the same way.
+                switch e {
+                case .busy:    r.finish(status: 52, output: "error: \(e.description)")
+                case .changed: r.finish(status: 64, output: "error: \(e.description)")
+                default:       r.finish(status: 1, output: "error: \(e.description)")
+                }
+            } catch {
+                r.finish(status: 1, output: "error: \(error.localizedDescription)")
+            }
+            refresh()
+            return
+        }
+
+        SetupLog.write("action: \(action.rawValue) (\(args.joined(separator: " ")))")
+        Task.detached {
+            var output: [String] = []
+            let status = Shell.stream("/bin/bash", [script] + args) { line in
+                output.append(line)
+                Task { @MainActor in r.feed(line) }
+            }
+            let all = output.joined(separator: "\n")
+            await MainActor.run {
+                SetupLog.write("action: \(action.rawValue) exited \(status)")
+                r.finish(status: status, output: all)
+                self.objectWillChange.send()
+                self.refresh()
+            }
+        }
+    }
+
+    func dismissRun() {
+        guard !busy else { return }
+        run = nil
     }
 
     func runDoctor() {
@@ -153,6 +233,15 @@ struct DashboardView: View {
                     if let p = d.problem { ProblemCard(problem: p) }
                     if let s = d.status {
                         VerdictCard(status: s)
+                        if d.run == nil || d.run?.ended == true {
+                            ActionButtons(plan: SyncActions.plan(for: s))
+                        }
+                    }
+                    if let r = d.run {
+                        ActivityCard(run: r)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    if let s = d.status {
                         HStack(alignment: .top, spacing: 16) {
                             SideCard(title: "This Mac", subtitle: s.machine, side: s.sides.local)
                             SideCard(title: s.isHub ? "Hub (this Mac)" : "Hub", subtitle: s.hub.host, side: s.sides.hub)
@@ -170,6 +259,15 @@ struct DashboardView: View {
         .onAppear { d.start() }
         .onDisappear { d.stop() }
         .sheet(isPresented: $showDoctor) { DoctorSheet().environmentObject(d) }
+        .alert(d.pending?.confirmation?.title ?? "",
+               isPresented: Binding(get: { d.pending != nil }, set: { if !$0 { d.pending = nil } }),
+               presenting: d.pending) { b in
+            Button(b.confirmation?.button ?? "Continue") { d.perform(b) }
+            Button("Cancel", role: .cancel) { d.pending = nil }
+        } message: { b in
+            Text(b.confirmation?.message ?? "")
+        }
+        .animation(.easeOut(duration: 0.25), value: d.run?.id)
     }
 
     var header: some View {
