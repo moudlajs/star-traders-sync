@@ -78,6 +78,9 @@ final class DashboardModel: ObservableObject {
     /// calls this before it rewrites the config and script.
     func stop() {
         active = false
+        queued = nil
+        pending = nil
+        notice = nil
         timer?.invalidate()
         timer = nil
         if let o = activeObserver {
@@ -169,6 +172,7 @@ final class DashboardModel: ObservableObject {
     }
 
     func tapped(_ button: ActionButton) {
+        guard active else { return }
         if loading {
             queued = button
             return
@@ -182,7 +186,10 @@ final class DashboardModel: ObservableObject {
 
     func perform(_ button: ActionButton, automatic: Bool = false, situation: String? = nil) {
         let action = button.action
-        guard !busy else { return }
+        // The one gate every action passes: nothing starts while setup is
+        // showing, whatever path led here (a queued press, an automatic
+        // sync, a confirmation answered late).
+        guard active, !busy else { return }
         pending = nil
         let r = ActionRun(action: action, automatic: automatic)
         run = r
