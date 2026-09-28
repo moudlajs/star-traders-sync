@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
     let dashboard = DashboardModel()
 
     init() {
+        AppDelegate.dashboard = dashboard
         let layout = InstallLayout()
         let configured = FileManager.default.fileExists(atPath: layout.configFile.path)
         if configured {
@@ -36,8 +37,31 @@ final class AppModel: ObservableObject {
     }
 }
 
+/// Guards quitting while an action runs. The script is a child of this
+/// app: quitting closes its output pipe, and it dies at its next line of
+/// output. During Play that line is "pushing after play", so the saves
+/// would silently never reach the hub.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor static weak var dashboard: DashboardModel?
+
+    @MainActor
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let d = Self.dashboard, d.busy, let run = d.run else { return .terminateNow }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Star Traders Sync is still working"
+        alert.informativeText = run.action == .play
+            ? "If you quit now, your saves are not sent to the hub when you finish playing. Quit the game first and wait for Done, or send them later with the Send button."
+            : "Quitting now stops the sync part way. The sync tool never overwrites without a safety copy, but it may ask you to repair the interrupted sync next time."
+        alert.addButton(withTitle: "Keep syncing")
+        alert.addButton(withTitle: "Quit anyway")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
+    }
+}
+
 @main
 struct StarTradersSyncApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var app = AppModel()
 
     init() {
