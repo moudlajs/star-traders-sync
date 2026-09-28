@@ -29,6 +29,20 @@ final class DashboardModel: ObservableObject {
     /// status until dismissed or the next action.
     @Published var notice: String?
 
+    /// #87: sync by itself when that cannot overwrite anything
+    /// unconfirmed (SyncActions.automatic). On unless switched off.
+    @Published var autoSync: Bool = UserDefaults.standard.object(forKey: "autoSync") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(autoSync, forKey: "autoSync")
+            SetupLog.write("automatic sync \(autoSync ? "on" : "off")")
+            if autoSync, let s = status { considerAutoSync(s) }
+        }
+    }
+    /// The situation an automatic sync last failed in, so it is not
+    /// retried against the very same state until something changes.
+    private var autoFailedKey: String?
+    private var activeObserver: NSObjectProtocol?
+
     private var timer: Timer?
 
     /// The app's own copy, kept current by Installer.refreshAppScript,
@@ -37,6 +51,14 @@ final class DashboardModel: ObservableObject {
 
     func start() {
         refresh()
+        // Coming back to the app is when the user wants to see, and have,
+        // the latest; do not wait for the next minute tick.
+        if activeObserver == nil {
+            activeObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refresh() }
+            }
+        }
         // Cheap enough to poll: status is read-only and takes about a
         // second. Once a minute keeps "last synced" honest without
         // hammering the hub.
@@ -85,6 +107,7 @@ final class DashboardModel: ObservableObject {
                 case .success(let s):
                     self.status = s
                     self.problem = nil
+                    self.considerAutoSync(s)
                 case .failure(let p):
                     self.problem = p
                     // Keep the last good status on screen for a transient
@@ -97,6 +120,15 @@ final class DashboardModel: ObservableObject {
 
     // MARK: actions
 
+    func considerAutoSync(_ s: SyncStatus) {
+        guard autoSync, !busy, pending == nil, run == nil,
+              let b = SyncActions.automatic(for: s) else { return }
+        let key = SyncActions.situationKey(s)
+        guard key != autoFailedKey else { return }
+        SetupLog.write("automatic: \(b.action.rawValue) for \(s.decision.rawValue)")
+        perform(b, automatic: true, situation: key)
+    }
+
     func tapped(_ button: ActionButton) {
         if button.confirmation != nil {
             pending = button
@@ -105,11 +137,11 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    func perform(_ button: ActionButton) {
+    func perform(_ button: ActionButton, automatic: Bool = false, situation: String? = nil) {
         let action = button.action
         guard !busy else { return }
         pending = nil
-        let r = ActionRun(action: action)
+        let r = ActionRun(action: action, automatic: automatic)
         run = r
         notice = nil
         let script = self.script
@@ -156,6 +188,11 @@ final class DashboardModel: ObservableObject {
                 r.finish(status: status, output: all)
                 // A success needs no card: the status shows the result
                 // ("Last synced just now"). A refusal stays until dismissed.
+                if automatic {
+                    // Remember a failure so the same state is not retried in
+                    // a loop; any change in either side clears it.
+                    self.autoFailedKey = status == 0 ? nil : situation
+                }
                 if status == 0 {
                     if r.progress.gameCrashed {
                         self.notice = "The game crashed during your last session. Your saves were still sent to the hub."
@@ -286,6 +323,8 @@ struct DashboardView: View {
                 .disabled(d.loading || d.busy)
 
                 Menu {
+                    Toggle("Sync automatically", isOn: $d.autoSync)
+                    Divider()
                     Button("Health check") {
                         withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = true }
                         d.runDoctor()
@@ -379,6 +418,9 @@ struct RunHero: View {
     }
 
     var headline: String {
+        if run.automatic {
+            return run.action == .pull ? "Fetching the latest saves" : "Sending your saves"
+        }
         switch run.action {
         case .play:
             if run.progress.current >= 3 { return "Sending your saves" }
@@ -389,6 +431,11 @@ struct RunHero: View {
     }
 
     var subtitle: String {
+        if run.automatic {
+            return run.action == .pull
+                ? "Another Mac played since this one synced. Getting its saves, by itself."
+                : "This Mac has new saves. Sending them to the hub, by itself."
+        }
         switch run.action {
         case .play:
             switch run.progress.current {

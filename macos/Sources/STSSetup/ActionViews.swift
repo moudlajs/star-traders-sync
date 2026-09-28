@@ -5,12 +5,15 @@ import SwiftUI
 @MainActor
 final class ActionRun: ObservableObject, Identifiable {
     let action: SyncAction
+    /// Started by the app itself (#87), not by a button.
+    let automatic: Bool
     @Published private(set) var progress: ActionProgress
     @Published private(set) var ended = false
     @Published private(set) var problem: SyncProblem?
 
-    init(action: SyncAction) {
+    init(action: SyncAction, automatic: Bool = false) {
         self.action = action
+        self.automatic = automatic
         self.progress = ActionProgress(action: action)
     }
 
