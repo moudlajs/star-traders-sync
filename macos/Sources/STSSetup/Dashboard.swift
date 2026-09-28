@@ -249,7 +249,12 @@ struct DashboardView: View {
             if d.showingHealth {
                 HealthPage()
             } else {
-                main
+                // Fits in the fixed window in every normal state; only an
+                // unusual pile-up of problem cards scrolls.
+                ViewThatFits(in: .vertical) {
+                    main
+                    ScrollView { main.frame(minHeight: 420) }
+                }
             }
         }
         .frame(width: 480, height: 420)
@@ -292,10 +297,15 @@ struct DashboardView: View {
 
     var main: some View {
         VStack(spacing: 14) {
-            if let p = d.problem {
-                ProblemCard(problem: p)
-            } else if let r = d.run, r.ended, r.problem != nil {
+            // A failed run keeps its own card ("Stopped, nothing was lost",
+            // and how far it got). A status refusal shows too, unless it is
+            // the same problem again: a Play that failed because the hub is
+            // offline is followed by a status check failing the same way.
+            if let r = d.run, r.ended, r.problem != nil {
                 ActivityCard(run: r)
+            }
+            if let p = d.problem, p.code != d.run?.problem?.code {
+                ProblemCard(problem: p)
             }
             Group {
                 if let r = d.run, !r.ended {
