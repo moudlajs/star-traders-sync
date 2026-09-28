@@ -2941,23 +2941,30 @@ cmd_play() {
     say "game running (pid $pid) - waiting for it to exit. Ctrl-C here does not stop the game."
     log INFO play "game started, pid $pid"
 
-    local gone=0
+    # Steam sometimes re-execs the game, so one missing poll is not an
+    # exit: it has to stay gone for three polls in a row. Two-second polls
+    # make that six seconds, well past a re-exec gap, and the first miss is
+    # announced so a watcher (the app) can say the game closed.
+    local gone=0 announced=0
     while :; do
         if pgrep -x "$CFG_GAME_PROCESS_NAME" >/dev/null 2>&1; then
             gone=0
         else
             gone=$((gone + 1))
-            # Steam sometimes re-execs the game; require it to stay gone.
+            if [ "$announced" -eq 0 ]; then
+                say "game closed - making sure it stays closed..."
+                announced=1
+            fi
             [ "$gone" -ge 3 ] && break
         fi
-        sleep 5
+        sleep 2
     done
 
     # Distinguish a clean quit from a crash by looking for a crash report
     # written after we launched. Either way the save still gets pushed.
     # ReportCrash writes the .ips after the process is reaped, so give it a
     # moment rather than racing it.
-    sleep 5
+    sleep 3
     local crash="" report mtime
     for report in "$HOME/Library/Logs/DiagnosticReports/$CFG_GAME_PROCESS_NAME"*; do
         [ -f "$report" ] || continue
