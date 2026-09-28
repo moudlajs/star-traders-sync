@@ -56,6 +56,17 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertNil(SyncActions.plan(for: try status("INSYNC")).blockedBecause)
     }
 
+    func testEveryScriptActionIsPinnedToTheDecisionItWasShownFor() throws {
+        for d in ["HUB_ONLY", "LOCAL_ONLY", "HUB_EMPTY", "LOCAL_EMPTIED", "FIRSTRUN_CONFLICT", "BOTH_CHANGED"] {
+            for b in SyncActions.plan(for: try status(d)).buttons {
+                XCTAssertEqual(b.expected.rawValue, d)
+                guard let args = b.action.arguments(expecting: b.expected), b.action != .play else { continue }
+                XCTAssertEqual(args.last, "--expect-decision=\(d)", "\(d): \(b.label) could run against a changed state")
+            }
+        }
+        XCTAssertEqual(SyncAction.play.arguments(expecting: .inSync), ["play"], "play takes no expectation")
+    }
+
     func testArgumentsAreTheCLIs() {
         XCTAssertEqual(SyncAction.keepHub.arguments, ["pull", "--force=hub"])
         XCTAssertEqual(SyncAction.keepLocal.arguments, ["push", "--force=local"])

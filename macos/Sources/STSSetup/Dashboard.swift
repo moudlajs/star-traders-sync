@@ -46,7 +46,9 @@ final class DashboardModel: ObservableObject {
     func refresh() {
         // While sts runs it holds this Mac's lock, and status would only
         // report "a sync is already running". The run's own card says more.
-        guard !loading, !busy else { return }
+        // Nor while a confirmation is open: the dialog describes the status
+        // it was opened for, and the script is pinned to that decision.
+        guard !loading, !busy, pending == nil else { return }
         loading = true
         let script = self.script
         Task.detached {
@@ -74,18 +76,19 @@ final class DashboardModel: ObservableObject {
         if button.confirmation != nil {
             pending = button
         } else {
-            perform(button.action)
+            perform(button)
         }
     }
 
-    func perform(_ action: SyncAction) {
+    func perform(_ button: ActionButton) {
+        let action = button.action
         guard !busy else { return }
         pending = nil
         let r = ActionRun(action: action)
         run = r
         let script = self.script
 
-        guard let args = action.arguments else {
+        guard let args = action.arguments(expecting: button.expected) else {
             // resetRecord: the documented manual fix for a diverged state,
             // under the same local lock the script takes.
             do {
@@ -249,7 +252,7 @@ struct DashboardView: View {
         .alert(d.pending?.confirmation?.title ?? "",
                isPresented: Binding(get: { d.pending != nil }, set: { if !$0 { d.pending = nil } }),
                presenting: d.pending) { b in
-            Button(b.confirmation?.button ?? "Continue") { d.perform(b.action) }
+            Button(b.confirmation?.button ?? "Continue") { d.perform(b) }
             Button("Cancel", role: .cancel) { d.pending = nil }
         } message: { b in
             Text(b.confirmation?.message ?? "")

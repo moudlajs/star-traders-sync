@@ -18,8 +18,16 @@ public enum SyncAction: String, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
-    /// Arguments for the script; nil for resetRecord, which is not a
-    /// script command.
+    /// Arguments for the script, pinned to the decision the user saw: the
+    /// script re-checks it under the hub lock and refuses (64) if another
+    /// Mac changed things in the meantime. Play has no such flag; its pull
+    /// never forces, so it cannot overwrite anything unconfirmed. nil for
+    /// resetRecord, which is not a script command.
+    public func arguments(expecting decision: SyncStatus.Decision) -> [String]? {
+        guard let base = arguments else { return nil }
+        return self == .play ? base : base + ["--expect-decision=\(decision.rawValue)"]
+    }
+
     public var arguments: [String]? {
         switch self {
         case .play:        return ["play"]
@@ -49,6 +57,9 @@ public enum SyncAction: String, CaseIterable, Identifiable {
 /// A button on the status card.
 public struct ActionButton: Equatable, Identifiable {
     public let action: SyncAction
+    /// The decision this button was offered for. Running it passes this as
+    /// --expect-decision, so a stale choice can never run.
+    public var expected: SyncStatus.Decision = .inSync
     public let label: String
     public let prominent: Bool
     /// Asked before running; nil runs straight away.
@@ -123,6 +134,8 @@ public enum SyncActions {
                     message: "No save is copied or deleted. The record of this Mac's last sync is moved aside, and you are then asked which saves to keep.",
                     button: "Reset"))]
         }
+
+        for i in plan.buttons.indices { plan.buttons[i].expected = s.decision }
 
         if s.gameRunning {
             plan.blockedBecause = "Star Traders is running. Quit it first; saves are never copied while the game has them open."
