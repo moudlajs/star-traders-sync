@@ -252,7 +252,7 @@ struct DashboardView: View {
                 main
             }
         }
-        .frame(width: 480, height: 470)
+        .frame(width: 480, height: 420)
         .navigationTitle("Star Traders Sync")
         .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
         .toolbar {
@@ -307,8 +307,11 @@ struct DashboardView: View {
                 }
             }
             .frame(maxHeight: .infinity)
-            if let s = d.status {
+            if let s = d.status, !d.busy {
+                // Its own height, never the leftover space. Hidden while an
+                // action runs, whose steps need the room more.
                 SidesStrip(status: s)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 24)
