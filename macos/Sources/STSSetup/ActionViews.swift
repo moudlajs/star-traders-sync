@@ -157,3 +157,38 @@ struct ActivityCard: View {
         }
     }
 }
+
+/// The steps of a running action, compact, for the centre of the window.
+struct StepList: View {
+    @ObservedObject var run: ActionRun
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(Array(run.action.stages.enumerated()), id: \.offset) { i, stage in
+                let s = state(i)
+                HStack(spacing: 10) {
+                    Group {
+                        switch s {
+                        case .pending: Image(systemName: "circle").foregroundStyle(.tertiary)
+                        case .running: ProgressView().controlSize(.small)
+                        case .done:    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        case .failed:  Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                        }
+                    }
+                    .frame(width: 18)
+                    Text(stage)
+                        .fontWeight(s == .running ? .semibold : .regular)
+                        .foregroundStyle(s == .pending ? .secondary : .primary)
+                }
+            }
+        }
+        .fixedSize()
+        .animation(.easeOut(duration: 0.2), value: run.progress)
+    }
+
+    func state(_ i: Int) -> InstallStage.State {
+        if i < run.progress.current { return .done }
+        if i == run.progress.current { return run.ended ? .done : .running }
+        return .pending
+    }
+}

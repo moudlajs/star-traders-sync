@@ -21,6 +21,9 @@ final class DashboardModel: ObservableObject {
 
     var busy: Bool { run.map { !$0.ended } ?? false }
 
+    /// The health check opens inside the main window, not as a sheet.
+    @Published var showingHealth = false
+
     private var timer: Timer?
 
     /// The app's own copy, kept current by Installer.refreshAppScript,
@@ -128,6 +131,11 @@ final class DashboardModel: ObservableObject {
             await MainActor.run {
                 SetupLog.write("action: \(action.rawValue) exited \(status)")
                 r.finish(status: status, output: all)
+                // A success needs no card: the status shows the result
+                // ("Last synced just now"). A refusal stays until dismissed.
+                if status == 0 {
+                    withAnimation(.easeOut(duration: 0.25)) { self.run = nil }
+                }
                 self.objectWillChange.send()
                 self.refresh()
             }
@@ -222,46 +230,20 @@ func relative(_ date: Date?) -> String {
 struct DashboardView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var d: DashboardModel
-    @State private var showDoctor = false
 
     var body: some View {
-        // A fixed-size window: nothing it shows changes its size. The
-        // bottom slot holds either both sides or, while an action runs,
-        // its steps, crossfading in the same space.
-        VStack(spacing: 0) {
-            if let p = d.problem {
-                ProblemCard(problem: p).padding(.bottom, 12)
+        // A fixed-size window. The centre holds the status, or while an
+        // action runs, what is happening and its steps; both sides sit in
+        // a strip at the bottom. The health check replaces all of it, in
+        // the same window, with a Back button.
+        Group {
+            if d.showingHealth {
+                HealthPage()
+            } else {
+                main
             }
-            Group {
-                if let r = d.run, !r.ended {
-                    RunHero(run: r)
-                } else if let s = d.status {
-                    Hero(status: s)
-                } else if d.problem == nil {
-                    ProgressView().controlSize(.regular)
-                }
-            }
-            .frame(maxHeight: .infinity)
-
-            // Scrolls only if a long refusal would not fit; otherwise it is
-            // just the fixed slot.
-            ScrollView {
-                Group {
-                    if let r = d.run {
-                        ActivityCard(run: r)
-                    } else if let s = d.status {
-                        SidesStrip(status: s)
-                    }
-                }
-                .transition(.opacity)
-            }
-            .scrollIndicators(.automatic)
-            .frame(height: 176)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 20)
-        .frame(width: 480, height: 540)
+        .frame(width: 480, height: 470)
         .navigationTitle("Star Traders Sync")
         .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
         .toolbar {
@@ -273,7 +255,10 @@ struct DashboardView: View {
                 .disabled(d.loading || d.busy)
 
                 Menu {
-                    Button("Health check…") { showDoctor = true; d.runDoctor() }
+                    Button("Health check") {
+                        withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = true }
+                        d.runDoctor()
+                    }
                     Button("Open logs") { d.openLogs() }
                     Divider()
                     Button("Run setup again…") { app.showSetup() }
@@ -285,7 +270,6 @@ struct DashboardView: View {
         }
         .onAppear { d.start() }
         .onDisappear { d.stop() }
-        .sheet(isPresented: $showDoctor) { DoctorSheet().environmentObject(d) }
         .alert(d.pending?.confirmation?.title ?? "",
                isPresented: Binding(get: { d.pending != nil }, set: { if !$0 { d.pending = nil } }),
                presenting: d.pending) { b in
@@ -295,6 +279,33 @@ struct DashboardView: View {
             Text(b.confirmation?.message ?? "")
         }
         .animation(.easeOut(duration: 0.25), value: d.run?.id)
+    }
+
+    var main: some View {
+        VStack(spacing: 14) {
+            if let p = d.problem {
+                ProblemCard(problem: p)
+            } else if let r = d.run, r.ended, r.problem != nil {
+                ActivityCard(run: r)
+            }
+            Group {
+                if let r = d.run, !r.ended {
+                    RunHero(run: r)
+                } else if let s = d.status {
+                    Hero(status: s)
+                } else if d.problem == nil {
+                    ProgressView().controlSize(.regular)
+                }
+            }
+            .frame(maxHeight: .infinity)
+            if let s = d.status {
+                SidesStrip(status: s)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
+        .transition(.opacity)
     }
 }
 
@@ -317,6 +328,8 @@ struct RunHero: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
                 .fixedSize(horizontal: false, vertical: true)
+            StepList(run: run)
+                .padding(.top, 6)
         }
         .frame(maxWidth: .infinity)
     }
@@ -471,27 +484,32 @@ struct ProblemCard: View {
     }
 }
 
-struct DoctorSheet: View {
+/// The health check, inside the main window.
+struct HealthPage: View {
     @EnvironmentObject var d: DashboardModel
-    @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Health check").font(.title2).bold()
-            // Fits its content; scrolls only when an expanded problem makes
-            // it taller than the screen allows.
-            ViewThatFits(in: .vertical) {
-                DoctorProgressView(run: d.doctor)
-                ScrollView { DoctorProgressView(run: d.doctor).padding(.trailing, 8) }
-            }
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = false }
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Check again") { d.runDoctor() }.disabled(d.doctor.running)
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Check again") { d.runDoctor() }
+                    .disabled(d.doctor.running)
+            }
+            Text("Health check").font(.title2).bold()
+            ScrollView {
+                DoctorProgressView(run: d.doctor)
+                    .padding(.trailing, 8)
             }
         }
-        .padding(24)
-        .frame(width: 520)
-        .frame(maxHeight: 640)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .transition(.opacity)
     }
 }
