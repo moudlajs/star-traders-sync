@@ -16,5 +16,8 @@ let package = Package(
         .target(name: "STSSetupCore"),
         .executableTarget(name: "STSSetup", dependencies: ["STSSetupCore"]),
         .testTarget(name: "STSSetupCoreTests", dependencies: ["STSSetupCore"]),
+        // The app's own state machine (DashboardModel): what starts when,
+        // with the script and clock replaced by fakes.
+        .testTarget(name: "STSSetupTests", dependencies: ["STSSetup", "STSSetupCore"]),
     ]
 )
