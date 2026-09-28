@@ -67,6 +67,23 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertEqual(SyncAction.play.arguments(expecting: .inSync), ["play"], "play takes no expectation")
     }
 
+    /// The app must never send a flag its bundled script does not accept:
+    /// that fails every action button with exit 2. Every flag the actions
+    /// can pass is checked against the script's parse_args.
+    func testTheScriptAcceptsEveryFlagTheAppSends() throws {
+        let script = try String(contentsOf: InstallerTests.repo.appendingPathComponent("bin/star-traders-sync"), encoding: .utf8)
+        var flags = Set<String>()
+        for a in SyncAction.allCases {
+            for arg in a.arguments(expecting: .hubOnly) ?? [] where arg.hasPrefix("--") {
+                flags.insert(arg.contains("=") && arg.hasPrefix("--expect-decision") ? "--expect-decision=*)" : arg + ")")
+            }
+        }
+        XCTAssertTrue(flags.contains("--expect-decision=*)"))
+        for f in flags {
+            XCTAssertTrue(script.contains(f), "the script does not accept \(f.dropLast()), which the app sends")
+        }
+    }
+
     func testArgumentsAreTheCLIs() {
         XCTAssertEqual(SyncAction.keepHub.arguments, ["pull", "--force=hub"])
         XCTAssertEqual(SyncAction.keepLocal.arguments, ["push", "--force=local"])
