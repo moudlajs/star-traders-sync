@@ -226,29 +226,33 @@ struct DashboardView: View {
     @State private var showDetails = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                if let p = d.problem {
-                    ProblemCard(problem: p)
-                }
-                if let s = d.status {
-                    Hero(status: s)
-                } else if d.problem == nil {
-                    ProgressView().controlSize(.regular).padding(.vertical, 60)
-                }
-                if let r = d.run {
-                    ActivityCard(run: r)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-                if let s = d.status {
-                    details(s)
-                }
+        // No scroll view: the window is exactly as tall as this, and grows
+        // or shrinks with it (details, a running action), so nothing is
+        // ever cut off behind a scroll bar.
+        VStack(spacing: 20) {
+            if let p = d.problem {
+                ProblemCard(problem: p)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 16)
-            .frame(maxWidth: .infinity)
+            if let r = d.run, !r.ended {
+                RunHero(run: r)
+            } else if let s = d.status {
+                Hero(status: s)
+            } else if d.problem == nil {
+                ProgressView().controlSize(.regular).padding(.vertical, 60)
+            }
+            if let r = d.run {
+                ActivityCard(run: r)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            if let s = d.status, !d.busy {
+                details(s)
+            }
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 18)
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
         .navigationTitle("Star Traders Sync")
         .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
         .toolbar {
@@ -313,6 +317,52 @@ struct DashboardView: View {
                     Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
                 }
             }
+        }
+    }
+}
+
+/// The centre of the window while an action runs: what is happening now,
+/// in place of a status that is about to change.
+struct RunHero: View {
+    @ObservedObject var run: ActionRun
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: run.action == .play ? "gamecontroller.fill" : "arrow.triangle.2.circlepath")
+                .font(.system(size: 50, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.blue)
+                .padding(.top, 8)
+            Text(headline)
+                .font(.title2.weight(.semibold))
+            Text(subtitle)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    var headline: String {
+        switch run.action {
+        case .play:        return run.progress.current >= 3 ? "Sending your saves" : "Playing Star Traders"
+        case .resetRecord: return "Resetting"
+        default:           return "Syncing"
+        }
+    }
+
+    var subtitle: String {
+        switch run.action {
+        case .play:
+            switch run.progress.current {
+            case 0:  return "Getting the latest saves from the hub first."
+            case 1:  return "Starting the game."
+            case 2:  return "Have fun. When you quit the game, your saves are sent to the hub by themselves. Keep this app open until then."
+            default: return "Almost done. Your saves are on their way to the hub."
+            }
+        default:
+            return "This takes a few seconds. Every overwrite keeps a safety copy first."
         }
     }
 }

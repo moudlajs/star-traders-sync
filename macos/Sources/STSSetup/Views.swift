@@ -90,9 +90,8 @@ struct RootView: View {
         } else {
             // Compact: one status, one button. Grows for details and the
             // activity card, and can be widened, never needs to be tall.
+            // Fixed width, height taken from the content (see DashboardView).
             DashboardView()
-                .frame(minWidth: 460, idealWidth: 500, maxWidth: 760,
-                       minHeight: 420, idealHeight: 460, maxHeight: 900)
         }
     }
 }

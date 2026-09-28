@@ -77,7 +77,7 @@ struct ActivityCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(title).font(.headline)
+                Text(title).font(.headline).foregroundStyle(run.ended ? .primary : .secondary)
                 Spacer()
                 if run.ended {
                     Button { withAnimation { d.dismissRun() } } label: {
@@ -120,12 +120,8 @@ struct ActivityCard: View {
         // Every refusal in the script happens before anything is
         // overwritten, which is what makes this promise true.
         if run.problem != nil { return "Stopped, nothing was lost" }
-        if run.ended { return "Done" }
-        switch run.action {
-        case .play:        return "Playing Star Traders"
-        case .resetRecord: return "Resetting"
-        default:           return "Syncing"
-        }
+        if run.ended { return run.action == .play ? "Played and synced" : "Done" }
+        return "Steps"
     }
 
     func state(_ i: Int) -> InstallStage.State {
@@ -153,11 +149,6 @@ struct ActivityCard: View {
                 Text(stage)
                     .fontWeight(s == .running ? .semibold : .regular)
                     .foregroundStyle(s == .pending ? .secondary : .primary)
-                if run.action == .play && i == 2 && s == .running {
-                    Text("Have fun. When you quit the game, your saves are sent to the hub by themselves. Keep this app open until then.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 if run.action == .play && i == 2 && run.progress.gameCrashed {
                     Text("The game crashed. Your saves are still sent to the hub.")
                         .font(.callout).foregroundStyle(.orange)
