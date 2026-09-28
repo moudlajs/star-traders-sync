@@ -24,6 +24,11 @@ final class DashboardModel: ObservableObject {
     /// The health check opens inside the main window, not as a sheet.
     @Published var showingHealth = false
 
+    /// Something worth knowing about a run that otherwise succeeded, such
+    /// as the game crashing (the saves were still sent). Shown under the
+    /// status until dismissed or the next action.
+    @Published var notice: String?
+
     private var timer: Timer?
 
     /// The app's own copy, kept current by Installer.refreshAppScript,
@@ -89,6 +94,7 @@ final class DashboardModel: ObservableObject {
         pending = nil
         let r = ActionRun(action: action)
         run = r
+        notice = nil
         let script = self.script
 
         guard let args = action.arguments(expecting: button.expected) else {
@@ -134,6 +140,9 @@ final class DashboardModel: ObservableObject {
                 // A success needs no card: the status shows the result
                 // ("Last synced just now"). A refusal stays until dismissed.
                 if status == 0 {
+                    if r.progress.gameCrashed {
+                        self.notice = "The game crashed during your last session. Your saves were still sent to the hub."
+                    }
                     withAnimation(.easeOut(duration: 0.25)) { self.run = nil }
                 }
                 self.objectWillChange.send()
@@ -330,6 +339,11 @@ struct RunHero: View {
                 .fixedSize(horizontal: false, vertical: true)
             StepList(run: run)
                 .padding(.top, 6)
+            if run.progress.gameCrashed {
+                Label("The game crashed. Your saves are still sent to the hub.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -400,6 +414,18 @@ struct Hero: View {
                 }
                 if status.hubLock != nil {
                     Label("Another Mac is syncing right now", systemImage: "lock")
+                }
+                if let note = d.notice {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(note).multilineTextAlignment(.leading)
+                        Button { d.notice = nil } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless)
+                            .help("Dismiss")
+                    }
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: 400)
+                    .padding(.top, 4)
                 }
             }
             .font(.callout)
