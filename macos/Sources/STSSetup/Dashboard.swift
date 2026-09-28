@@ -92,9 +92,16 @@ final class DashboardModel: ObservableObject {
             // resetRecord: the documented manual fix for a diverged state,
             // under the same local lock the script takes.
             do {
-                let aside = try SyncRecord.reset()
-                SetupLog.write("action: resetRecord moved the record to \(aside?.path ?? "nowhere, there was none")")
-                r.finish(status: 0, output: "")
+                if let aside = try SyncRecord.reset() {
+                    SetupLog.write("action: resetRecord moved the record to \(aside.path)")
+                    r.finish(status: 0, output: "")
+                } else {
+                    // Not a success: nothing was reset, so say so rather
+                    // than leave the user in the same state with a tick.
+                    let path = SyncRecord.defaultStateDir.appendingPathComponent("last-sync.json").path
+                    SetupLog.write("action: resetRecord found no record at \(path)")
+                    r.finish(status: 1, output: "error: there is no sync record at \(path) to reset")
+                }
             } catch let e as SyncRecord.ResetError {
                 // 52 is the script's "another sts is running" code, so the
                 // card explains it the same way.

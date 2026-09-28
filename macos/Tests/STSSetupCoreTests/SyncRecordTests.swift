@@ -47,6 +47,15 @@ final class SyncRecordTests: XCTestCase {
         XCTAssertNil(try SyncRecord.reset(stateDir: dir))
     }
 
+    func testStateDirResolvesLikeTheScript() {
+        XCTAssertEqual(SyncRecord.stateDir(environment: [:], home: "/Users/d").path,
+                       "/Users/d/.local/state/star-traders-sync")
+        XCTAssertEqual(SyncRecord.stateDir(environment: ["XDG_STATE_HOME": ""], home: "/Users/d").path,
+                       "/Users/d/.local/state/star-traders-sync", "empty counts as unset, like ${:-}")
+        XCTAssertEqual(SyncRecord.stateDir(environment: ["XDG_STATE_HOME": "/x/state"], home: "/Users/d").path,
+                       "/x/state/star-traders-sync")
+    }
+
     /// The lock paths must be the script's, or the two would not exclude
     /// each other at all.
     func testUsesTheScriptsLockPaths() throws {

@@ -25,9 +25,17 @@ public enum SyncRecord {
     }
 
     public static var defaultStateDir: URL {
-        // The app is never launched with XDG_STATE_HOME set; this is the
-        // script's default for the same user.
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".local/state/star-traders-sync")
+        stateDir(environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// The script's STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$PROG",
+    /// resolved the same way: an unset or empty XDG_STATE_HOME falls back.
+    /// Pull, push and play inherit this environment, so reset must too, or
+    /// it would lock and edit a directory the script never uses.
+    public static func stateDir(environment env: [String: String],
+                                home: String = NSHomeDirectory()) -> URL {
+        let base = env["XDG_STATE_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.local/state"
+        return URL(fileURLWithPath: base).appendingPathComponent("star-traders-sync")
     }
 
     /// Moves last-sync.json to last-sync.json.reset-<epoch>. Returns where
