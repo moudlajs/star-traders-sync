@@ -116,13 +116,11 @@ struct ActivityCard: View {
         .animation(.easeOut(duration: 0.2), value: run.progress)
     }
 
-    var title: String {
-        // Every refusal in the script happens before anything is
-        // overwritten, which is what makes this promise true.
-        if run.problem != nil { return "Stopped, nothing was lost" }
-        if run.ended { return run.action == .play ? "Played and synced" : "Done" }
-        return "Steps"
-    }
+    /// This card is only shown for a run that ended with a refusal; a
+    /// success clears itself and the status says the result. Every refusal
+    /// in the script happens before anything is overwritten, which is what
+    /// makes this title true.
+    var title: String { "Stopped, nothing was lost" }
 
     func state(_ i: Int) -> InstallStage.State {
         if i < run.progress.current { return .done }

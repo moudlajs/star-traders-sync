@@ -101,6 +101,20 @@ final class SyncStatusTests: XCTestCase {
         XCTAssertEqual(p.code, -1)
     }
 
+    func testAStatusProblemIsNotShownTwice() {
+        let offline = SyncProblem.from(code: 25, stderr: "")
+        let lock = SyncProblem.from(code: 50, stderr: "")
+        XCTAssertFalse(SyncProblem.showStatusProblem(offline, besideRunProblem: offline), "the same refusal twice")
+        XCTAssertTrue(SyncProblem.showStatusProblem(lock, besideRunProblem: offline), "a different one is shown")
+        XCTAssertTrue(SyncProblem.showStatusProblem(offline, besideRunProblem: nil), "no failed run")
+        XCTAssertFalse(SyncProblem.showStatusProblem(nil, besideRunProblem: offline))
+    }
+
+    func testLockHolderIsTheMachineName() {
+        XCTAssertEqual(SyncProblem.lockHolder("workmac 4242 1790000000 "), "workmac")
+        XCTAssertNil(SyncProblem.lockHolder(nil))
+    }
+
     func testConflictCodesNeedAChoice() {
         for c: Int32 in [60, 61, 62] { XCTAssertTrue(SyncProblem.from(code: c, stderr: "").needsChoice) }
         for c: Int32 in [25, 40, 52] { XCTAssertFalse(SyncProblem.from(code: c, stderr: "").needsChoice) }

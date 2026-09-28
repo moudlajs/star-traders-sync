@@ -304,7 +304,7 @@ struct DashboardView: View {
             if let r = d.run, r.ended, r.problem != nil {
                 ActivityCard(run: r)
             }
-            if let p = d.problem, p.code != d.run?.problem?.code {
+            if SyncProblem.showStatusProblem(d.problem, besideRunProblem: d.run?.problem), let p = d.problem {
                 ProblemCard(problem: p)
             }
             Group {
@@ -426,7 +426,8 @@ struct Hero: View {
                     Label("Star Traders is running", systemImage: "gamecontroller")
                 }
                 if status.hubLock != nil {
-                    Label("Another Mac is syncing right now", systemImage: "lock")
+                    Label("\(SyncProblem.lockHolder(status.hubLock) ?? "Another Mac") is syncing right now",
+                          systemImage: "lock")
                 }
                 if let note = d.notice {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
