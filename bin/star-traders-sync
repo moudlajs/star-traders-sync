@@ -55,6 +55,7 @@ readonly EX_CONFLICT=60            # both sides changed since last sync
 readonly EX_CONFLICT_FIRSTRUN=61   # first run, both sides non-empty
 readonly EX_HUB_EMPTY=62           # hub empty, explicit first push needed
 readonly EX_SNAPSHOT=63            # snapshot failed, so no overwrite allowed
+readonly EX_STATE_CHANGED=64       # --expect-decision no longer true; nothing done
 
 readonly EX_BACKUP_NOT_MOUNTED=70  # backup volume not mounted
 readonly EX_BACKUP_NOT_HUB=71      # sts backup run off the hub host
@@ -75,6 +76,7 @@ OPT_FORCE=""          # "", "local" or "hub"
 OPT_OFFLINE_OK=0
 OPT_FIX=0
 OPT_JSON=0            # status only: one JSON object on stdout, see status_json
+OPT_EXPECT=""         # pull/push: refuse unless this is still the decision
 COMMAND=""
 
 IS_HUB=0              # 1 when this machine is the hub host
@@ -2531,16 +2533,7 @@ cmd_status() {
     local lcount hcount decision
     lcount="$(printf '%s' "$lman" | grep -c . || true)"; lcount="${lcount:-0}"
     hcount="$(printf '%s' "$hman" | grep -c . || true)"; hcount="${hcount:-0}"
-    # pull and push both check an emptied side BEFORE consulting decide(),
-    # and refuse there whatever it says. Mirror those guards, or status
-    # would report "pull copies the hub's changes" for a wiped hub.
-    if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then
-        decision="HUB_EMPTY"          # pull refuses (62); push needs --force=local
-    elif [ "$lcount" -eq 0 ] && [ "$hcount" -gt 0 ] && [ "$state" != "FIRSTRUN" ]; then
-        decision="LOCAL_EMPTIED"      # push refuses (61); pull needs --force=hub
-    else
-        decision="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
-    fi
+    decision="$(effective_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
 
     local lockinfo gp
     lockinfo="$(hub_exec_args 'cat "$1/owner" 2>/dev/null | head -3 | tr "\n" " "' "$(hub_lock_path)" 2>/dev/null || true)"
@@ -2636,6 +2629,34 @@ decide() {
     printf 'DIVERGED_STATE'
 }
 
+# What a sync would actually do: decide(), behind the emptied-side guards
+# that pull and push apply before consulting it. status reports this, and
+# --expect-decision compares against it, so the two cannot disagree.
+effective_decision() {
+    local lfp="$1" hfp="$2" lcount="$3" hcount="$4" state="$5"
+    if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then
+        printf 'HUB_EMPTY'        # pull refuses (62); push needs --force=local
+    elif [ "$lcount" -eq 0 ] && [ "$hcount" -gt 0 ] && [ "$state" != "FIRSTRUN" ]; then
+        printf 'LOCAL_EMPTIED'    # push refuses (61); pull needs --force=hub
+    else
+        decide "$lfp" "$hfp" "$lcount" "$hcount" "$state"
+    fi
+}
+
+# --expect-decision: the caller confirmed an action against a decision it
+# saw earlier. Checked after the hub lock is taken and both sides are read,
+# so nothing can change between this check and the transfer.
+check_expected_decision() {
+    [ -n "$OPT_EXPECT" ] || return 0
+    local now
+    now="$(effective_decision "$@")"
+    if [ "$now" != "$OPT_EXPECT" ]; then
+        die $EX_STATE_CHANGED "$COMMAND" \
+            "the saves changed since this was chosen: it was $OPT_EXPECT, it is now $now. Nothing was done - check again and choose."
+    fi
+    log INFO "$COMMAND" "expected decision $OPT_EXPECT still holds"
+}
+
 # --dry-run prints the real rsync plan for BOTH directions and touches nothing.
 cmd_dry_run_plan() {
     local src dst e
@@ -2689,6 +2710,7 @@ cmd_pull() {
     state="$(state_read)"
     verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
     log INFO pull "verdict=$verdict local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
+    check_expected_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state"
 
     # Never let an empty hub empty this machine. Not overridable: there is
     # no situation where copying nothing over real saves is what you meant.
@@ -2773,6 +2795,7 @@ cmd_push() {
     state="$(state_read)"
     verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
     log INFO push "verdict=$verdict local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
+    check_expected_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state"
 
     # An emptied hub is a seed situation regardless of the state file. It
     # used to report "only the HUB changed - pushing would discard those
@@ -3209,6 +3232,10 @@ FLAGS
   --fix            with 'doctor', apply the repairs that are safe, reversible
                    and idempotent. Never accepts a host key, changes system
                    settings, or grants permissions - those it explains.
+  --expect-decision=DECISION
+                   with 'pull' or 'push': refuse (64), doing nothing, unless
+                   the decision 'status --json' reports is still DECISION.
+                   Checked under the hub lock. For confirming a choice.
   --json           with 'status', print one JSON object on stdout and send
                    every other message to stderr. For scripts and the app.
                    A refusal keeps its exit code and prints no JSON.
@@ -3251,6 +3278,7 @@ EXIT CODES
   33  rsync exited non-zero (its own code and stderr are printed)
   34  out of disk space on one side
   63  snapshot failed or was incomplete, so nothing was overwritten
+  64  --expect-decision no longer holds: the saves changed, nothing was done
 
   Game and concurrency
   40  the game is running on this machine
@@ -3289,6 +3317,13 @@ parse_args() {
             --offline-ok) OPT_OFFLINE_OK=1 ;;
             --fix)        OPT_FIX=1 ;;
             --json)       OPT_JSON=1 ;;
+            --expect-decision=*)
+                OPT_EXPECT="${1#--expect-decision=}"
+                case "$OPT_EXPECT" in
+                    ''|*[!A-Z_]*)
+                        printf 'error: --expect-decision takes a decision name such as HUB_ONLY, got "%s"\n' "$OPT_EXPECT" >&2
+                        exit $EX_USAGE ;;
+                esac ;;
             --force=local) OPT_FORCE="local" ;;
             --force=hub)   OPT_FORCE="hub" ;;
             --force=*)
@@ -3324,6 +3359,10 @@ parse_args() {
     if [ "$OPT_FIX" -eq 1 ] && [ "$COMMAND" != "doctor" ]; then
         printf 'error: --fix only applies to "doctor".\n' >&2
         printf 'Use:  %s doctor --fix\n' "$PROG" >&2
+        exit $EX_USAGE
+    fi
+    if [ -n "$OPT_EXPECT" ] && [ "$COMMAND" != "pull" ] && [ "$COMMAND" != "push" ]; then
+        printf 'error: --expect-decision only applies to "pull" and "push".\n' >&2
         exit $EX_USAGE
     fi
     if [ "$OPT_JSON" -eq 1 ] && [ "$COMMAND" != "status" ]; then

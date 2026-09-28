@@ -677,6 +677,29 @@ check "  and --force=hub really does not override it"   60 "$STS" pull --force=h
 check "  text says --force does not help"                0 sh -c '"$1" status 2>/dev/null | grep -q "does not override"' _ "$STS"
 
 # --------------------------------------------------------------------------
+section "--expect-decision (a confirmed choice cannot run against a changed state)"
+newcase expect
+"$STS" push --force=local >/dev/null 2>&1
+check "status and --expect-decision share one decision"  0 test "$(jget decision)" = INSYNC
+check "matching expectation: pull runs"                  0 "$STS" pull --expect-decision=INSYNC
+printf 'theirs\n' > "$CASE/hub/game_1.db"
+HUB_BEFORE="$(cat "$CASE/hub/game_1.db")"; LOCAL_BEFORE="$(cat "$CASE/local/game_1.db")"
+# The app confirmed "hub is empty, send mine" earlier; since then another
+# machine pushed. The stale --force must not run.
+check "stale expectation: push --force=local refuses"   64 "$STS" push --force=local --expect-decision=HUB_EMPTY
+check "  and the hub was not touched"                    0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
+check "stale expectation: pull --force=hub refuses"     64 "$STS" pull --force=hub --expect-decision=LOCAL_ONLY
+check "  and this machine was not touched"               0 test "$(cat "$CASE/local/game_1.db")" = "$LOCAL_BEFORE"
+check "  and the hub lock was released"                  0 "$STS" status
+check "current expectation: pull runs"                   0 "$STS" pull --expect-decision=HUB_ONLY
+check "  and brought the hub's change"                   0 test "$(cat "$CASE/local/game_1.db")" = "$HUB_BEFORE"
+rm -f "$CASE/hub"/*.db "$CASE/hub"/*.json
+check "emptied hub is expected as HUB_EMPTY"             0 "$STS" push --force=local --expect-decision=HUB_EMPTY
+check "--expect-decision is rejected on play"            2 "$STS" play --expect-decision=INSYNC
+check "--expect-decision is rejected on status"          2 "$STS" status --expect-decision=INSYNC
+check "a malformed decision is a usage error"            2 "$STS" pull "--expect-decision=hub only"
+
+# --------------------------------------------------------------------------
 section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1

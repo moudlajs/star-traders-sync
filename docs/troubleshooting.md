@@ -84,6 +84,7 @@ you which later checks it skipped as a result.
 | 61 | first run with saves on both sides, or this machine is empty and pushing would wipe the hub |
 | 62 | hub is empty; seeding needs `push --force=local`, or the hub is empty and pulling would wipe this machine |
 | 63 | snapshot failed or was incomplete, so nothing was overwritten |
+| 64 | `--expect-decision` no longer holds: the saves changed after the choice was made, nothing was done |
 | 70 | backup volume not mounted |
 | 71 | `backup` run on a machine that is not the hub host |
 
@@ -137,4 +138,5 @@ you which later checks it skipped as a result.
 | 44 | `HUB_PATH contains a character that cannot survive...` | 11 | Paths are passed to a remote shell and openrsync has no `--protect-args`. Use only letters, digits and `. _ / @ + -` — no spaces or quotes. |
 | 45 | `HUB_PATH and LOCAL_SAVE_PATH are the same directory` | 11 | The hub must be separate from the game's save directory on every machine, including the hub itself. Nesting either inside the other is also refused. |
 | 46 | `the recorded sync state is inconsistent with what is on disk` (diverged sync state) | 60 | Neither side changed since the last recorded sync, yet they differ: usually a sync recorded against a hub another machine changed at the same moment, or `SYNC_EXCLUDE` differing between machines. `--force` does **not** override this. Delete `~/.local/state/star-traders-sync/last-sync.json` on this machine; the next sync then treats it as a first run and asks you to choose with `--force`, snapshotting both sides first. |
+| 47 | `the saves changed since this was chosen` | 64 | Another Mac synced between seeing the situation and confirming a choice. Nothing was done. Check `sts status` again and choose for what is there now. The app does this for you. |
 
