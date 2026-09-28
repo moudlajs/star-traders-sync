@@ -346,7 +346,9 @@ struct RunHero: View {
 
     var headline: String {
         switch run.action {
-        case .play:        return run.progress.current >= 3 ? "Sending your saves" : "Playing Star Traders"
+        case .play:
+            if run.progress.current >= 3 { return "Sending your saves" }
+            return run.progress.gameClosed && run.progress.current == 2 ? "Game closed" : "Playing Star Traders"
         case .resetRecord: return "Resetting"
         default:           return "Syncing"
         }
@@ -358,6 +360,8 @@ struct RunHero: View {
             switch run.progress.current {
             case 0:  return "Getting the latest saves from the hub first."
             case 1:  return "Starting the game."
+            case 2 where run.progress.gameClosed:
+                     return "Making sure the game has really closed, then your saves go to the hub. A few seconds."
             case 2:  return "Have fun. When you quit the game, your saves are sent to the hub by themselves. Keep this app open until then."
             default: return "Almost done. Your saves are on their way to the hub."
             }
