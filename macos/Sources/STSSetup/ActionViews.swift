@@ -75,7 +75,7 @@ struct ActivityCard: View {
     @ObservedObject var run: ActionRun
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title).font(.headline).foregroundStyle(run.ended ? .primary : .secondary)
                 Spacer()

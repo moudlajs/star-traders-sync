@@ -223,36 +223,45 @@ struct DashboardView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var d: DashboardModel
     @State private var showDoctor = false
-    @State private var showDetails = false
 
     var body: some View {
-        // No scroll view: the window is exactly as tall as this, and grows
-        // or shrinks with it (details, a running action), so nothing is
-        // ever cut off behind a scroll bar.
-        VStack(spacing: 20) {
+        // A fixed-size window: nothing it shows changes its size. The
+        // bottom slot holds either both sides or, while an action runs,
+        // its steps, crossfading in the same space.
+        VStack(spacing: 0) {
             if let p = d.problem {
-                ProblemCard(problem: p)
+                ProblemCard(problem: p).padding(.bottom, 12)
             }
-            if let r = d.run, !r.ended {
-                RunHero(run: r)
-            } else if let s = d.status {
-                Hero(status: s)
-            } else if d.problem == nil {
-                ProgressView().controlSize(.regular).padding(.vertical, 60)
+            Group {
+                if let r = d.run, !r.ended {
+                    RunHero(run: r)
+                } else if let s = d.status {
+                    Hero(status: s)
+                } else if d.problem == nil {
+                    ProgressView().controlSize(.regular)
+                }
             }
-            if let r = d.run {
-                ActivityCard(run: r)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            .frame(maxHeight: .infinity)
+
+            // Scrolls only if a long refusal would not fit; otherwise it is
+            // just the fixed slot.
+            ScrollView {
+                Group {
+                    if let r = d.run {
+                        ActivityCard(run: r)
+                    } else if let s = d.status {
+                        SidesStrip(status: s)
+                    }
+                }
+                .transition(.opacity)
             }
-            if let s = d.status, !d.busy {
-                details(s)
-            }
+            .scrollIndicators(.automatic)
+            .frame(height: 176)
         }
         .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 18)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 16)
+        .padding(.bottom, 20)
+        .frame(width: 480, height: 540)
         .navigationTitle("Star Traders Sync")
         .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
         .toolbar {
@@ -286,38 +295,6 @@ struct DashboardView: View {
             Text(b.confirmation?.message ?? "")
         }
         .animation(.easeOut(duration: 0.25), value: d.run?.id)
-        .animation(.easeOut(duration: 0.2), value: showDetails)
-    }
-
-    /// Both sides, for people who want to see them; one click away.
-    @ViewBuilder func details(_ s: SyncStatus) -> some View {
-        VStack(spacing: 10) {
-            Button {
-                showDetails.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Text(showDetails ? "Hide details" : "Details")
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.semibold))
-                        .rotationEffect(.degrees(showDetails ? 180 : 0))
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if showDetails {
-                HStack(alignment: .top, spacing: 12) {
-                    SideCard(title: "This Mac", subtitle: s.machine, side: s.sides.local)
-                    SideCard(title: s.isHub ? "Hub (this Mac)" : "Hub", subtitle: s.hub.host, side: s.sides.hub)
-                }
-                .transition(.opacity)
-                if let at = d.checkedAt {
-                    Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
-                }
-            }
-        }
     }
 }
 
@@ -420,29 +397,44 @@ struct Hero: View {
     }
 }
 
-struct SideCard: View {
-    let title: String
-    let subtitle: String
-    let side: SyncStatus.Side
+/// Both sides in one slim strip: always visible, never resizing anything.
+struct SidesStrip: View {
+    @EnvironmentObject var d: DashboardModel
+    let status: SyncStatus
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 0) {
+                column(title: "This Mac", name: status.machine, side: status.sides.local)
+                Divider().padding(.vertical, 4)
+                column(title: status.isHub ? "Hub (this Mac)" : "Hub", name: status.hub.host, side: status.sides.hub)
             }
-            if side.files == 0 {
-                Text("No saves").foregroundStyle(.secondary)
-            } else {
-                LabeledContent("Campaigns", value: "\(side.campaignSaves)")
-                LabeledContent("Last played", value: relative(side.newestDate))
-                LabeledContent("Files", value: "\(side.files)")
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.2)))
+            if let at = d.checkedAt {
+                Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
             }
         }
-        .padding(14)
+    }
+
+    func column(title: String, name: String, side: SyncStatus.Side) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.callout.weight(.semibold))
+            Text(name).font(.caption).foregroundStyle(.secondary)
+            Group {
+                if side.files == 0 {
+                    Text("No saves")
+                } else {
+                    Text("\(side.campaignSaves) campaign\(side.campaignSaves == 1 ? "" : "s")")
+                    Text("played \(relative(side.newestDate))")
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
+        .padding(.horizontal, 14)
     }
 }
 
