@@ -32,6 +32,11 @@ BIN_DIR="$(swift build -c release --package-path "$HERE" ${ARCHS[@]+"${ARCHS[@]}
 
 rm -rf "$APP" "$DMG"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+# The icon is drawn by code (macos/icon/make-icon.swift) on every build,
+# so there is no binary design file to drift from the source.
+swift "$HERE/icon/make-icon.swift" "$OUT/icon" >/dev/null
+cp "$OUT/icon/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN_DIR/STSSetup" "$APP/Contents/MacOS/STSSetup"
 cp "$REPO/bin/star-traders-sync" "$APP/Contents/Resources/star-traders-sync"
 cp "$REPO/config.example" "$APP/Contents/Resources/config.example"
@@ -47,6 +52,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key>                <string>$NAME</string>
     <key>CFBundleDisplayName</key>         <string>$NAME</string>
     <key>CFBundlePackageType</key>         <string>APPL</string>
+    <key>CFBundleIconFile</key>            <string>AppIcon</string>
+    <key>CFBundleIconName</key>            <string>AppIcon</string>
     <key>CFBundleShortVersionString</key>  <string>$VERSION</string>
     <key>CFBundleVersion</key>             <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>      <string>13.0</string>
