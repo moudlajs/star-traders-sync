@@ -74,10 +74,9 @@ struct StarTradersSyncApp: App {
             RootView()
                 .environmentObject(app)
                 .environmentObject(app.dashboard)
-                .frame(minWidth: 760, minHeight: 540)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
-        .windowResizability(.contentMinSize)
+        .windowResizability(.contentSize)
     }
 }
 
@@ -87,7 +86,11 @@ struct RootView: View {
     var body: some View {
         if app.showingSetup {
             ContentView().environmentObject(app.wizard)
+                .frame(minWidth: 760, minHeight: 540)
         } else {
+            // Compact: one status, one button. Grows for details and the
+            // activity card, and can be widened, never needs to be tall.
+            // Fixed width, height taken from the content (see DashboardView).
             DashboardView()
         }
     }

@@ -36,15 +36,23 @@ struct ActionButtons: View {
     let plan: ActionPlan
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ForEach(plan.buttons) { b in
                     if b.prominent {
-                        Button(b.label) { d.tapped(b) }
-                            .buttonStyle(.borderedProminent)
+                        Button { d.tapped(b) } label: {
+                            Label(b.label, systemImage: b.action == .play ? "play.fill" : "arrow.triangle.2.circlepath")
+                                .labelStyle(.titleAndIcon)
+                                .frame(minWidth: 150)
+                                .padding(.vertical, 3)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(b.action == .play ? .defaultAction : nil)
                     } else {
-                        Button(b.label) { d.tapped(b) }
-                            .buttonStyle(.bordered)
+                        Button { d.tapped(b) } label: {
+                            Text(b.label).padding(.vertical, 3)
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
             }
@@ -52,6 +60,8 @@ struct ActionButtons: View {
             .disabled(d.busy || plan.blockedBecause != nil || d.loading)
             if let why = plan.blockedBecause {
                 Text(why).font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 380)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -65,9 +75,9 @@ struct ActivityCard: View {
     @ObservedObject var run: ActionRun
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(title).font(.headline)
+                Text(title).font(.headline).foregroundStyle(run.ended ? .primary : .secondary)
                 Spacer()
                 if run.ended {
                     Button { withAnimation { d.dismissRun() } } label: {
@@ -106,17 +116,11 @@ struct ActivityCard: View {
         .animation(.easeOut(duration: 0.2), value: run.progress)
     }
 
-    var title: String {
-        // Every refusal in the script happens before anything is
-        // overwritten, which is what makes this promise true.
-        if run.problem != nil { return "Stopped, nothing was lost" }
-        if run.ended { return "Done" }
-        switch run.action {
-        case .play:        return "Playing Star Traders"
-        case .resetRecord: return "Resetting"
-        default:           return "Syncing"
-        }
-    }
+    /// This card is only shown for a run that ended with a refusal; a
+    /// success clears itself and the status says the result. Every refusal
+    /// in the script happens before anything is overwritten, which is what
+    /// makes this title true.
+    var title: String { "Stopped, nothing was lost" }
 
     func state(_ i: Int) -> InstallStage.State {
         if i < run.progress.current { return .done }
@@ -143,16 +147,46 @@ struct ActivityCard: View {
                 Text(stage)
                     .fontWeight(s == .running ? .semibold : .regular)
                     .foregroundStyle(s == .pending ? .secondary : .primary)
-                if run.action == .play && i == 2 && s == .running {
-                    Text("Have fun. When you quit the game, your saves are sent to the hub by themselves. Keep this app open until then.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 if run.action == .play && i == 2 && run.progress.gameCrashed {
                     Text("The game crashed. Your saves are still sent to the hub.")
                         .font(.callout).foregroundStyle(.orange)
                 }
             }
         }
+    }
+}
+
+/// The steps of a running action, compact, for the centre of the window.
+struct StepList: View {
+    @ObservedObject var run: ActionRun
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(Array(run.action.stages.enumerated()), id: \.offset) { i, stage in
+                let s = state(i)
+                HStack(spacing: 10) {
+                    Group {
+                        switch s {
+                        case .pending: Image(systemName: "circle").foregroundStyle(.tertiary)
+                        case .running: ProgressView().controlSize(.small)
+                        case .done:    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        case .failed:  Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                        }
+                    }
+                    .frame(width: 18)
+                    Text(stage)
+                        .fontWeight(s == .running ? .semibold : .regular)
+                        .foregroundStyle(s == .pending ? .secondary : .primary)
+                }
+            }
+        }
+        .fixedSize()
+        .animation(.easeOut(duration: 0.2), value: run.progress)
+    }
+
+    func state(_ i: Int) -> InstallStage.State {
+        if i < run.progress.current { return .done }
+        if i == run.progress.current { return run.ended ? .done : .running }
+        return .pending
     }
 }

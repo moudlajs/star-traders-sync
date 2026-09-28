@@ -21,6 +21,14 @@ final class DashboardModel: ObservableObject {
 
     var busy: Bool { run.map { !$0.ended } ?? false }
 
+    /// The health check opens inside the main window, not as a sheet.
+    @Published var showingHealth = false
+
+    /// Something worth knowing about a run that otherwise succeeded, such
+    /// as the game crashing (the saves were still sent). Shown under the
+    /// status until dismissed or the next action.
+    @Published var notice: String?
+
     private var timer: Timer?
 
     /// The app's own copy, kept current by Installer.refreshAppScript,
@@ -86,6 +94,7 @@ final class DashboardModel: ObservableObject {
         pending = nil
         let r = ActionRun(action: action)
         run = r
+        notice = nil
         let script = self.script
 
         guard let args = action.arguments(expecting: button.expected) else {
@@ -128,6 +137,14 @@ final class DashboardModel: ObservableObject {
             await MainActor.run {
                 SetupLog.write("action: \(action.rawValue) exited \(status)")
                 r.finish(status: status, output: all)
+                // A success needs no card: the status shows the result
+                // ("Last synced just now"). A refusal stays until dismissed.
+                if status == 0 {
+                    if r.progress.gameCrashed {
+                        self.notice = "The game crashed during your last session. Your saves were still sent to the hub."
+                    }
+                    withAnimation(.easeOut(duration: 0.25)) { self.run = nil }
+                }
                 self.objectWillChange.send()
                 self.refresh()
             }
@@ -154,7 +171,7 @@ final class DashboardModel: ObservableObject {
 extension SyncStatus.Decision {
     var headline: String {
         switch self {
-        case .inSync:           return "In sync"
+        case .inSync:           return "Up to date"
         case .hubOnly:          return "The hub has newer saves"
         case .firstSeed:        return "This Mac has no saves yet"
         case .localOnly:        return "This Mac has saves the hub doesn't"
@@ -170,7 +187,7 @@ extension SyncStatus.Decision {
     var explanation: String {
         switch self {
         case .inSync:
-            return "This Mac and the hub have exactly the same saves."
+            return "This Mac has the same saves as the hub. Play whenever you like."
         case .hubOnly:
             return "Another Mac played since this one last synced. Playing here copies its saves to this Mac first."
         case .firstSeed:
@@ -222,43 +239,51 @@ func relative(_ date: Date?) -> String {
 struct DashboardView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var d: DashboardModel
-    @State private var showDoctor = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let p = d.problem { ProblemCard(problem: p) }
-                    if let s = d.status {
-                        VerdictCard(status: s)
-                        if d.run == nil || d.run?.ended == true {
-                            ActionButtons(plan: SyncActions.plan(for: s))
-                        }
-                    }
-                    if let r = d.run {
-                        ActivityCard(run: r)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                    if let s = d.status {
-                        HStack(alignment: .top, spacing: 16) {
-                            SideCard(title: "This Mac", subtitle: s.machine, side: s.sides.local)
-                            SideCard(title: s.isHub ? "Hub (this Mac)" : "Hub", subtitle: s.hub.host, side: s.sides.hub)
-                        }
-                        footer(s)
-                    } else if d.problem == nil {
-                        HStack { ProgressView().controlSize(.small); Text("Checking…") }
-                            .foregroundStyle(.secondary)
-                    }
+        // A fixed-size window. The centre holds the status, or while an
+        // action runs, what is happening and its steps; both sides sit in
+        // a strip at the bottom. The health check replaces all of it, in
+        // the same window, with a Back button.
+        Group {
+            if d.showingHealth {
+                HealthPage()
+            } else {
+                // Fits in the fixed window in every normal state; only an
+                // unusual pile-up of problem cards scrolls.
+                ViewThatFits(in: .vertical) {
+                    main
+                    ScrollView { main.frame(minHeight: 420) }
                 }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(width: 480, height: 420)
+        .navigationTitle("Star Traders Sync")
+        .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { d.refresh() } label: {
+                    Label("Check again", systemImage: "arrow.clockwise")
+                }
+                .help("Check again")
+                .disabled(d.loading || d.busy)
+
+                Menu {
+                    Button("Health check") {
+                        withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = true }
+                        d.runDoctor()
+                    }
+                    Button("Open logs") { d.openLogs() }
+                    Divider()
+                    Button("Run setup again…") { app.showSetup() }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .help("More")
             }
         }
         .onAppear { d.start() }
         .onDisappear { d.stop() }
-        .sheet(isPresented: $showDoctor) { DoctorSheet().environmentObject(d) }
         .alert(d.pending?.confirmation?.title ?? "",
                isPresented: Binding(get: { d.pending != nil }, set: { if !$0 { d.pending = nil } }),
                presenting: d.pending) { b in
@@ -270,115 +295,199 @@ struct DashboardView: View {
         .animation(.easeOut(duration: 0.25), value: d.run?.id)
     }
 
-    var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Star Traders Sync").font(.title2).bold()
-                if let s = d.status {
-                    Text(s.isHub ? "This Mac is the hub" : "Hub: \(s.hub.host)")
-                        .foregroundStyle(.secondary)
+    var main: some View {
+        VStack(spacing: 14) {
+            // A failed run keeps its own card ("Stopped, nothing was lost",
+            // and how far it got). A status refusal shows too, unless it is
+            // the same problem again: a Play that failed because the hub is
+            // offline is followed by a status check failing the same way.
+            if let r = d.run, r.ended, r.problem != nil {
+                ActivityCard(run: r)
+            }
+            if SyncProblem.showStatusProblem(d.problem, besideRunProblem: d.run?.problem), let p = d.problem {
+                ProblemCard(problem: p)
+            }
+            Group {
+                if let r = d.run, !r.ended {
+                    RunHero(run: r)
+                } else if let s = d.status {
+                    Hero(status: s)
+                } else if d.problem == nil {
+                    ProgressView().controlSize(.regular)
                 }
             }
-            Spacer()
-            HStack(spacing: 14) {
-                Button { d.refresh() } label: {
-                    ZStack {
-                        // Same footprint either way, so nothing shifts.
-                        Image(systemName: "arrow.clockwise").opacity(d.loading ? 0 : 1)
-                        if d.loading { ProgressView().controlSize(.small) }
-                    }
-                    .frame(width: 22, height: 22)
-                }
-                .help("Check again")
-                .disabled(d.loading)
-
-                Menu {
-                    Button("Health check…") { showDoctor = true; d.runDoctor() }
-                    Button("Open logs") { d.openLogs() }
-                    Divider()
-                    Button("Run setup again…") { app.showSetup() }
-                } label: {
-                    Image(systemName: "ellipsis.circle").frame(width: 22, height: 22)
-                }
-                .menuIndicator(.hidden)
-                .help("More")
+            .frame(maxHeight: .infinity)
+            if let s = d.status, !d.busy {
+                // Its own height, never the leftover space. Hidden while an
+                // action runs, whose steps need the room more.
+                SidesStrip(status: s)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.borderless)
-            .menuStyle(.borderlessButton)
-            .font(.system(size: 17, weight: .regular))
-            .fixedSize()
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-    }
-
-    func footer(_ s: SyncStatus) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let last = s.lastSync {
-                Label("Last synced \(relative(last.date)), \(last.direction == "push" ? "sent to the hub" : "copied from the hub")",
-                      systemImage: "clock")
-            } else {
-                Label("This Mac has not synced yet", systemImage: "clock")
-            }
-            if s.gameRunning {
-                Label("Star Traders is running. Saves are synced when you quit it.", systemImage: "gamecontroller")
-            }
-            if let lock = s.hubLock {
-                Label("Another Mac is syncing with the hub right now (\(lock.trimmingCharacters(in: .whitespaces))).", systemImage: "lock")
-            }
-            if let at = d.checkedAt {
-                Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
-            }
-        }
-        .foregroundStyle(.secondary)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
+        .transition(.opacity)
     }
 }
 
-struct VerdictCard: View {
+/// The centre of the window while an action runs: what is happening now,
+/// in place of a status that is about to change.
+struct RunHero: View {
+    @ObservedObject var run: ActionRun
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: run.action == .play ? "gamecontroller.fill" : "arrow.triangle.2.circlepath")
+                .font(.system(size: 50, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.blue)
+                .padding(.top, 8)
+            Text(headline)
+                .font(.title2.weight(.semibold))
+            Text(subtitle)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+                .fixedSize(horizontal: false, vertical: true)
+            StepList(run: run)
+                .padding(.top, 6)
+            if run.progress.gameCrashed {
+                Label("The game crashed. Your saves are still sent to the hub.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    var headline: String {
+        switch run.action {
+        case .play:
+            if run.progress.current >= 3 { return "Sending your saves" }
+            return run.progress.gameClosed && run.progress.current == 2 ? "Game closed" : "Playing Star Traders"
+        case .resetRecord: return "Resetting"
+        default:           return "Syncing"
+        }
+    }
+
+    var subtitle: String {
+        switch run.action {
+        case .play:
+            switch run.progress.current {
+            case 0:  return "Getting the latest saves from the hub first."
+            case 1:  return "Starting the game."
+            case 2 where run.progress.gameClosed:
+                     return "Making sure the game has really closed, then your saves go to the hub. A few seconds."
+            case 2:  return "Have fun. When you quit the game, your saves are sent to the hub by themselves. Keep this app open until then."
+            default: return "Almost done. Your saves are on their way to the hub."
+            }
+        default:
+            return "This takes a few seconds. Every overwrite keeps a safety copy first."
+        }
+    }
+}
+
+/// The centre of the window: what is going on, in one line, and the one
+/// thing to do about it.
+struct Hero: View {
+    @EnvironmentObject var d: DashboardModel
     let status: SyncStatus
 
     var body: some View {
         let v = status.decision
-        HStack(alignment: .top, spacing: 14) {
+        VStack(spacing: 12) {
             Image(systemName: v.symbol)
-                .font(.system(size: 34))
+                .font(.system(size: 54, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(v.tint)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(v.headline).font(.title3).bold()
-                Text(v.explanation).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 8)
+            Text(v.headline)
+                .font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(v.explanation)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if d.run == nil || d.run?.ended == true {
+                ActionButtons(plan: SyncActions.plan(for: status))
+                    .padding(.top, 8)
             }
-            Spacer(minLength: 0)
+
+            VStack(spacing: 4) {
+                if let last = status.lastSync {
+                    Text("Last synced \(relative(last.date)) · \(last.direction == "push" ? "sent to the hub" : "from the hub")")
+                } else {
+                    Text("This Mac has not synced yet")
+                }
+                if status.gameRunning {
+                    Label("Star Traders is running", systemImage: "gamecontroller")
+                }
+                if status.hubLock != nil {
+                    Label("\(SyncProblem.lockHolder(status.hubLock) ?? "Another Mac") is syncing right now",
+                          systemImage: "lock")
+                }
+                if let note = d.notice {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(note).multilineTextAlignment(.leading)
+                        Button { d.notice = nil } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless)
+                            .help("Dismiss")
+                    }
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: 400)
+                    .padding(.top, 4)
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.top, 6)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(v.tint.opacity(0.10)))
+        .frame(maxWidth: .infinity)
     }
 }
 
-struct SideCard: View {
-    let title: String
-    let subtitle: String
-    let side: SyncStatus.Side
+/// Both sides in one slim strip: always visible, never resizing anything.
+struct SidesStrip: View {
+    @EnvironmentObject var d: DashboardModel
+    let status: SyncStatus
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 0) {
+                column(title: "This Mac", name: status.machine, side: status.sides.local)
+                Divider().padding(.vertical, 4)
+                column(title: status.isHub ? "Hub (this Mac)" : "Hub", name: status.hub.host, side: status.sides.hub)
             }
-            if side.files == 0 {
-                Text("No saves").foregroundStyle(.secondary)
-            } else {
-                LabeledContent("Campaigns", value: "\(side.campaignSaves)")
-                LabeledContent("Last played", value: relative(side.newestDate))
-                LabeledContent("Files", value: "\(side.files)")
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.2)))
+            if let at = d.checkedAt {
+                Text("Checked \(relative(at))").font(.caption).foregroundStyle(.tertiary)
             }
         }
-        .padding(14)
+    }
+
+    func column(title: String, name: String, side: SyncStatus.Side) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.callout.weight(.semibold))
+            Text(name).font(.caption).foregroundStyle(.secondary)
+            Group {
+                if side.files == 0 {
+                    Text("No saves")
+                } else {
+                    Text("\(side.campaignSaves) campaign\(side.campaignSaves == 1 ? "" : "s")")
+                    Text("played \(relative(side.newestDate))")
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
+        .padding(.horizontal, 14)
     }
 }
 
@@ -415,24 +524,39 @@ struct ProblemCard: View {
     }
 }
 
-struct DoctorSheet: View {
+/// The health check, inside the main window.
+struct HealthPage: View {
     @EnvironmentObject var d: DashboardModel
-    @Environment(\.dismiss) var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Health check").font(.title2).bold()
-            ScrollView {
+            // Back, title and Check again on one row.
+            ZStack {
+                Text("Health check").font(.headline)
+                HStack {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = false }
+                    } label: {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(.cancelAction)
+                    Spacer()
+                    Button("Check again") { d.runDoctor() }
+                        .controlSize(.small)
+                        .disabled(d.doctor.running)
+                }
+            }
+            // Collapsed sections are one line each, so the whole report
+            // fits without scrolling; an opened problem may scroll.
+            ViewThatFits(in: .vertical) {
                 DoctorProgressView(run: d.doctor)
-                    .padding(.trailing, 8)
+                ScrollView { DoctorProgressView(run: d.doctor).padding(.trailing, 8) }
             }
-            HStack {
-                Spacer()
-                Button("Check again") { d.runDoctor() }.disabled(d.doctor.running)
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
+            Spacer(minLength: 0)
         }
-        .padding(24)
-        .frame(width: 640, height: 540)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .transition(.opacity)
     }
 }

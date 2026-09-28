@@ -169,6 +169,9 @@ public struct ActionProgress: Equatable {
     public private(set) var current = 0
     public private(set) var finished = false
     public private(set) var gameCrashed = false
+    /// The script noticed the game is gone and is making sure it stays
+    /// gone (a few seconds) before it sends the saves.
+    public private(set) var gameClosed = false
 
     public init(action: SyncAction) {
         self.action = action
@@ -179,7 +182,8 @@ public struct ActionProgress: Equatable {
         switch action {
         case .play:
             if l.hasPrefix("launching ") { current = max(current, 1) }
-            else if l.hasPrefix("game running") { current = max(current, 2) }
+            else if l.hasPrefix("game running") { current = max(current, 2); gameClosed = false }
+            else if l.hasPrefix("game closed") { gameClosed = true }
             else if l.contains("the game crashed") { gameCrashed = true }
             else if l.hasPrefix("pushing after play") { current = max(current, 3) }
         case .pull, .keepHub:

@@ -137,6 +137,21 @@ public struct SyncProblem: Error, Equatable {
         return SyncProblem(code: code, title: title, advice: advice, detail: detail)
     }
 
+    /// Whether a status refusal is worth its own card next to a failed
+    /// run's. Not when it is the same problem again: a Play that failed
+    /// because the hub is offline is followed by a status check that fails
+    /// the same way, and a second card would only repeat the first.
+    public static func showStatusProblem(_ statusProblem: SyncProblem?, besideRunProblem run: SyncProblem?) -> Bool {
+        guard let statusProblem else { return false }
+        return statusProblem.code != run?.code
+    }
+
+    /// The machine holding the hub lock, from status's hub_lock ("host pid
+    /// ..."), for saying who is syncing rather than "another Mac".
+    public static func lockHolder(_ hubLock: String?) -> String? {
+        hubLock?.split(separator: " ").first.map(String.init)
+    }
+
     /// Refusals the user resolves by choosing a side (#74).
     public var needsChoice: Bool { [60, 61, 62].contains(code) }
 }
