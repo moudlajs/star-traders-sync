@@ -118,9 +118,9 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertFalse(SyncActions.stillOffered(play, for: try status("HUB_ONLY", lock: "workmac 1")), "another Mac took the lock")
 
         var stale = play
-        stale.expected = .localOnly
-        XCTAssertFalse(SyncActions.stillOffered(stale, for: try status("LOCAL_ONLY")),
-                       "same decision, but play is not offered for LOCAL_ONLY")
+        stale.expected = .hubEmpty
+        XCTAssertFalse(SyncActions.stillOffered(stale, for: try status("HUB_EMPTY")),
+                       "same decision, but play is not offered for HUB_EMPTY")
     }
 
     func testSituationKeyChangesWithEitherSide() throws {
