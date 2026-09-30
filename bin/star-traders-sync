@@ -526,7 +526,10 @@ check_local_save_path() {
 # Tailscale
 # --------------------------------------------------------------------------
 
-readonly TS_APP_PATH="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+# STS_TS_APP_PATH exists for the regression suite: pointed at a path that
+# does not exist, it makes find_tailscale fall through to PATH, where the
+# suite's stub is, even on a Mac with the Tailscale app installed.
+readonly TS_APP_PATH="${STS_TS_APP_PATH:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}"
 
 find_tailscale() {
     if [ -x "$TS_APP_PATH" ]; then
@@ -545,21 +548,36 @@ find_tailscale() {
 
 # Emits the raw JSON. Distinguishes "daemon is down" from "command failed".
 ts_status_json() {
-    local out rc
+    local out rc err errf
+    # stdout only: the JSON. Anything tailscale says on stderr (a client and
+    # daemon version mismatch after an update, say) is kept apart; merged,
+    # it sat in front of the JSON and every parser below crashed on it.
+    errf="$(mktemp "${TMPDIR:-/tmp}/sts-ts.XXXXXX")"
     set +e
-    out="$("$TS_BIN" status --json 2>&1)"
+    out="$("$TS_BIN" status --json 2>"$errf")"
     rc=$?
     set -e
+    err="$(cat "$errf" 2>/dev/null || true)"
+    rm -f "$errf"
     if [ $rc -ne 0 ]; then
-        case "$out" in
+        case "$out $err" in
             *"is not running"*|*"connect: no such file or directory"*|\
             *"failed to connect to local backend"*|*"Connection refused"*)
                 die $EX_TS_DAEMON tailscale \
                     "tailscaled is not running - start the Tailscale app, or 'sudo tailscaled install-system-daemon'" ;;
             *)
                 die $EX_TS_DAEMON tailscale \
-                    "tailscale status failed (rc=$rc): $out" ;;
+                    "tailscale status failed (rc=$rc): $(printf '%s %s' "$out" "$err" | head -3)" ;;
         esac
+    fi
+    [ -n "$err" ] && log WARN tailscale "status --json warned: $(printf '%s' "$err" | head -1)"
+
+    # Exit 0 is not proof of an answer: disconnected, the App Store CLI can
+    # print a plain sentence instead. Refuse in words, never a traceback.
+    if ! printf '%s' "$out" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; then
+        log ERROR tailscale "status --json was not JSON: $(printf '%s' "$out" | head -1)"
+        die $EX_TS_LOGGED_OUT tailscale \
+            "Tailscale did not report its status - it is probably not connected on this Mac. Connect it (menu bar > Connect) and try again. It said: $(printf '%s' "${out:-$err}" | head -1)"
     fi
     printf '%s' "$out"
 }
@@ -2154,7 +2172,9 @@ doc_tailscale() {
     fi
 
     local json state
-    json="$("$TS_BIN" status --json 2>&1)" || {
+    # stdout only, as in ts_status_json: a warning on stderr must not be
+    # read as part of the JSON.
+    json="$("$TS_BIN" status --json 2>/dev/null)" || {
         doc_fail "tailscaled is not running"
         doc_do "start the Tailscale app, or: sudo tailscaled install-system-daemon"
         return 1
