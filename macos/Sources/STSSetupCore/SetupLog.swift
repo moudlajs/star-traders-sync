@@ -9,7 +9,12 @@ public enum SetupLog {
             .appendingPathComponent("Library/Logs/star-traders-sync/setup-app.log")
     }
 
+    /// Tests switch this off, so a test run never writes into the user's
+    /// real log.
+    public static var enabled = true
+
     public static func write(_ message: String) {
+        guard enabled else { return }
         let fm = FileManager.default
         try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let f = ISO8601DateFormatter()

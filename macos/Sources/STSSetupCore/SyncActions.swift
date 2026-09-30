@@ -153,6 +153,42 @@ public enum SyncActions {
         return plan
     }
 
+    /// What the app may do on its own (#87), or nil. Only the two moves
+    /// that cannot overwrite anything unconfirmed: fetch when only the hub
+    /// changed (or this Mac has no saves yet), send when only this Mac
+    /// changed. Never a --force, never while the game runs or another Mac
+    /// holds the hub lock, and always pinned to the decision seen.
+    public static func automatic(for s: SyncStatus) -> ActionButton? {
+        guard !s.gameRunning, s.hubLock == nil else { return nil }
+        let action: SyncAction
+        switch s.decision {
+        case .hubOnly, .firstSeed: action = .pull
+        case .localOnly:           action = .push
+        default:                   return nil
+        }
+        var b = ActionButton(action: action, label: action == .pull ? "Fetching the latest saves" : "Sending this Mac's saves",
+                             prominent: false, confirmation: nil)
+        b.expected = s.decision
+        b.expectedRecordEpoch = s.lastSync?.at
+        return b
+    }
+
+    /// Whether a button pressed earlier may still run against a fresh
+    /// status: the decision is the one it was pressed for, nothing blocks
+    /// it (game, another Mac), and the fresh plan still offers that action.
+    public static func stillOffered(_ button: ActionButton, for s: SyncStatus) -> Bool {
+        let plan = plan(for: s)
+        return button.expected == s.decision
+            && plan.blockedBecause == nil
+            && plan.buttons.contains { $0.action == button.action }
+    }
+
+    /// A key for "the same situation", so a failed automatic sync is not
+    /// retried against it over and over: decision plus both fingerprints.
+    public static func situationKey(_ s: SyncStatus) -> String {
+        "\(s.decision.rawValue):\(s.sides.local.fingerprint):\(s.sides.hub.fingerprint)"
+    }
+
     static func describe(_ side: SyncStatus.Side) -> String {
         let n = side.campaignSaves
         let campaigns = "\(n) campaign\(n == 1 ? "" : "s")"
