@@ -526,7 +526,10 @@ check_local_save_path() {
 # Tailscale
 # --------------------------------------------------------------------------
 
-readonly TS_APP_PATH="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+# STS_TS_APP_PATH exists for the regression suite: pointed at a path that
+# does not exist, it makes find_tailscale fall through to PATH, where the
+# suite's stub is, even on a Mac with the Tailscale app installed.
+readonly TS_APP_PATH="${STS_TS_APP_PATH:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}"
 
 find_tailscale() {
     if [ -x "$TS_APP_PATH" ]; then

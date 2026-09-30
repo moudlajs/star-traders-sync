@@ -717,6 +717,10 @@ esac
 STUB
 chmod +x "$CASE/stub/tailscale"
 PATH="$CASE/stub:$PATH_TS_SAVED"
+# Without this, a Mac with the Tailscale app would run the real one and
+# these cases would test nothing.
+export STS_TS_APP_PATH=/nonexistent/Tailscale
+check "the stub, not the app, answers in this section"   0 sh -c '"$1" status 2>&1 >/dev/null; grep -q "status --json warned" "$HOME/Library/Logs/star-traders-sync/star-traders-sync.log"' _ "$STS"
 check "stderr warning + JSON: status works"               0 "$STS" status
 check "  and status --json is still clean"               0 sh -c '"$1" status --json 2>/dev/null | python3 -c "import json,sys; json.load(sys.stdin)"' _ "$STS"
 
@@ -734,6 +738,7 @@ check "  with no Python traceback"                        1 sh -c '"$1" play 2>&
 check "  and says Tailscale is not connected"            0 sh -c '"$1" pull 2>&1 | grep -q "probably not connected"' _ "$STS"
 check "  and touched nothing"                            0 test -f "$CASE/local/core.db"
 PATH="$PATH_TS_SAVED"
+unset STS_TS_APP_PATH
 
 # --------------------------------------------------------------------------
 section "backup"
