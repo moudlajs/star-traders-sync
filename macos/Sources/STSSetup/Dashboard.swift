@@ -210,7 +210,7 @@ extension SyncStatus.Decision {
         case .firstSeed:
             return "Playing here copies your saves from the hub first."
         case .localOnly:
-            return "This Mac changed since the last sync and the hub did not. Send them to the hub; until then a sync from the hub is refused, so nothing here is overwritten."
+            return "This Mac has saves the hub doesn't have yet. They are sent when you finish playing, or right now with Send."
         case .hubEmpty:
             return "Send this Mac's saves to the hub to start syncing."
         case .bothChanged:
