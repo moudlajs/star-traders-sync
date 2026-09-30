@@ -68,17 +68,19 @@ final class InstallerTests: XCTestCase {
     }
 
     func testAppScriptIsRefreshedOnlyWhenItDiffers() throws {
-        XCTAssertTrue(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
-                                                 layout: layout, isRunning: { false }), "missing: copied")
-        XCTAssertFalse(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
-                                                  layout: layout, isRunning: { false }), "identical: left alone")
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                  layout: layout, isRunning: { false }), .refreshed, "missing: copied")
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                  layout: layout, isRunning: { false }), .unchanged, "identical: left alone")
         try "old\n".write(to: layout.installedScript, atomically: true, encoding: .utf8)
-        XCTAssertFalse(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
-                                                  layout: layout, isRunning: { true }), "sts running: never replaced")
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                  layout: layout, isRunning: { true }), .skippedWhileRunning,
+                       "sts running: never replaced, and not reported as unchanged")
         XCTAssertEqual(try String(contentsOf: layout.installedScript, encoding: .utf8), "old\n")
-        XCTAssertTrue(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
-                                                 layout: layout, isRunning: { false }), "older: replaced")
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: script, bundledExample: example,
+                                                  layout: layout, isRunning: { false }), .refreshed, "retried later: replaced")
         XCTAssertEqual(try Data(contentsOf: layout.installedScript), try Data(contentsOf: script))
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: nil, bundledExample: nil, layout: layout), .noBundledScript)
     }
 
     func testAppScriptRefreshLeavesARepoLinkAlone() throws {

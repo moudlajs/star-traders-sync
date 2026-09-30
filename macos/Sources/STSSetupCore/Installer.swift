@@ -72,16 +72,36 @@ public enum Installer {
     /// in the app, so the app never talks to a script older than itself.
     /// `sts` in ~/bin may point at a repo checkout the user maintains; that
     /// is theirs, and the app neither follows nor replaces it.
-    /// Returns true when it copied. Skipped while any sts is running.
+    /// Skipped while any sts is running, and then worth retrying: the app
+    /// calls it again before every status check.
+    public enum RefreshResult: Equatable {
+        case refreshed, unchanged, skippedWhileRunning, noBundledScript, failed(String)
+
+        public var logText: String {
+            switch self {
+            case .refreshed:           return "refreshed"
+            case .unchanged:           return "unchanged"
+            case .skippedWhileRunning: return "not refreshed yet: sts is running, will retry"
+            case .noBundledScript:     return "not refreshed: no script in the app bundle"
+            case .failed(let why):     return "refresh failed: \(why)"
+            }
+        }
+    }
+
     @discardableResult
     public static func refreshAppScript(bundledScript: URL?, bundledExample: URL?, layout: InstallLayout,
                                         isRunning: () -> Bool = scriptIsRunning,
-                                        fileManager fm: FileManager = .default) -> Bool {
-        guard let bundledScript, let new = try? Data(contentsOf: bundledScript) else { return false }
-        if let old = try? Data(contentsOf: layout.installedScript), old == new { return false }
-        if isRunning() { return false }
-        return (try? installFiles(bundledScript: bundledScript, bundledExample: bundledExample,
-                                  layout: layout, fileManager: fm)) != nil
+                                        fileManager fm: FileManager = .default) -> RefreshResult {
+        guard let bundledScript, let new = try? Data(contentsOf: bundledScript) else { return .noBundledScript }
+        if let old = try? Data(contentsOf: layout.installedScript), old == new { return .unchanged }
+        if isRunning() { return .skippedWhileRunning }
+        do {
+            _ = try installFiles(bundledScript: bundledScript, bundledExample: bundledExample,
+                                 layout: layout, fileManager: fm)
+            return .refreshed
+        } catch {
+            return .failed(error.localizedDescription)
+        }
     }
 
     /// Step two: `sts` and `star-traders-sync` in ~/bin.

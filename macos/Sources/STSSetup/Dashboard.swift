@@ -51,6 +51,20 @@ final class DashboardModel: ObservableObject {
         timer = nil
     }
 
+    /// Brings the app's copy of the script up to date with the bundled one.
+    /// At launch, and again before every status check, because a launch can
+    /// land while an sts is running, when replacing it is refused.
+    nonisolated static func refreshAppScript(layout: InstallLayout, when: String) {
+        let bundled = WizardModel.locate("star-traders-sync", repoPath: "bin/star-traders-sync")
+        let result = Installer.refreshAppScript(bundledScript: bundled,
+                                                bundledExample: WizardModel.locate("config.example", repoPath: "config.example"),
+                                                layout: layout)
+        // Launch always logs; later checks only when something happened.
+        if when == "launch" || result != .unchanged {
+            SetupLog.write("\(when): app script \(result.logText) (\(bundled?.path ?? "nothing bundled"))")
+        }
+    }
+
     func refresh() {
         // While sts runs it holds this Mac's lock, and status would only
         // report "a sync is already running". The run's own card says more.
@@ -59,7 +73,10 @@ final class DashboardModel: ObservableObject {
         guard !loading, !busy, pending == nil else { return }
         loading = true
         let script = self.script
+        let layout = self.layout
         Task.detached {
+            // Off the main thread: two file reads, and pgrep.
+            DashboardModel.refreshAppScript(layout: layout, when: "check")
             let r = StatusClient.fetch(script: script)
             await MainActor.run {
                 self.loading = false
