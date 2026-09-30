@@ -117,7 +117,7 @@ final class WizardModel: ObservableObject {
 
     /// In the .app the script is a bundle resource. Run with `swift run`
     /// from the repo, it is found relative to this source file.
-    static func locate(_ name: String, repoPath: String) -> URL? {
+    nonisolated static func locate(_ name: String, repoPath: String) -> URL? {
         if let url = Bundle.main.url(forResource: name, withExtension: nil) { return url }
         let repo = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -126,7 +126,7 @@ final class WizardModel: ObservableObject {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    static func readVersion(_ url: URL) -> String? {
+    nonisolated static func readVersion(_ url: URL) -> String? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         for line in text.split(separator: "\n") where line.hasPrefix("readonly STS_VERSION=") {
             return line.split(separator: "\"").dropFirst().first.map(String.init)
