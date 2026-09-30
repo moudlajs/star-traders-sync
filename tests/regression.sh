@@ -700,6 +700,42 @@ check "--expect-decision is rejected on status"          2 "$STS" status --expec
 check "a malformed decision is a usage error"            2 "$STS" pull "--expect-decision=hub only"
 
 # --------------------------------------------------------------------------
+section "tailscale answers that are not clean JSON (#97)"
+newcase tsanswers
+"$STS" push --force=local >/dev/null 2>&1
+mkdir -p "$CASE/stub"
+PATH_TS_SAVED="$PATH"
+cat > "$CASE/stub/tailscale" <<STUB
+#!/bin/bash
+# A warning on stderr, valid JSON on stdout: what an updated app prints.
+case "\$*" in
+    *"status --json"*)
+        echo 'Warning: client version "1.94.1" != tailscaled server version "1.102.4"' >&2
+        printf '{"BackendState":"Running","Self":{"HostName":"$HUBNAME","DNSName":"$HUBNAME.test.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":true},"Peer":{}}\n' ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale"
+PATH="$CASE/stub:$PATH_TS_SAVED"
+check "stderr warning + JSON: status works"               0 "$STS" status
+check "  and status --json is still clean"               0 sh -c '"$1" status --json 2>/dev/null | python3 -c "import json,sys; json.load(sys.stdin)"' _ "$STS"
+
+cat > "$CASE/stub/tailscale" <<'STUB'
+#!/bin/bash
+# Disconnected: a sentence, exit 0, no JSON at all.
+case "$*" in
+    *"status --json"*) echo "Tailscale is stopped." ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale"
+check "not JSON: refuses with 22"                        22 "$STS" play
+check "  with no Python traceback"                        1 sh -c '"$1" play 2>&1 | grep -q Traceback' _ "$STS"
+check "  and says Tailscale is not connected"            0 sh -c '"$1" pull 2>&1 | grep -q "probably not connected"' _ "$STS"
+check "  and touched nothing"                            0 test -f "$CASE/local/core.db"
+PATH="$PATH_TS_SAVED"
+
+# --------------------------------------------------------------------------
 section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1
