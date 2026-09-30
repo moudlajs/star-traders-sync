@@ -739,6 +739,26 @@ check "  and says Tailscale is not connected"            0 sh -c '"$1" pull 2>&1
 check "  and touched nothing"                            0 test -f "$CASE/local/core.db"
 PATH="$PATH_TS_SAVED"
 unset STS_TS_APP_PATH
+section "play when only this machine changed (#99)"
+newcase playahead
+"$STS" push --force=local >/dev/null 2>&1
+# No Steam in the sandbox: 'open' does nothing and the game never starts,
+# so play ends with 41 once it is past the pull. Before #99 it stopped at
+# the pull with 60.
+printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"
+mkdir -p "$CASE/nosteam"
+printf '#!/bin/sh\nexit 0\n' > "$CASE/nosteam/open"
+chmod +x "$CASE/nosteam/open"
+printf 'ahead\n' > "$CASE/local/game_1.db"
+HUB_BEFORE="$(cat "$CASE/hub/game_1.db")"
+check "decision is LOCAL_ONLY"                           0 test "$(jget decision)" = LOCAL_ONLY
+check "play gets past the pull (41: no game here), not 60" 41 env PATH="$CASE/nosteam:$PATH" "$STS" play
+check "  and says why it did not fetch"                  0 sh -c 'PATH="$2:$PATH" "$1" play 2>&1 | grep -q "ahead of the hub - nothing to fetch"' _ "$STS" "$CASE/nosteam"
+check "  and left this machine's change alone"           0 test "$(cat "$CASE/local/game_1.db")" = ahead
+check "  and the hub alone"                              0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
+check "plain pull still refuses LOCAL_ONLY"             60 "$STS" pull
+check "and push still sends it"                          0 "$STS" push
+check "  after which: INSYNC"                            0 test "$(jget decision)" = INSYNC
 
 # --------------------------------------------------------------------------
 section "backup"

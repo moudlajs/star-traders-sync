@@ -77,6 +77,7 @@ OPT_OFFLINE_OK=0
 OPT_FIX=0
 OPT_JSON=0            # status only: one JSON object on stdout, see status_json
 OPT_EXPECT=""         # pull/push: refuse unless this is still the decision
+IN_PLAY=0             # 1 while cmd_play runs its pull; see LOCAL_ONLY in cmd_pull
 COMMAND=""
 
 IS_HUB=0              # 1 when this machine is the hub host
@@ -2777,6 +2778,16 @@ cmd_pull() {
             fi
             warn "--force=hub: discarding local changes" ;;
         LOCAL_ONLY)
+            # Before a play, this is not a conflict: the hub has not changed
+            # since the last sync, so there is nothing to fetch, and play
+            # pushes this machine's saves when the game exits. Decided here,
+            # under the hub lock, like every other verdict.
+            if [ "$IN_PLAY" -eq 1 ] && [ "$OPT_FORCE" != "hub" ]; then
+                say "this machine is ahead of the hub - nothing to fetch, its saves are sent after you play"
+                log INFO pull "local-only changes before play: not pulling, play continues"
+                release_hub_lock
+                return 0
+            fi
             if [ "$OPT_FORCE" != "hub" ]; then
                 conflict_report "only THIS machine changed since the last sync - pulling would discard those changes." \
                     "$lman" "$hman" "$lep" "$hep"
@@ -2922,7 +2933,9 @@ cmd_play() {
         log WARN play "playing offline, no pull, no push"
     else
         say "pulling before launch..."
+        IN_PLAY=1
         cmd_pull
+        IN_PLAY=0
     fi
 
     local start_epoch

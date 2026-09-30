@@ -20,7 +20,7 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertEqual(try actions("INSYNC"), [.play])
         XCTAssertEqual(try actions("HUB_ONLY"), [.play, .pull])
         XCTAssertEqual(try actions("FIRST_SEED"), [.play, .pull])
-        XCTAssertEqual(try actions("LOCAL_ONLY"), [.push], "pull, so play, refuses LOCAL_ONLY")
+        XCTAssertEqual(try actions("LOCAL_ONLY"), [.play, .push], "play skips the fetch when only this Mac changed (#99)")
         XCTAssertEqual(try actions("HUB_EMPTY"), [.keepLocal], "plain push refuses an empty hub")
         XCTAssertEqual(try actions("LOCAL_EMPTIED"), [.keepHub], "plain pull refuses; push always refuses")
         XCTAssertEqual(try actions("BOTH_CHANGED"), [.keepHub, .keepLocal])

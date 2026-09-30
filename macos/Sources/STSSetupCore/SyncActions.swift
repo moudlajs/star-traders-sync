@@ -112,7 +112,9 @@ public enum SyncActions {
             plan.buttons = [play,
                             ActionButton(action: .pull, label: "Get the hub's saves now", prominent: false, confirmation: nil)]
         case .localOnly:
-            plan.buttons = [ActionButton(action: .push, label: "Send to \(hubName)", prominent: true, confirmation: nil)]
+            // Play skips the fetch here (#99) and sends afterwards.
+            plan.buttons = [play,
+                            ActionButton(action: .push, label: "Send to \(hubName) now", prominent: false, confirmation: nil)]
         case .hubEmpty:
             plan.buttons = [ActionButton(
                 action: .keepLocal, label: "Send this Mac's saves to the hub", prominent: true,
