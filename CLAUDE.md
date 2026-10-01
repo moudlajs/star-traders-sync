@@ -27,7 +27,7 @@ if you introduce a new state.
 - Never point a test config at `~/Library/StarTradersFrontiers`,
   `~/star-traders-sync-hub`, or `/Volumes/Backup`. Those hold real saves. Use a
   sandbox, as `tests/regression.sh` does.
-- Run `./tests/regression.sh` before and after. 44 cases; all must pass.
+- Run `./tests/regression.sh` before and after. 104 cases; all must pass.
 
 ## Things that have already bitten, verified on this machine
 
@@ -74,6 +74,39 @@ Open an issue first and reference it with `Closes #N`, for anything beyond
 a typo. This was applied inconsistently early on - PRs #11, #12, #13 and
 #17 went up with no issue behind them - and the result is a history where
 some decisions have their reasoning recorded and others do not.
+
+## When you write an issue here
+
+Read the `Issues` section of `CONTRIBUTING.md` and follow it exactly. The
+headings are a **closed set** - `## Problem`, `## Proposal`,
+`## Acceptance criteria`, then optionally `## Out of scope` and
+`## References` - in that order. Bug reports use their own set.
+
+This rule exists because the issues written before it were individually fine
+and collectively unreadable: #42, #40, #34 and #22 invented four different
+heading sets, and #22 used none at all. With 14 issues in one milestone,
+triage means reading the first screen of each, and that only works if the
+first screen is the same thing every time.
+
+What not to do, specifically:
+
+- **Do not invent a heading** because it fits this particular issue better.
+  `## What it should look like`, `## The two real ones`,
+  `## Why this is milestoned to v2.0` were all reasonable in isolation. The
+  set of them is the problem.
+- **Do not open by restating the title.** The first line of `## Problem` is
+  the first new information in the issue.
+- **Evidence, not assertion.** `file:line`, real command output, a real exit
+  code. "This is confusing" is not a problem statement; 277 lines with the
+  everyday path at line 24 is.
+- **No filler.** No "Here's what this does", no "Let's", no emoji, no
+  sentence whose content is that a section follows.
+- **Acceptance criteria must be checkable by someone else.** "Improve the
+  docs" is not a criterion; "`README.md` is under 110 lines" is.
+- One issue, one branch, one pull request. If the acceptance criteria split
+  cleanly into two sets that could merge separately, it is two issues.
+
+The v1.3 issues (#43-#50) are the worked examples - match their shape.
 
 ## When you open a pull request here
 
