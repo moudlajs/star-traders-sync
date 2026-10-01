@@ -157,4 +157,12 @@ JSON only.
 ## Releases
 
 Tag `vX.Y.Z` matching `STS_VERSION` in the script. The release workflow
-refuses to publish if they disagree or if the suite fails.
+refuses to publish if they disagree, if the suite fails, or if
+`CHANGELOG.md` has no section for the tag.
+
+**A change a user can observe updates `## [Unreleased]` in `CHANGELOG.md`,
+in the same pull request.** Not afterwards, and not at release time - the
+file went missing for three releases because it was nobody's step. A bump,
+a CI change or a docs-only change does not need an entry unless it changed
+something observable. Releasing then means moving `Unreleased` into a
+`## [X.Y.Z] - <date>` section and adding the compare link at the bottom.
