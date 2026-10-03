@@ -739,6 +739,40 @@ check "  and says Tailscale is not connected"            0 sh -c '"$1" pull 2>&1
 check "  and touched nothing"                            0 test -f "$CASE/local/core.db"
 PATH="$PATH_TS_SAVED"
 unset STS_TS_APP_PATH
+section "bringing tailscale up on a client keeps the JSON clean (#103)"
+newcase tsup
+"$STS" push --force=local >/dev/null 2>&1
+# A client of another hub, which is what the work Mac is: resolve_hub_endpoint
+# calls ts_ensure_up, which runs 'tailscale up' when the state is Stopped.
+sed -i '' "s/^HUB_HOST=.*/HUB_HOST=otherhub/" "$CASE/cfg/star-traders-sync/config"
+mkdir -p "$CASE/stub"
+cat > "$CASE/stub/tailscale" <<STUB
+#!/bin/bash
+FLAG="$CASE/stub/up-ran"
+case "\$*" in
+    up*) touch "\$FLAG"; exit 0 ;;
+    *"status --json"*)
+        if [ -f "\$FLAG" ]; then state=Running; else state=Stopped; fi
+        printf '{"BackendState":"%s","Self":{"HostName":"$HUBNAME","DNSName":"$HUBNAME.test.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":true},"Peer":{"p":{"HostName":"otherhub","DNSName":"otherhub.test.ts.net.","TailscaleIPs":["100.64.0.9"],"Online":false}}}\n' "\$state" ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$CASE/stub/tailscale"
+PATH_UP_SAVED="$PATH"
+PATH="$CASE/stub:$PATH"
+export STS_TS_APP_PATH=/nonexistent/Tailscale
+# Gets past ts_find_peer to the real verdict: the stub's hub is offline (25).
+# Before the fix this was a Python traceback and exit 1.
+check "Stopped, brought up: reaches the hub check (25)" 25 "$STS" pull
+check "  'tailscale up' really ran"                      0 test -f "$CASE/stub/up-ran"
+rm -f "$CASE/stub/up-ran"
+check "  with no Python traceback"                       1 sh -c '"$1" pull 2>&1 | grep -q Traceback' _ "$STS"
+rm -f "$CASE/stub/up-ran"
+check "  and still says it is bringing tailscale up"     0 sh -c '"$1" pull 2>&1 | grep -q "bringing it up"' _ "$STS"
+PATH="$PATH_UP_SAVED"
+unset STS_TS_APP_PATH
+
+# --------------------------------------------------------------------------
 section "play when only this machine changed (#99)"
 newcase playahead
 "$STS" push --force=local >/dev/null 2>&1

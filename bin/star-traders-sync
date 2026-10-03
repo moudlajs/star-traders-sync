@@ -602,7 +602,9 @@ ts_ensure_up() {
     fi
 
     log WARN tailscale "backend state is $state, attempting 'tailscale up' once"
-    say "Tailscale is $state - bringing it up (one attempt)..."
+    # stderr, not say: this function's stdout is the JSON its caller
+    # captures, and a sentence in front of it broke every parser (#103).
+    printf 'Tailscale is %s - bringing it up (one attempt)...\n' "$state" >&2
 
     local out rc
     set +e
