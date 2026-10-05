@@ -88,7 +88,7 @@ final class SyncStatusTests: XCTestCase {
             CommandResult(status: 25, stdout: "", stderr: "info\nerror: hub nebulaplex01 is offline")
         }
         guard case .failure(let p) = off else { return XCTFail() }
-        XCTAssertEqual(p.title, "The hub is offline")
+        XCTAssertEqual(p.title, "The Hub is offline")
         XCTAssertEqual(p.detail, "hub nebulaplex01 is offline")
         XCTAssertFalse(p.needsChoice)
     }

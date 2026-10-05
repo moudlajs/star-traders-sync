@@ -12,7 +12,7 @@ enum Step: Int, CaseIterable, Identifiable {
         case .welcome:   return "Welcome"
         case .tailscale: return "Tailscale"
         case .role:      return "Your Macs"
-        case .connect:   return "Connect to hub"
+        case .connect:   return "Connect to Hub"
         case .install:   return "Install"
         case .check:     return "Check"
         case .done:      return "Done"
@@ -39,7 +39,7 @@ struct InstallStage: Identifiable {
         case .files:     return "Install the sync tool"
         case .commands:  return "Add the sts command"
         case .settings:  return "Save your settings"
-        case .hubFolder: return "Create the hub folder"
+        case .hubFolder: return "Create the Hub folder"
         }
     }
 }
@@ -226,7 +226,7 @@ final class WizardModel: ObservableObject {
     func applyDefaultHubPath() {
         guard !hubPathEdited else { return }
         let user = role == .hub ? NSUserName() : hubUser
-        hubPath = "/Users/\(user)/star-traders-sync-hub"
+        hubPath = "/Users/\(user)/star-traders-sync-Hub"
     }
 
     func refreshVolumes() {
@@ -273,7 +273,7 @@ final class WizardModel: ObservableObject {
 
     var problems: [String] {
         guard let v = values else {
-            return [role == .hub ? "Tailscale has not reported this Mac's name." : "Pick the Mac that holds the hub."]
+            return [role == .hub ? "Tailscale has not reported this Mac's name." : "Pick the Mac that holds the Hub."]
         }
         return ConfigFile.problems(v, localSavePath: localSavePath, home: NSHomeDirectory())
     }

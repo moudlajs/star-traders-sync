@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.alertStyle = .warning
         alert.messageText = "Star Traders Sync is still working"
         alert.informativeText = run.action == .play
-            ? "If you quit now, your saves are not sent to the hub when you finish playing. Quit the game first and wait for Done, or send them later with the Send button."
+            ? "If you quit now, your saves are not sent to the Hub when you finish playing. Quit the game first and wait for Done, or send them later with the Send button."
             : "Quitting now stops the sync part way. The sync tool never overwrites without a safety copy, but it may ask you to repair the interrupted sync next time."
         alert.addButton(withTitle: "Keep syncing")
         alert.addButton(withTitle: "Quit anyway")
@@ -260,14 +260,14 @@ struct WelcomePage: View {
                   subtitle: "This sets up star-traders-sync on this Mac, so you can play on any of your Macs and always pick up where you left off.")
         VStack(alignment: .leading, spacing: 14) {
             Text("How it works").font(.headline)
-            Text("One Mac, the **hub**, keeps the master copy of your saves. Every time you play, the sync tool fetches the saves from the hub first and sends them back when you quit the game. Your Macs reach each other through **Tailscale**, so it works on any network.")
+            Text("One Mac, the **Hub**, keeps the master copy of your saves. Every time you play, the sync tool fetches the saves from the Hub first and sends them back when you quit the game. Your Macs reach each other through **Tailscale**, so it works on any network.")
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Set up the hub Mac first, then each Mac you play on. It takes a few minutes per Mac. Nothing here touches your save files.")
+            Text("Set up the Hub Mac first, then each Mac you play on. It takes a few minutes per Mac. Nothing here touches your save files.")
                 .fixedSize(horizontal: false, vertical: true)
 
             if let v = m.existingConfig {
                 Card {
-                    StatusRow(state: .ok, text: "This Mac is already set up, with the hub on **\(v.hubHost)**. Going through again keeps your settings unless you change them, and backs up the old config first.")
+                    StatusRow(state: .ok, text: "This Mac is already set up, with the Hub on **\(v.hubHost)**. Going through again keeps your settings unless you change them, and backs up the old config first.")
                 }
             }
             if m.bundledScript == nil {
@@ -290,7 +290,7 @@ struct TailscalePage: View {
                 StatusRow(state: .ok, text: "Tailscale is running. This Mac is **\(me.nodeName)**.")
                 let macs = s.peers.filter { $0.os == "macOS" }
                 if macs.isEmpty {
-                    StatusRow(state: .warn, text: "No other Macs are on your Tailscale yet. That is fine if this will be the hub. Otherwise, set up Tailscale on the other Mac with the same account.")
+                    StatusRow(state: .warn, text: "No other Macs are on your Tailscale yet. That is fine if this will be the Hub. Otherwise, set up Tailscale on the other Mac with the same account.")
                 } else {
                     Text("Other Macs on your Tailscale:").foregroundStyle(.secondary)
                     ForEach(macs) { p in
@@ -323,11 +323,11 @@ struct RolePage: View {
 
     var body: some View {
         PageTitle(title: "Your Macs",
-                  subtitle: "Choose the hub: the Mac that is on most of the time. It keeps the master copy of your saves.")
+                  subtitle: "Choose the Hub: the Mac that is on most of the time. It keeps the master copy of your saves.")
         VStack(alignment: .leading, spacing: 16) {
             Picker("", selection: $m.role) {
-                Text("Another Mac is the hub").tag(Role.client)
-                Text("This Mac is the hub").tag(Role.hub)
+                Text("Another Mac is the Hub").tag(Role.client)
+                Text("This Mac is the Hub").tag(Role.hub)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -344,10 +344,10 @@ struct RolePage: View {
 
     @ViewBuilder var clientForm: some View {
         Card {
-            Text("Which Mac is the hub?").font(.headline)
+            Text("Which Mac is the Hub?").font(.headline)
             let candidates = m.tsStatus?.hubCandidates ?? []
             if candidates.isEmpty {
-                StatusRow(state: .warn, text: "No other Macs are on your Tailscale. Set up the hub Mac first.")
+                StatusRow(state: .warn, text: "No other Macs are on your Tailscale. Set up the Hub Mac first.")
             } else {
                 Picker("Hub", selection: $m.selectedHubID) {
                     ForEach(candidates) { p in
@@ -360,18 +360,18 @@ struct RolePage: View {
             }
         }
         Card {
-            Text("Your account on the hub").font(.headline)
-            Text("The short account name on the hub Mac, the one its home folder is named after (/Users/**name**).")
+            Text("Your account on the Hub").font(.headline)
+            Text("The short account name on the Hub Mac, the one its home folder is named after (/Users/**name**).")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextField("account name", text: $m.hubUser)
                 .frame(maxWidth: 320)
                 .onChange(of: m.hubUser) { _ in m.applyDefaultHubPath() }
             Text("Hub folder on that Mac").font(.subheadline).padding(.top, 4)
-            TextField("/Users/name/star-traders-sync-hub", text: Binding(
+            TextField("/Users/name/star-traders-sync-Hub", text: Binding(
                 get: { m.hubPath },
                 set: { m.hubPath = $0; m.hubPathEdited = true }))
             .font(.system(.body, design: .monospaced))
-            Text("Use the same folder the hub Mac was set up with. The default is right unless you changed it there.")
+            Text("Use the same folder the Hub Mac was set up with. The default is right unless you changed it there.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -408,7 +408,7 @@ struct RolePage: View {
             }
             .labelsHidden()
             .frame(maxWidth: 320)
-            Text("The hub can copy your saves to an external disk every night. Setting up the nightly job is a Terminal step for now, see docs/backups.md on GitHub.")
+            Text("The Hub can copy your saves to an external disk every night. Setting up the nightly job is a Terminal step for now, see docs/backups.md on GitHub.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -418,9 +418,9 @@ struct ConnectPage: View {
     @EnvironmentObject var m: WizardModel
 
     var body: some View {
-        let hubName = m.selectedHub?.nodeName ?? "the hub"
+        let hubName = m.selectedHub?.nodeName ?? "the Hub"
         PageTitle(title: "Connect to \(hubName)",
-                  subtitle: "This Mac gets a key that lets it reach the hub without a password. You need the hub account's password once.")
+                  subtitle: "This Mac gets a key that lets it reach the Hub without a password. You need the Hub account's password once.")
         VStack(alignment: .leading, spacing: 14) {
             if m.connectBusy {
                 StatusRow(state: .busy, text: "Working…")
@@ -440,7 +440,7 @@ struct ConnectPage: View {
 
     @ViewBuilder var hostKeyCard: some View {
         if m.hostTrusted {
-            StatusRow(state: .ok, text: "The hub's identity is confirmed.")
+            StatusRow(state: .ok, text: "The Hub's identity is confirmed.")
         } else if let err = m.scanError {
             Card {
                 StatusRow(state: .fail, text: err)
@@ -450,14 +450,14 @@ struct ConnectPage: View {
             }
         } else if let k = m.scanned {
             Card {
-                Text("Confirm it is really your hub").font(.headline)
-                Text("The hub introduced itself with this fingerprint:")
+                Text("Confirm it is really your Hub").font(.headline)
+                Text("The Hub introduced itself with this fingerprint:")
                 CommandBox(command: k.fingerprint)
-                Text("On the **hub Mac**, open Terminal and run this. It must print the same fingerprint:")
+                Text("On the **Hub Mac**, open Terminal and run this. It must print the same fingerprint:")
                     .fixedSize(horizontal: false, vertical: true)
                 CommandBox(command: "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub")
                 Toggle("They are the same", isOn: $m.fingerprintConfirmed)
-                Button("Trust this hub") { m.trustHostKey() }
+                Button("Trust this Hub") { m.trustHostKey() }
                     .disabled(!m.fingerprintConfirmed)
             }
         }
@@ -466,7 +466,7 @@ struct ConnectPage: View {
     @ViewBuilder var passwordCard: some View {
         Card {
             Text("Hub password").font(.headline)
-            Text("The password of **\(m.hubUser)** on the hub Mac. It is used once to install this Mac's key, and is not saved anywhere.")
+            Text("The password of **\(m.hubUser)** on the Hub Mac. It is used once to install this Mac's key, and is not saved anywhere.")
                 .fixedSize(horizontal: false, vertical: true)
             SecureField("password", text: $m.password)
                 .frame(maxWidth: 320)
@@ -487,7 +487,7 @@ struct InstallPage: View {
             if let v = m.values {
                 Card {
                     LabeledContent("Hub", value: v.hubHost)
-                    LabeledContent("Account on hub", value: v.hubUser)
+                    LabeledContent("Account on Hub", value: v.hubUser)
                     LabeledContent("Hub folder", value: v.hubPath)
                     if m.role == .hub {
                         LabeledContent("Backup disk", value: v.backupVolume.map { ($0 as NSString).lastPathComponent } ?? "none")
@@ -568,8 +568,8 @@ struct DonePage: View {
     var body: some View {
         PageTitle(title: m.doctor.passed == true ? "All set" : "Almost there",
                   subtitle: m.role == .hub
-                    ? "This Mac is the hub. Now run this app on each Mac you play on."
-                    : "This Mac is connected to the hub.")
+                    ? "This Mac is the Hub. Now run this app on each Mac you play on."
+                    : "This Mac is connected to the Hub.")
         VStack(alignment: .leading, spacing: 14) {
             if m.doctor.passed != true {
                 StatusRow(state: .warn, text: "The check still reported problems. Go back to Check to see them.")
@@ -577,7 +577,7 @@ struct DonePage: View {
             Text("From now on, start the game like this").font(.headline)
             Text("Open **Terminal** and type:")
             CommandBox(command: "sts play")
-            Text("It fetches your saves from the hub, starts Star Traders, and sends your saves back when you quit the game. Keep the Terminal window open until it says it has pushed.")
+            Text("It fetches your saves from the Hub, starts Star Traders, and sends your saves back when you quit the game. Keep the Terminal window open until it says it has pushed.")
                 .fixedSize(horizontal: false, vertical: true)
             Text("Terminal windows that were already open do not know the `sts` command yet. Open a new one.")
                 .font(.caption).foregroundStyle(.secondary)

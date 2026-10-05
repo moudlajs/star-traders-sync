@@ -28,6 +28,25 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertEqual(try actions("DIVERGED_STATE"), [.resetRecord], "--force does not override it")
     }
 
+    /// #89: the newer side is recommended, whichever it is.
+    func testConflictsRecommendTheNewerSaves() throws {
+        // In the sample the Hub was played later than this Mac.
+        let b = SyncActions.plan(for: try status("BOTH_CHANGED")).buttons
+        XCTAssertEqual(b.map(\.action), [.keepHub, .keepLocal])
+        XCTAssertEqual(b.map(\.label), ["Keep the newer saves", "Keep the other"])
+        XCTAssertEqual(b.map(\.prominent), [true, false])
+        XCTAssertNotNil(b[0].confirmation)
+        XCTAssertNotNil(b[1].confirmation)
+
+        // This Mac played later: then this Mac's saves are the newer ones.
+        let json = SyncStatusTests.sample
+            .replacingOccurrences(of: "\"FIRSTRUN_CONFLICT\"", with: "\"BOTH_CHANGED\"")
+            .replacingOccurrences(of: "\"newest\": 1789844322", with: "\"newest\": 1799999999")
+        let local = SyncActions.plan(for: try SyncStatus.decode(Data(json.utf8))).buttons
+        XCTAssertEqual(local.map(\.action), [.keepLocal, .keepHub])
+        XCTAssertEqual(local.first?.label, "Keep the newer saves")
+    }
+
     func testEveryDecisionHasAtLeastOneButton() throws {
         for d in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
                   "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE", "LOCAL_EMPTIED"] {
