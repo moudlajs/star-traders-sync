@@ -84,6 +84,51 @@ final class SyncActionsTests: XCTestCase {
         }
     }
 
+    /// The whole safety case for syncing without asking: only a plain pull
+    /// when only the hub changed, a plain push when only this Mac did.
+    func testAutomaticSyncOnlyDoesTheTwoSafeMoves() throws {
+        for d in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
+                  "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE", "LOCAL_EMPTIED"] {
+            let a = SyncActions.automatic(for: try status(d))
+            switch d {
+            case "HUB_ONLY", "FIRST_SEED": XCTAssertEqual(a?.action, .pull, d)
+            case "LOCAL_ONLY":             XCTAssertEqual(a?.action, .push, d)
+            default:                       XCTAssertNil(a, "\(d) must ask, never sync by itself")
+            }
+            if let a {
+                let args = try XCTUnwrap(a.action.arguments(expecting: a.expected))
+                XCTAssertFalse(args.contains { $0.hasPrefix("--force") }, "\(d): automatic must never force")
+                XCTAssertEqual(args.last, "--expect-decision=\(d)", "\(d): automatic must be pinned")
+                XCTAssertNil(a.confirmation)
+            }
+        }
+    }
+
+    func testAutomaticSyncWaitsForTheGameAndOtherMacs() throws {
+        XCTAssertNil(SyncActions.automatic(for: try status("HUB_ONLY", game: true)))
+        XCTAssertNil(SyncActions.automatic(for: try status("LOCAL_ONLY", lock: "workmac 1")))
+    }
+
+    /// A press queued during a status check runs only if still valid.
+    func testAQueuedPressRunsOnlyIfStillOffered() throws {
+        let play = try XCTUnwrap(SyncActions.plan(for: try status("HUB_ONLY")).buttons.first { $0.action == .play })
+        XCTAssertTrue(SyncActions.stillOffered(play, for: try status("HUB_ONLY")))
+        XCTAssertFalse(SyncActions.stillOffered(play, for: try status("BOTH_CHANGED")), "the situation changed")
+        XCTAssertFalse(SyncActions.stillOffered(play, for: try status("HUB_ONLY", game: true)), "the game started")
+        XCTAssertFalse(SyncActions.stillOffered(play, for: try status("HUB_ONLY", lock: "workmac 1")), "another Mac took the lock")
+
+        var stale = play
+        stale.expected = .hubEmpty
+        XCTAssertFalse(SyncActions.stillOffered(stale, for: try status("HUB_EMPTY")),
+                       "same decision, but play is not offered for HUB_EMPTY")
+    }
+
+    func testSituationKeyChangesWithEitherSide() throws {
+        let a = try status("HUB_ONLY")
+        XCTAssertEqual(SyncActions.situationKey(a), SyncActions.situationKey(try status("HUB_ONLY")))
+        XCTAssertNotEqual(SyncActions.situationKey(a), SyncActions.situationKey(try status("LOCAL_ONLY")))
+    }
+
     func testArgumentsAreTheCLIs() {
         XCTAssertEqual(SyncAction.keepHub.arguments, ["pull", "--force=hub"])
         XCTAssertEqual(SyncAction.keepLocal.arguments, ["push", "--force=local"])
