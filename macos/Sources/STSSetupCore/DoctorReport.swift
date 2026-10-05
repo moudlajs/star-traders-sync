@@ -134,3 +134,42 @@ public struct DoctorReport: Equatable {
         return r
     }
 }
+
+/// One row of the health check as drawn: every expected section is on
+/// screen from the start, greyed, and changes in place as the run
+/// reaches it, so nothing slides in or overlaps.
+public struct DoctorRow: Identifiable, Equatable {
+    public enum State: Equatable { case pending, checking, done, notChecked }
+    public let title: String
+    public let section: DoctorSection?
+    public let state: State
+    public var id: String { title }
+    public var displayTitle: String { DoctorSection(title: title).displayTitle }
+}
+
+extension DoctorReport {
+    /// The sections doctor prints, in its order, whatever the machine.
+    /// "hub duties" only on the Hub, and "everything else" when the config
+    /// is unusable, are appended where they occur.
+    public static let expectedTitles = ["environment", "config", "state and logs", "game", "tailscale", "ssh to the hub"]
+
+    /// `revealed`: how many of the report's sections are shown so far (the
+    /// paced reveal); `finished`: the run and its reveal are over.
+    public func rows(revealed: Int, finished: Bool) -> [DoctorRow] {
+        var titles = Self.expectedTitles
+        for s in sections where !titles.contains(s.title) { titles.append(s.title) }
+        let shownTitles = Set(sections.prefix(revealed).map(\.title))
+        var checkingGiven = false
+        return titles.map { title in
+            if shownTitles.contains(title), let s = sections.first(where: { $0.title == title }) {
+                return DoctorRow(title: title, section: s, state: .done)
+            }
+            if finished { return DoctorRow(title: title, section: nil, state: .notChecked) }
+            if !checkingGiven {
+                checkingGiven = true
+                return DoctorRow(title: title, section: nil, state: .checking)
+            }
+            return DoctorRow(title: title, section: nil, state: .pending)
+        }
+    }
+}
