@@ -43,11 +43,11 @@ public enum SyncAction: String, CaseIterable, Identifiable {
     public var stages: [String] {
         switch self {
         case .play:
-            return ["Get the latest saves", "Start Star Traders", "Playing", "Send your saves to the hub"]
+            return ["Get the latest saves", "Start Star Traders", "Playing", "Send your saves to the Hub"]
         case .pull, .keepHub:
-            return ["Check both sides", "Copy the hub's saves to this Mac"]
+            return ["Check both sides", "Copy the Hub's saves to this Mac"]
         case .push, .keepLocal:
-            return ["Check both sides", "Send this Mac's saves to the hub"]
+            return ["Check both sides", "Send this Mac's saves to the Hub"]
         case .resetRecord:
             return ["Reset this Mac's sync record"]
         }
@@ -87,21 +87,21 @@ public enum SyncActions {
     /// that state: a plain pull where pull would refuse is never offered.
     public static func plan(for s: SyncStatus) -> ActionPlan {
         var plan = ActionPlan()
-        let hubName = s.isHub ? "the hub" : s.hub.host
+        let hubName = s.isHub ? "the Hub" : s.hub.host
         let local = describe(s.sides.local)
         let hub = describe(s.sides.hub)
 
         let keepHub = ActionButton(
-            action: .keepHub, label: "Keep the hub's saves", prominent: false,
+            action: .keepHub, label: "Keep the Hub's saves", prominent: false,
             confirmation: .init(
-                title: "Replace this Mac's saves with the hub's?",
-                message: "This Mac's saves (\(local)) are replaced by the hub's (\(hub)). A safety copy of this Mac's saves is kept first, so this can be undone.",
-                button: "Keep the hub's saves"))
+                title: "Replace this Mac's saves with the Hub's?",
+                message: "This Mac's saves (\(local)) are replaced by the Hub's (\(hub)). A safety copy of this Mac's saves is kept first, so this can be undone.",
+                button: "Keep the Hub's saves"))
         let keepLocal = ActionButton(
             action: .keepLocal, label: "Keep this Mac's saves", prominent: false,
             confirmation: .init(
-                title: "Replace the hub's saves with this Mac's?",
-                message: "The hub's saves (\(hub)) are replaced by this Mac's (\(local)), and every other Mac gets them the next time it plays. A safety copy of the hub's saves is kept first, so this can be undone.",
+                title: "Replace the Hub's saves with this Mac's?",
+                message: "The Hub's saves (\(hub)) are replaced by this Mac's (\(local)), and every other Mac gets them the next time it plays. A safety copy of the Hub's saves is kept first, so this can be undone.",
                 button: "Keep this Mac's saves"))
         let play = ActionButton(action: .play, label: "Play", prominent: true, confirmation: nil)
 
@@ -110,27 +110,44 @@ public enum SyncActions {
             plan.buttons = [play]
         case .hubOnly, .firstSeed:
             plan.buttons = [play,
-                            ActionButton(action: .pull, label: "Get the hub's saves now", prominent: false, confirmation: nil)]
+                            ActionButton(action: .pull, label: "Get the Hub's saves now", prominent: false, confirmation: nil)]
         case .localOnly:
             // Play skips the fetch here (#99) and sends afterwards.
             plan.buttons = [play,
                             ActionButton(action: .push, label: "Send to \(hubName) now", prominent: false, confirmation: nil)]
         case .hubEmpty:
             plan.buttons = [ActionButton(
-                action: .keepLocal, label: "Send this Mac's saves to the hub", prominent: true,
+                action: .keepLocal, label: "Send this Mac's saves to the Hub", prominent: true,
                 confirmation: .init(
-                    title: "Start the hub with this Mac's saves?",
-                    message: "The hub is empty. This Mac's saves (\(local)) become the saves every Mac syncs from. If the hub should have had saves, check it first.",
-                    button: "Send to the hub"))]
+                    title: "Start the Hub with this Mac's saves?",
+                    message: "The Hub is empty. This Mac's saves (\(local)) become the saves every Mac syncs from. If the Hub should have had saves, check it first.",
+                    button: "Send to the Hub"))]
         case .localEmptied:
             plan.buttons = [ActionButton(
-                action: .keepHub, label: "Restore from the hub", prominent: true,
+                action: .keepHub, label: "Restore from the Hub", prominent: true,
                 confirmation: .init(
-                    title: "Restore this Mac's saves from the hub?",
-                    message: "This Mac's save folder is empty. The hub's saves (\(hub)) are copied here.",
+                    title: "Restore this Mac's saves from the Hub?",
+                    message: "This Mac's save folder is empty. The Hub's saves (\(hub)) are copied here.",
                     button: "Restore"))]
         case .bothChanged, .firstRunConflict:
-            plan.buttons = [keepHub, keepLocal]
+            // #89: recommend the side played more recently, first and
+            // prominent; the other stays one click away. Both confirm, and
+            // the confirmation names both sides' last-played times.
+            // The times are file mtimes from two Macs, so only a clear gap
+            // earns a recommendation: a near tie, or a side with no
+            // timestamp, gets two neutral buttons named by side.
+            let h = s.sides.hub.newest, l = s.sides.local.newest
+            if h > 0, l > 0, abs(h - l) >= recommendAfter {
+                let hubNewer = h > l
+                let newer = hubNewer ? keepHub : keepLocal
+                let other = hubNewer ? keepLocal : keepHub
+                plan.buttons = [
+                    ActionButton(action: newer.action, label: "Keep the newer saves", prominent: true, confirmation: newer.confirmation),
+                    ActionButton(action: other.action, label: "Keep the other", prominent: false, confirmation: other.confirmation),
+                ]
+            } else {
+                plan.buttons = [keepHub, keepLocal]
+            }
         case .divergedState:
             plan.buttons = [ActionButton(
                 action: .resetRecord, label: "Reset this Mac's sync record", prominent: false,
@@ -148,7 +165,7 @@ public enum SyncActions {
         if s.gameRunning {
             plan.blockedBecause = "Star Traders is running. Quit it first; saves are never copied while the game has them open."
         } else if let lock = s.hubLock {
-            plan.blockedBecause = "Another Mac is syncing with the hub right now (\(lock.trimmingCharacters(in: .whitespaces))). Try again in a minute."
+            plan.blockedBecause = "Another Mac is syncing with the Hub right now (\(lock.trimmingCharacters(in: .whitespaces))). Try again in a minute."
         }
         return plan
     }
@@ -188,6 +205,11 @@ public enum SyncActions {
     public static func situationKey(_ s: SyncStatus) -> String {
         "\(s.decision.rawValue):\(s.sides.local.fingerprint):\(s.sides.hub.fingerprint)"
     }
+
+    /// The gap in last-played times, in seconds, below which neither side
+    /// is called "newer": clocks on two Macs drift, and a file touched
+    /// without play moves its mtime.
+    public static let recommendAfter = 30 * 60
 
     static func describe(_ side: SyncStatus.Side) -> String {
         let n = side.campaignSaves

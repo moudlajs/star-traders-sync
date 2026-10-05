@@ -100,17 +100,17 @@ public struct SyncProblem: Error, Equatable {
         case 13:
             (title, advice) = ("The game's save folder is missing", "Start Star Traders once on this Mac so it creates its save folder.")
         case 14:
-            (title, advice) = ("The hub folder is missing", "The hub has no save folder yet. Run the setup again, or check the hub Mac.")
+            (title, advice) = ("The Hub folder is missing", "The Hub has no save folder yet. Run the setup again, or check the Hub Mac.")
         case 20, 21, 22, 23:
             (title, advice) = ("Tailscale is not connected", "Open Tailscale and make sure it is connected, then try again.")
         case 24:
-            (title, advice) = ("The hub is not on your Tailscale", "The hub Mac is not on this Tailscale account. Run the setup again to pick the right one.")
+            (title, advice) = ("The Hub is not on your Tailscale", "The Hub Mac is not on this Tailscale account. Run the setup again to pick the right one.")
         case 25, 26:
-            (title, advice) = ("The hub is offline", "Wake the hub Mac, or check that Tailscale is running on it.")
+            (title, advice) = ("The Hub is offline", "Wake the Hub Mac, or check that Tailscale is running on it.")
         case 30, 31:
-            (title, advice) = ("Cannot log in to the hub", "Run the setup again to reconnect this Mac to the hub.")
+            (title, advice) = ("Cannot log in to the Hub", "Run the setup again to reconnect this Mac to the Hub.")
         case 32:
-            (title, advice) = ("No access to the hub folder", "The hub account cannot read or write the hub folder.")
+            (title, advice) = ("No access to the Hub folder", "The Hub account cannot read or write the Hub folder.")
         case 33, 34:
             (title, advice) = ("Copying failed", "The transfer failed or a disk is full. Nothing was overwritten.")
         case 40:
@@ -118,15 +118,15 @@ public struct SyncProblem: Error, Equatable {
         case 41:
             (title, advice) = ("The game did not start", "Check that Star Traders is installed in Steam and that Steam is running.")
         case 50, 51:
-            (title, advice) = ("Another Mac is syncing", "Another Mac is syncing with the hub right now. Try again in a minute.")
+            (title, advice) = ("Another Mac is syncing", "Another Mac is syncing with the Hub right now. Try again in a minute.")
         case 52:
             (title, advice) = ("A sync is already running on this Mac", "Wait for it to finish.")
         case 60:
-            (title, advice) = ("Both Macs have new saves", "Both this Mac and the hub changed since the last sync. Choose which saves to keep.")
+            (title, advice) = ("Both Macs have new saves", "Both this Mac and the Hub changed since the last sync. Choose which saves to keep.")
         case 61:
-            (title, advice) = ("Choose which saves to keep", "This Mac and the hub both have saves, and they have never synced. Choose which to keep.")
+            (title, advice) = ("Choose which saves to keep", "This Mac and the Hub both have saves, and they have never synced. Choose which to keep.")
         case 62:
-            (title, advice) = ("The hub has no saves yet", "Send this Mac's saves to the hub to start.")
+            (title, advice) = ("The Hub has no saves yet", "Send this Mac's saves to the Hub to start.")
         case 64:
             (title, advice) = ("The saves changed while you were choosing", "Another Mac synced in the meantime, so nothing was done. Here is the situation now: choose again.")
         case 63:

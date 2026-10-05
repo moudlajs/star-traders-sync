@@ -6,6 +6,15 @@ final class ConfigFileTests: XCTestCase {
     let hub = SetupValues(hubHost: "hubmac", hubUser: "dan", hubPath: "/Users/dan/star-traders-sync-hub",
                           backupVolume: "/Volumes/T9")
 
+    /// A path, not text: the Hub capitalisation sweep once turned it into
+    /// star-traders-sync-Hub, which on a case-sensitive volume is another,
+    /// empty folder. Pinned to what every install and the docs use.
+    func testDefaultHubPathIsTheExistingOne() throws {
+        XCTAssertEqual(ConfigFile.defaultHubPath(user: "dan"), "/Users/dan/star-traders-sync-hub")
+        let docs = try String(contentsOf: InstallerTests.repo.appendingPathComponent("config.example"), encoding: .utf8)
+        XCTAssertTrue(docs.contains("star-traders-sync-hub"), "config.example still uses the same name")
+    }
+
     func testRenderHasEveryRequiredKey() {
         let c = ConfigFile.parse(ConfigFile.render(client, examplePath: "/x/config.example"))
         for k in ["HUB_HOST", "HUB_USER", "HUB_PATH", "LOCAL_SAVE_PATH", "STEAM_APPID",

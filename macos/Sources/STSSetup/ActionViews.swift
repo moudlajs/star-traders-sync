@@ -10,6 +10,8 @@ final class ActionRun: ObservableObject, Identifiable {
     @Published private(set) var progress: ActionProgress
     @Published private(set) var ended = false
     @Published private(set) var problem: SyncProblem?
+    /// When the game started (play's third stage), for the in-game clock.
+    @Published private(set) var playStartedAt: Date?
 
     init(action: SyncAction, automatic: Bool = false) {
         self.action = action
@@ -19,7 +21,9 @@ final class ActionRun: ObservableObject, Identifiable {
 
     func feed(_ line: String) {
         guard !ended else { return }
+        let before = progress.current
         progress.feed(line)
+        if action == .play, before < 2, progress.current == 2 { playStartedAt = Date() }
     }
 
     func finish(status: Int32, output: String) {
@@ -29,47 +33,6 @@ final class ActionRun: ObservableObject, Identifiable {
             problem = SyncProblem.from(code: status, stderr: output)
         }
         ended = true
-    }
-}
-
-/// The buttons under the status card. Only what the script accepts in the
-/// current state is offered (SyncActions.plan).
-struct ActionButtons: View {
-    @EnvironmentObject var d: DashboardModel
-    let plan: ActionPlan
-
-    var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                ForEach(plan.buttons) { b in
-                    if b.prominent {
-                        Button { d.tapped(b) } label: {
-                            Label(b.label, systemImage: b.action == .play ? "play.fill" : "arrow.triangle.2.circlepath")
-                                .labelStyle(.titleAndIcon)
-                                .frame(minWidth: 150)
-                                .padding(.vertical, 3)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(b.action == .play ? .defaultAction : nil)
-                    } else {
-                        Button { d.tapped(b) } label: {
-                            Text(b.label).padding(.vertical, 3)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-            }
-            .controlSize(.large)
-            // Not disabled during a status check: that only dims the button
-            // for a moment. A press then waits for the check (tapped()).
-            .disabled(d.busy || plan.blockedBecause != nil)
-            if let why = plan.blockedBecause {
-                Text(why).font(.callout).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 380)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
     }
 }
 
@@ -153,45 +116,10 @@ struct ActivityCard: View {
                     .fontWeight(s == .running ? .semibold : .regular)
                     .foregroundStyle(s == .pending ? .secondary : .primary)
                 if run.action == .play && i == 2 && run.progress.gameCrashed {
-                    Text("The game crashed. Your saves are still sent to the hub.")
+                    Text("The game crashed. Your saves are still sent to the Hub.")
                         .font(.callout).foregroundStyle(.orange)
                 }
             }
         }
-    }
-}
-
-/// The steps of a running action, compact, for the centre of the window.
-struct StepList: View {
-    @ObservedObject var run: ActionRun
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(run.action.stages.enumerated()), id: \.offset) { i, stage in
-                let s = state(i)
-                HStack(spacing: 10) {
-                    Group {
-                        switch s {
-                        case .pending: Image(systemName: "circle").foregroundStyle(.tertiary)
-                        case .running: ProgressView().controlSize(.small)
-                        case .done:    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        case .failed:  Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                        }
-                    }
-                    .frame(width: 18)
-                    Text(stage)
-                        .fontWeight(s == .running ? .semibold : .regular)
-                        .foregroundStyle(s == .pending ? .secondary : .primary)
-                }
-            }
-        }
-        .fixedSize()
-        .animation(.easeOut(duration: 0.2), value: run.progress)
-    }
-
-    func state(_ i: Int) -> InstallStage.State {
-        if i < run.progress.current { return .done }
-        if i == run.progress.current { return run.ended ? .done : .running }
-        return .pending
     }
 }
