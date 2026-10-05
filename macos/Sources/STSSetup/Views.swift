@@ -9,9 +9,12 @@ final class AppModel: ObservableObject {
     @Published var showingSetup: Bool
     @Published var wizard = WizardModel()
     let dashboard = DashboardModel()
+    let updates = UpdateModel()
 
     init() {
         AppDelegate.dashboard = dashboard
+        updates.dashboard = dashboard
+        updates.start()
         let layout = InstallLayout()
         let configured = FileManager.default.fileExists(atPath: layout.configFile.path)
         if configured {
@@ -70,6 +73,7 @@ struct StarTradersSyncApp: App {
             RootView()
                 .environmentObject(app)
                 .environmentObject(app.dashboard)
+                .environmentObject(app.updates)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .windowResizability(.contentSize)

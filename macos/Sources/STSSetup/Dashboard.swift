@@ -365,6 +365,7 @@ func relative(_ date: Date?) -> String {
 
 struct DashboardView: View {
     @EnvironmentObject var app: AppModel
+    @EnvironmentObject var updates: UpdateModel
     @EnvironmentObject var d: DashboardModel
 
     var body: some View {
@@ -388,6 +389,9 @@ struct DashboardView: View {
         .navigationTitle("Star Traders Sync")
         .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                UpdateButton(updates: updates)
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { d.refresh() } label: {
                     if d.loading {
@@ -400,6 +404,8 @@ struct DashboardView: View {
                 .disabled(d.busy)
 
                 Menu {
+                    Text("Star Traders Sync \(updates.currentVersion)")
+                    Divider()
                     Toggle("Sync automatically", isOn: $d.autoSync)
                     Divider()
                     Button("Health check") {
