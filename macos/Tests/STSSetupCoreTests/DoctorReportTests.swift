@@ -58,6 +58,38 @@ final class DoctorReportTests: XCTestCase {
         XCTAssertEqual(r.summary, ["Everything checks out. Try:  sts status"])
     }
 
+    func testAllRowsAreDrawnFromTheStart() {
+        let rows = DoctorReport().rows(revealed: 0, finished: false)
+        XCTAssertEqual(rows.map(\.title), DoctorReport.expectedTitles)
+        XCTAssertEqual(rows.map(\.state), [.checking] + Array(repeating: .pending, count: 5))
+    }
+
+    func testRowsChangeInPlaceAsTheRunReachesThem() {
+        let r = DoctorReport.parse(Self.sample)
+        let mid = r.rows(revealed: 2, finished: false)
+        XCTAssertEqual(mid.prefix(2).map(\.state), [.done, .done])
+        XCTAssertEqual(mid[2].state, .checking, "the next one, in place")
+        XCTAssertEqual(mid.count, 6, "no row appears or vanishes mid-run")
+        let end = r.rows(revealed: r.sections.count, finished: true)
+        XCTAssertEqual(end.filter { $0.state == .notChecked }.map(\.title), ["game"], "the sample has no game section")
+        XCTAssertEqual(end.filter { $0.state == .done }.count, 5)
+    }
+
+    func testSectionsThatNeverRanEndAsNotChecked() {
+        // A broken config: doctor prints "everything else" and stops.
+        let r = DoctorReport.parse("x\n\n  environment\n    ok    bash\n\n  config\n    FAIL  no config\n\n  everything else\n    --    skipped, needs: a valid config\n\n  1 problem(s)\n")
+        let end = r.rows(revealed: r.sections.count, finished: true)
+        XCTAssertEqual(end.map(\.title), DoctorReport.expectedTitles + ["everything else"])
+        XCTAssertEqual(end.filter { $0.state == .notChecked }.map(\.title), ["state and logs", "game", "tailscale", "ssh to the hub"])
+    }
+
+    func testTheHubsOwnSectionIsAppended() {
+        let r = DoctorReport.parse(Self.sample + "\n  hub duties (this machine)\n    ok    hub directory, 11 files\n")
+        let rows = r.rows(revealed: 99, finished: true)
+        XCTAssertEqual(rows.last?.title, "hub duties (this machine)", "appended after the expected ones")
+        XCTAssertEqual(rows.last?.state, .done)
+    }
+
     func testDisplayTitle() {
         XCTAssertEqual(DoctorSection(title: "ssh to the hub").displayTitle, "Connection to the hub")
         XCTAssertEqual(DoctorSection(title: "hub duties (this machine)").displayTitle, "Hub duties")

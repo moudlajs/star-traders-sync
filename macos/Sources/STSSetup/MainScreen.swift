@@ -64,10 +64,10 @@ struct MainHero: View {
             return r.action == .push || r.action == .keepLocal
                 || (r.action == .play && r.progress.current >= 3) ? .sending : .fetching
         case .justSynced:
-            return .tick
+            return .tick(celebrate: true)
         case .status(let s):
             switch s.decision {
-            case .inSync:                              return .tick
+            case .inSync:                              return .tick(celebrate: false)
             case .hubOnly, .firstSeed, .localEmptied:  return .arrow(up: false)
             case .localOnly, .hubEmpty:                return .arrow(up: true)
             default:                                   return .warning
@@ -277,7 +277,10 @@ struct InGamePill: View {
 
 /// The big symbol at the top, with its motion.
 enum Face: Equatable {
-    case tick, fetching, sending, playing, warning
+    /// celebrate: the pop-and-draw entrance, only right after a sync. The
+    /// quiet state shows the tick still, however often the window redraws.
+    case tick(celebrate: Bool)
+    case fetching, sending, playing, warning
     case arrow(up: Bool)
 }
 
@@ -287,7 +290,7 @@ struct FaceView: View {
     var body: some View {
         Group {
             switch face {
-            case .tick:          TickFace()
+            case .tick(let c):   TickFace(celebrate: c)
             case .fetching:      RingFace(up: false)
             case .sending:       RingFace(up: true)
             case .playing:       PlayingFace()
@@ -303,8 +306,15 @@ struct FaceView: View {
 
 /// Pops in with a little overshoot, then the tick draws itself.
 struct TickFace: View {
+    let celebrate: Bool
     @State private var popped = false
     @State private var drawn: CGFloat = 0
+
+    init(celebrate: Bool) {
+        self.celebrate = celebrate
+        _popped = State(initialValue: !celebrate)
+        _drawn = State(initialValue: celebrate ? 0 : 1)
+    }
 
     var body: some View {
         ZStack {
@@ -317,6 +327,7 @@ struct TickFace: View {
         .scaleEffect(popped ? 1 : 0.4)
         .opacity(popped ? 1 : 0)
         .onAppear {
+            guard celebrate else { return }
             withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { popped = true }
             withAnimation(.easeOut(duration: 0.45).delay(0.2)) { drawn = 1 }
         }
@@ -437,10 +448,15 @@ struct SidesStrip: View {
             Image(systemName: icon).font(.system(size: 16)).foregroundStyle(.secondary).frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 12, weight: .semibold))
-                Text(side.files == 0
-                     ? "No saves"
-                     : "\(side.campaignSaves) campaign\(side.campaignSaves == 1 ? "" : "s") · played \(relative(side.newestDate))")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                if side.files == 0 {
+                    Text("No saves").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    Text("\(side.campaignSaves) campaign\(side.campaignSaves == 1 ? "" : "s")")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("played \(relative(side.newestDate))")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.85)
+                }
             }
             Spacer(minLength: 0)
         }

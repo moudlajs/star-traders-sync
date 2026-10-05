@@ -22,6 +22,9 @@ final class DoctorRun: ObservableObject {
 
     var visibleSections: ArraySlice<DoctorSection> { report.sections.prefix(shown) }
 
+    /// Every row from the start; each changes in place (DoctorReport.rows).
+    var rows: [DoctorRow] { report.rows(revealed: shown, finished: !running && passed != nil) }
+
     /// The section being checked right now, for the spinner row.
     var upcoming: DoctorSection? {
         running && shown < report.sections.count ? report.sections[shown] : nil
@@ -80,29 +83,24 @@ struct DoctorProgressView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Grouped like a System Settings list: one rounded panel, a row
-            // per section, hairlines between.
+            // Grouped like a System Settings list: one rounded panel, every
+            // row drawn from the start, each turning grey, spinner, result
+            // in place. Nothing slides in, nothing overlaps.
             VStack(spacing: 0) {
-                ForEach(Array(run.visibleSections.enumerated()), id: \.element.id) { i, section in
+                ForEach(Array(run.rows.enumerated()), id: \.element.id) { i, row in
                     if i > 0 { Divider().padding(.leading, 40) }
-                    DoctorSectionRow(section: section)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-                if run.running {
-                    if !run.visibleSections.isEmpty { Divider().padding(.leading, 40) }
-                    HStack(spacing: 10) {
-                        ProgressView().controlSize(.small).frame(width: 18)
-                        Text(run.upcoming.map { "Checking \($0.displayTitle.lowercased())…" } ?? "Checking…")
-                            .foregroundStyle(.secondary)
-                        Spacer()
+                    Group {
+                        if let section = row.section {
+                            DoctorSectionRow(section: section)
+                        } else {
+                            PendingDoctorRow(row: row)
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
-                    .transition(.opacity)
                 }
             }
+            .animation(.easeOut(duration: 0.2), value: run.rows)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18)))
 
@@ -223,6 +221,32 @@ struct DoctorSectionRow: View {
         case .warn:       return .orange
         case .fail:       return .red
         default:          return .secondary
+        }
+    }
+}
+
+/// A section not reached yet: grey, the spinner when it is next, or "not
+/// checked" once the run is over without it.
+struct PendingDoctorRow: View {
+    let row: DoctorRow
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Group {
+                switch row.state {
+                case .checking:   ProgressView().controlSize(.small)
+                case .notChecked: Image(systemName: "minus.circle").foregroundStyle(.secondary)
+                default:          Image(systemName: "circle").foregroundStyle(.tertiary)
+                }
+            }
+            .frame(width: 18)
+            Text(row.displayTitle)
+                .fontWeight(row.state == .checking ? .medium : .regular)
+                .foregroundStyle(row.state == .checking ? .primary : .secondary)
+            Spacer(minLength: 12)
+            if row.state == .notChecked {
+                Text("not checked").font(.callout).foregroundStyle(.tertiary)
+            }
         }
     }
 }
