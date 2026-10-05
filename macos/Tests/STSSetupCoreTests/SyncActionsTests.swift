@@ -47,6 +47,24 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertEqual(local.first?.label, "Keep the newer saves")
     }
 
+    /// Timestamps from two Macs are not precise enough to call a near tie.
+    func testANearTieRecommendsNeither() throws {
+        func plan(hub: Int, local: Int) throws -> [ActionButton] {
+            let json = SyncStatusTests.sample
+                .replacingOccurrences(of: "\"FIRSTRUN_CONFLICT\"", with: "\"BOTH_CHANGED\"")
+                .replacingOccurrences(of: "\"newest\": 1789844322", with: "\"newest\": \(local)")
+                .replacingOccurrences(of: "\"newest\": 1790514297", with: "\"newest\": \(hub)")
+            return SyncActions.plan(for: try SyncStatus.decode(Data(json.utf8))).buttons
+        }
+        for (h, l) in [(1790000000, 1790000000), (1790000000, 1790000000 + 600), (0, 1790000000), (1790000000, 0)] {
+            let b = try plan(hub: h, local: l)
+            XCTAssertEqual(b.map(\.prominent), [false, false], "hub \(h), local \(l): neither is recommended")
+            XCTAssertEqual(b.map(\.label), ["Keep the Hub's saves", "Keep this Mac's saves"])
+        }
+        let clear = try plan(hub: 1790000000, local: 1790000000 + SyncActions.recommendAfter)
+        XCTAssertEqual(clear.first?.label, "Keep the newer saves", "a clear gap is recommended")
+    }
+
     func testEveryDecisionHasAtLeastOneButton() throws {
         for d in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
                   "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE", "LOCAL_EMPTIED"] {

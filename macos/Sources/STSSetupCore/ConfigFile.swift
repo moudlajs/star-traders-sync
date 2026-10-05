@@ -24,6 +24,13 @@ public struct SetupValues: Equatable {
 public enum ConfigFile {
     public static let defaultSavePath = "~/Library/StarTradersFrontiers"
 
+    /// The Hub folder a new setup suggests. A path, never display text: it
+    /// must match every existing install, docs and the script's examples
+    /// exactly, lower case included.
+    public static func defaultHubPath(user: String) -> String {
+        "/Users/\(user)/star-traders-sync-hub"
+    }
+
     /// The script requires BACKUP_VOLUME and BACKUP_DEST on every machine,
     /// even one that never runs `sts backup` (#53). Until that is fixed a
     /// machine without a disk gets a value that says so plainly and that

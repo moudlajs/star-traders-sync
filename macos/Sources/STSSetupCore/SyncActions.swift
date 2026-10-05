@@ -131,14 +131,23 @@ public enum SyncActions {
                     button: "Restore"))]
         case .bothChanged, .firstRunConflict:
             // #89: recommend the side played more recently, first and
-            // prominent; the other stays one click away. Both confirm.
-            let hubNewer = s.sides.hub.newest >= s.sides.local.newest
-            let newer = hubNewer ? keepHub : keepLocal
-            let other = hubNewer ? keepLocal : keepHub
-            plan.buttons = [
-                ActionButton(action: newer.action, label: "Keep the newer saves", prominent: true, confirmation: newer.confirmation),
-                ActionButton(action: other.action, label: "Keep the other", prominent: false, confirmation: other.confirmation),
-            ]
+            // prominent; the other stays one click away. Both confirm, and
+            // the confirmation names both sides' last-played times.
+            // The times are file mtimes from two Macs, so only a clear gap
+            // earns a recommendation: a near tie, or a side with no
+            // timestamp, gets two neutral buttons named by side.
+            let h = s.sides.hub.newest, l = s.sides.local.newest
+            if h > 0, l > 0, abs(h - l) >= recommendAfter {
+                let hubNewer = h > l
+                let newer = hubNewer ? keepHub : keepLocal
+                let other = hubNewer ? keepLocal : keepHub
+                plan.buttons = [
+                    ActionButton(action: newer.action, label: "Keep the newer saves", prominent: true, confirmation: newer.confirmation),
+                    ActionButton(action: other.action, label: "Keep the other", prominent: false, confirmation: other.confirmation),
+                ]
+            } else {
+                plan.buttons = [keepHub, keepLocal]
+            }
         case .divergedState:
             plan.buttons = [ActionButton(
                 action: .resetRecord, label: "Reset this Mac's sync record", prominent: false,
@@ -196,6 +205,11 @@ public enum SyncActions {
     public static func situationKey(_ s: SyncStatus) -> String {
         "\(s.decision.rawValue):\(s.sides.local.fingerprint):\(s.sides.hub.fingerprint)"
     }
+
+    /// The gap in last-played times, in seconds, below which neither side
+    /// is called "newer": clocks on two Macs drift, and a file touched
+    /// without play moves its mtime.
+    public static let recommendAfter = 30 * 60
 
     static func describe(_ side: SyncStatus.Side) -> String {
         let n = side.campaignSaves

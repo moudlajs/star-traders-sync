@@ -367,7 +367,7 @@ struct RolePage: View {
                 .frame(maxWidth: 320)
                 .onChange(of: m.hubUser) { _ in m.applyDefaultHubPath() }
             Text("Hub folder on that Mac").font(.subheadline).padding(.top, 4)
-            TextField("/Users/name/star-traders-sync-Hub", text: Binding(
+            TextField("/Users/name/star-traders-sync-hub", text: Binding(
                 get: { m.hubPath },
                 set: { m.hubPath = $0; m.hubPathEdited = true }))
             .font(.system(.body, design: .monospaced))

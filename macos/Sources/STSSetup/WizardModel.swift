@@ -226,7 +226,7 @@ final class WizardModel: ObservableObject {
     func applyDefaultHubPath() {
         guard !hubPathEdited else { return }
         let user = role == .hub ? NSUserName() : hubUser
-        hubPath = "/Users/\(user)/star-traders-sync-Hub"
+        hubPath = ConfigFile.defaultHubPath(user: user)
     }
 
     func refreshVolumes() {
