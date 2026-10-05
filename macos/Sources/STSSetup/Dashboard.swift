@@ -178,11 +178,14 @@ final class DashboardModel: ObservableObject {
     /// False while setup is showing (AppModel sets it), so a status check
     /// already in flight when setup opened cannot start a sync.
     var active = true
+    /// True while an update installs: nothing may start, because the app
+    /// is about to restart (UpdateModel sets and clears it).
+    var updating = false
 
     func considerAutoSync(_ s: SyncStatus) {
         // !loading: a check in flight holds this Mac's lock, and a sync
         // started now would fail on it and be remembered as a failure.
-        guard active, autoSync, !loading, !busy, pending == nil, run == nil,
+        guard active, !updating, autoSync, !loading, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
         if key == autoFailedKey, let at = autoFailedAt, now().timeIntervalSince(at) < Self.autoRetryAfter {
@@ -210,7 +213,7 @@ final class DashboardModel: ObservableObject {
         // The one gate every action passes: nothing starts while setup is
         // showing, whatever path led here (a queued press, an automatic
         // sync, a confirmation answered late).
-        guard active, !busy else { return }
+        guard active, !updating, !busy else { return }
         pending = nil
         let r = ActionRun(action: action, automatic: automatic)
         run = r

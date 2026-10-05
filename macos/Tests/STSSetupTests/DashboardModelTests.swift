@@ -129,6 +129,27 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertNil(d.run)
     }
 
+    /// #107 review: while an update installs, the app is about to restart,
+    /// so nothing may start, automatic or pressed.
+    func testNothingStartsWhileAnUpdateInstalls() async throws {
+        // Two checks see the hub ahead (one while updating, one after);
+        // once fetched, the hub and this Mac agree.
+        fake([try Self.status("HUB_ONLY"), try Self.status("HUB_ONLY"), try Self.status("INSYNC")])
+        d.updating = true
+        d.refresh()
+        await settle { self.d.status != nil && !self.d.loading }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(calls.all.isEmpty, "no automatic sync while updating")
+        let pull = try XCTUnwrap(SyncActions.plan(for: try Self.status("HUB_ONLY")).buttons.first { $0.action == .pull })
+        d.perform(pull)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(calls.all.isEmpty, "no pressed action either")
+        d.updating = false
+        d.refresh()
+        await settle { !self.calls.all.isEmpty }
+        XCTAssertEqual(calls.all.count, 1, "and it resumes afterwards")
+    }
+
     func testAPressDuringACheckRunsAfterItIfStillOffered() async throws {
         fake([try Self.status("HUB_ONLY")])
         d.autoSync = false

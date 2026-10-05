@@ -82,6 +82,8 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
             return
         }
         state = .installing(release)
+        // From here nothing may start: the app is about to restart.
+        dashboard?.updating = true
         let target = Bundle.main.bundleURL
         let id = bundleID
         Task.detached {
@@ -89,6 +91,15 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
                 try UpdateInstaller.install(dmg: dmg, expectedVersion: release.version, bundleID: id, over: target)
                 try? FileManager.default.removeItem(at: dmg)
                 await MainActor.run {
+                    // Checked again: a sync that began before the gate above
+                    // must finish first. The new version is already in
+                    // place, so it starts the next time the app opens.
+                    if self.dashboard?.busy == true {
+                        self.dashboard?.updating = false
+                        self.state = .failed("Installed \(release.version). It starts the next time you open the app; a sync is running now.")
+                        SetupLog.write("update: installed \(release.version), restart deferred: sync running")
+                        return
+                    }
                     SetupLog.write("update: installed \(release.version), relaunching")
                     Self.relaunch(target)
                 }
@@ -96,6 +107,7 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
                 let message = (error as? UpdateError)?.description ?? error.localizedDescription
                 await MainActor.run {
                     SetupLog.write("update: install failed: \(message)")
+                    self.dashboard?.updating = false
                     self.state = .failed(message)
                 }
             }
