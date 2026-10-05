@@ -364,13 +364,15 @@ struct DashboardView: View {
                 Menu {
                     Text("Star Traders Sync \(updates.currentVersion)")
                     Divider()
-                    Toggle("Sync automatically", isOn: $d.autoSync)
-                    Divider()
                     Button("Health check") {
                         withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = true }
                         d.runDoctor()
                     }
                     Button("Open logs") { d.openLogs() }
+                    Divider()
+                    // Not the first item: it was switched off by accident
+                    // twice, from right under the pointer (#117).
+                    Toggle("Sync automatically", isOn: $d.autoSync)
                     Divider()
                     Button("Run setup again…") { app.showSetup() }
                         .disabled(d.busy)
