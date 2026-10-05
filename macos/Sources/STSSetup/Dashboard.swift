@@ -178,11 +178,14 @@ final class DashboardModel: ObservableObject {
     /// False while setup is showing (AppModel sets it), so a status check
     /// already in flight when setup opened cannot start a sync.
     var active = true
+    /// True while an update installs: nothing may start, because the app
+    /// is about to restart (UpdateModel sets and clears it).
+    var updating = false
 
     func considerAutoSync(_ s: SyncStatus) {
         // !loading: a check in flight holds this Mac's lock, and a sync
         // started now would fail on it and be remembered as a failure.
-        guard active, autoSync, !loading, !busy, pending == nil, run == nil,
+        guard active, !updating, autoSync, !loading, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
         if key == autoFailedKey, let at = autoFailedAt, now().timeIntervalSince(at) < Self.autoRetryAfter {
@@ -210,7 +213,7 @@ final class DashboardModel: ObservableObject {
         // The one gate every action passes: nothing starts while setup is
         // showing, whatever path led here (a queued press, an automatic
         // sync, a confirmation answered late).
-        guard active, !busy else { return }
+        guard active, !updating, !busy else { return }
         pending = nil
         let r = ActionRun(action: action, automatic: automatic)
         run = r
@@ -365,6 +368,7 @@ func relative(_ date: Date?) -> String {
 
 struct DashboardView: View {
     @EnvironmentObject var app: AppModel
+    @EnvironmentObject var updates: UpdateModel
     @EnvironmentObject var d: DashboardModel
 
     var body: some View {
@@ -388,6 +392,9 @@ struct DashboardView: View {
         .navigationTitle("Star Traders Sync")
         .navigationSubtitle(d.status.map { $0.isHub ? "This Mac is the hub" : "Hub: \($0.hub.host)" } ?? "")
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                UpdateButton(updates: updates)
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { d.refresh() } label: {
                     if d.loading {
@@ -400,6 +407,8 @@ struct DashboardView: View {
                 .disabled(d.busy)
 
                 Menu {
+                    Text("Star Traders Sync \(updates.currentVersion)")
+                    Divider()
                     Toggle("Sync automatically", isOn: $d.autoSync)
                     Divider()
                     Button("Health check") {
