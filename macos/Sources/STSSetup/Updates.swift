@@ -43,6 +43,7 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
         default: break
         }
         let url = UpdateFeed.url()
+        let testFeed = url != UpdateFeed.defaultURL
         let current = currentVersion
         Task.detached {
             var request = URLRequest(url: url)
@@ -50,6 +51,10 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
             guard let (data, _) = try? await URLSession.shared.data(for: request),
                   let release = try? UpdateFeed.parse(data) else {
                 return   // offline or a hiccup: stay quiet, try again later
+            }
+            guard testFeed || UpdateFeed.isTrustedDownload(release.dmgURL) else {
+                await MainActor.run { SetupLog.write("update: ignored \(release.version): download is not this repository's (\(release.dmgURL.absoluteString))") }
+                return
             }
             await MainActor.run {
                 if UpdateFeed.isNewer(release.version, than: current) {

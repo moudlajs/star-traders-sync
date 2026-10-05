@@ -37,6 +37,17 @@ final class UpdaterTests: XCTestCase {
         XCTAssertFalse(UpdateFeed.isNewer("1.4", than: "1.4.0"), "missing parts are zero")
     }
 
+    func testOnlyThisRepositorysDownloadsAreTrusted() {
+        func ok(_ s: String) -> Bool { UpdateFeed.isTrustedDownload(URL(string: s)!) }
+        XCTAssertTrue(ok("https://github.com/moudlajs/star-traders-sync/releases/download/v1.4.1/Star-Traders-Sync.dmg"))
+        XCTAssertFalse(ok("http://github.com/moudlajs/star-traders-sync/releases/download/v1.4.1/Star-Traders-Sync.dmg"), "not https")
+        XCTAssertFalse(ok("https://evil.example/moudlajs/star-traders-sync/releases/download/v1/x.dmg"), "other host")
+        XCTAssertFalse(ok("https://github.com/someone-else/star-traders-sync/releases/download/v1/x.dmg"), "other repository")
+        XCTAssertFalse(ok("https://github.com/moudlajs/star-traders-sync/raw/main/x.dmg"), "not a release download")
+        XCTAssertFalse(ok("https://github.com/moudlajs/star-traders-sync/releases/download/../../../evil/x.dmg"))
+        XCTAssertTrue(ok(try! UpdateFeed.parse(Data(Self.feed.utf8)).dmgURL.absoluteString), "the real feed shape passes")
+    }
+
     func testFeedOverride() {
         XCTAssertEqual(UpdateFeed.url(environment: [:]), UpdateFeed.defaultURL)
         XCTAssertEqual(UpdateFeed.url(environment: ["STS_UPDATE_FEED": "file:///tmp/feed.json"]).path, "/tmp/feed.json")

@@ -71,6 +71,18 @@ public enum UpdateFeed {
                        sha256: String(digest.dropFirst("sha256:".count)).lowercased())
     }
 
+    /// The only place a real update may come from: this repository's own
+    /// release downloads, over HTTPS. With ad-hoc signing there is no team
+    /// identity to pin (#61), so the root of trust is the repository and
+    /// TLS; a feed pointing anywhere else is not followed. A test feed set
+    /// through STS_UPDATE_FEED may use local files.
+    public static func isTrustedDownload(_ url: URL) -> Bool {
+        url.scheme == "https"
+            && url.host == "github.com"
+            && url.path.hasPrefix("/moudlajs/star-traders-sync/releases/download/")
+            && !url.path.contains("/../")
+    }
+
     /// Numeric dotted comparison: 1.10.0 is newer than 1.9.0.
     public static func isNewer(_ candidate: String, than current: String) -> Bool {
         func parts(_ v: String) -> [Int] {
