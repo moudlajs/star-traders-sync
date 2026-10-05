@@ -181,10 +181,11 @@ struct UpdateButton: View {
             }
             .foregroundStyle(.blue)
             .help(r.notes.isEmpty ? "Version \(r.version) is available" : r.notes)
-        case .downloading(_, let fraction):
+        case .downloading:
+            // No percentage: it races past in a second and only distracts.
             HStack(spacing: 6) {
-                ProgressRing(fraction: fraction).frame(width: 16, height: 16)
-                Text("\(Int(fraction * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                ProgressView().controlSize(.small)
+                Text("Downloading…").foregroundStyle(.secondary)
             }
             .help("Downloading the update")
         case .ready(let r, _):
@@ -206,22 +207,6 @@ struct UpdateButton: View {
             }
             .foregroundStyle(.orange)
             .help(message + " Click to check again.")
-        }
-    }
-}
-
-/// A thin ring that fills as the download progresses.
-struct ProgressRing: View {
-    let fraction: Double
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(Color.secondary.opacity(0.25), lineWidth: 2.5)
-            Circle()
-                .trim(from: 0, to: max(0.02, fraction))
-                .stroke(Color.blue, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(.easeOut(duration: 0.2), value: fraction)
         }
     }
 }
