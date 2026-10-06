@@ -190,7 +190,11 @@ func (t *T) SnapshotLocal(dir string, prune bool) (string, *fail.Failure) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", fail.New(exitcode.Snapshot, "snapshot", "could not create snapshot root %s", root)
 	}
-	root, _ = filepath.EvalSymlinks(root)
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	} else {
+		return "", fail.New(exitcode.Snapshot, "snapshot", "could not resolve the snapshot root %s: %v", root, err)
+	}
 	stamp := iso(t.Now())
 	name := stamp
 	for suffix := 2; ; suffix++ {

@@ -1091,6 +1091,38 @@ check "untrusted host key: refused (31)"                31 env PATH="$CASE/hkstu
 check "  says the same key is already trusted"           0 sh -c 'PATH="$2:$PATH" "$1" status 2>&1 >/dev/null | grep -q "identical host key"' _ "$STS" "$CASE/hkstub"
 check "  and prints nothing of it on stdout"             0 test -z "$(PATH="$CASE/hkstub:$PATH" "$STS" status 2>/dev/null)"
 
+# The connection drops while the hub is read back after a transfer: nothing
+# is recorded (the script's set -e stops there too), so the next run
+# decides from what is really on both sides.
+STATE_BEFORE="$(cat "$(STATEF)")"
+printf 'after-read change\n' > "$CASE/local/game_1.db"
+cat > "$CASE/clientstub/ssh-countdown" <<'STUB'
+2
+STUB
+cp "$CASE/clientstub/ssh" "$CASE/clientstub/ssh.real"
+cat > "$CASE/clientstub/ssh" <<STUB
+#!/bin/bash
+# The second hub manifest read (the one after the transfer) loses the line.
+args="\$*"
+case "\$args" in *"bash -s"*)
+    script="\$(cat)"
+    case "\$script" in *STS_UNHASHABLE*)
+        n=\$(cat "$CASE/clientstub/ssh-countdown"); n=\$((n - 1)); echo "\$n" > "$CASE/clientstub/ssh-countdown"
+        [ "\$n" -le 0 ] && { echo "client_loop: send disconnect" >&2; exit 255; } ;;
+    esac
+    printf '%s\n' "\$script" | exec "$CASE/clientstub/ssh.real" "\$@" ;;
+esac
+exec "$CASE/clientstub/ssh.real" "\$@"
+STUB
+chmod +x "$CASE/clientstub/ssh"
+check "hub unreadable after the push: it fails"          1 sh -c '"$1" push >/dev/null 2>&1; [ $? -eq 0 ]' _ "$STS"
+check "  and nothing was recorded"                       0 test "$(cat "$(STATEF)")" = "$STATE_BEFORE"
+mv "$CASE/clientstub/ssh.real" "$CASE/clientstub/ssh"
+rm -f "$CASE/clientstub/ssh-countdown"
+# The push itself went through; put both sides back to what the record says.
+printf 'second change\n' > "$CASE/hub/game_1.db"
+printf 'second change\n' > "$CASE/local/game_1.db"
+
 # The connection drops under the carry itself: no verdict, so no swap.
 touch "$CASE/clientstub/drop-carry"
 printf 'third change\n' > "$CASE/local/game_1.db"

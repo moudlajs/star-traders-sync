@@ -161,6 +161,15 @@ func (s *syncer) record(direction, lfp, hfp string) {
 	}
 }
 
+// afterTransferUnread: the transfer finished, but the hub could not be read
+// back to record it. Nothing is recorded - the script's set -e stops at the
+// same point - so the next run decides from what is really there.
+func (s *syncer) afterTransferUnread(direction string, err error) *fail.Failure {
+	s.log.Log("ERROR", direction, "could not read the hub back after the transfer: %v", err)
+	return fail.New(exitcode.SSHFailed, direction,
+		"the %s finished, but the hub could not be read back afterwards (%v), so it was not recorded. Run '%s status' once the hub is reachable.", direction, err, prog)
+}
+
 // verify is verify_transfer: after a transfer both sides must hold the same
 // saves, or it did not happen (#158). The state is already recorded as the
 // sides really are, so the next decision is DIVERGED_STATE, which every path
@@ -240,7 +249,10 @@ func (s *syncer) pull() *fail.Failure {
 	if err != nil {
 		return fail.New(exitcode.LocalSaveBad, "pull", "%v", err)
 	}
-	hm, _ := s.hub.Manifest()
+	hm, err := s.hub.Manifest()
+	if err != nil {
+		return s.afterTransferUnread("pull", err)
+	}
 	lfp, _ := lm.Fingerprint()
 	hfp, _ := hm.Fingerprint()
 	s.record("pull", lfp, hfp)
@@ -322,7 +334,10 @@ func (s *syncer) push() *fail.Failure {
 	if f := s.t.PushLocalToHub(s.local); f != nil {
 		return f
 	}
-	hm, _ := s.hub.Manifest()
+	hm, err := s.hub.Manifest()
+	if err != nil {
+		return s.afterTransferUnread("push", err)
+	}
 	hfp, _ := hm.Fingerprint()
 	s.record("push", rd.lfp, hfp)
 	s.hubLock.Release()
