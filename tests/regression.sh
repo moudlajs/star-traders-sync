@@ -822,13 +822,19 @@ rm -rf "$CASE/.sts-lock"
 
 # A reader that goes away mid-run (`sts play | head -1`). The lock must be
 # gone the moment sts exits, not merely cleared by the next run.
-printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"
+printf 'GAME_START_TIMEOUT=2\nLOG_LEVEL=DEBUG\n' >> "$CASE/cfg/star-traders-sync/config"   # TEMP
 mkdir -p "$CASE/nosteam"
 printf '#!/bin/sh\nexit 0\n' > "$CASE/nosteam/open"
 chmod +x "$CASE/nosteam/open"
 printf 'ahead\n' > "$CASE/local/game_1.db"
 sh -c 'PATH="$2:$PATH" "$1" play 2>&1 | head -c 1 >/dev/null' _ "$STS" "$CASE/nosteam"
 check "play into a closed pipe: no hub lock left"        1 test -d "$CASE/.sts-lock"
+if [ -d "$CASE/.sts-lock" ]; then   # TEMP diagnostics for CI
+    echo "DIAG owner:"; cat "$CASE/.sts-lock/owner"
+    echo "DIAG log:"; tail -15 "$CASE/home/Library/Logs/star-traders-sync/star-traders-sync.log"
+    echo "DIAG bash: $(/bin/bash --version | head -1)"
+fi
+rm -rf "$CASE/.sts-lock"
 
 # A hangup (terminal closed) while a transfer runs.
 mkdir -p "$CASE/slow"
@@ -837,8 +843,13 @@ chmod +x "$CASE/slow/rsync"
 printf 'ahead again\n' > "$CASE/local/game_1.db"
 PATH="$CASE/slow:$PATH" "$STS" push >/dev/null 2>&1 &
 BG=$!
+# Wait until the lock is this push's own: then sts is past its traps. A
+# HUP that lands earlier hits the forked child while it is still a copy of
+# this suite, and bash runs the suite's EXIT trap (rm -rf "$SB") in it.
 i=0
-while [ ! -d "$CASE/.sts-lock" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+while [ "$(sed -n 2p "$CASE/.sts-lock/owner" 2>/dev/null)" != "$BG" ] && [ "$i" -lt 100 ]; do
+    sleep 0.1; i=$((i + 1))
+done
 kill -HUP "$BG" 2>/dev/null || true
 wait "$BG"; RC=$?
 check "push hung up mid-transfer exits 129"              0 test "$RC" -eq 129
