@@ -13,6 +13,8 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-06
+
 ### Added
 
 - **Disconnect this Mac…** in the gear menu. It removes the app's `sts`
@@ -329,7 +331,8 @@ that was never transferred was simply absent from the replacement - taking
 from the live directory into the staging directory before the swap. Every one
 of those findings has a case in `tests/regression.sh`.
 
-[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.6...HEAD
+[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.6...v1.6.0
 [1.5.6]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.3...v1.5.4
