@@ -3530,7 +3530,7 @@ cmd_backup() {
 
     if [ "$OPT_DRY_RUN" -eq 1 ]; then
         say "dry run - would back up $CFG_HUB_PATH ($src_n files) into $CFG_BACKUP_DEST"
-        rsync -a -n -i "$CFG_HUB_PATH/" "$CFG_BACKUP_DEST/pending/" 2>&1 | sed 's/^/  /' || true
+        rsync -a -c -n -i "$CFG_HUB_PATH/" "$CFG_BACKUP_DEST/pending/" 2>&1 | sed 's/^/  /' || true
         release_hub_lock
         return 0
     fi
@@ -3590,7 +3590,9 @@ cmd_backup() {
     say "backing up $CFG_HUB_PATH ($src_n files) -> $dest"
     BACKUP_PENDING="$dest"
     if [ -n "$prev" ] && [ "$can_link" -eq 1 ]; then
-        run_rsync backup -a --link-dest="$CFG_BACKUP_DEST/$prev" \
+        # -c: without it a same-size save rewritten in the same second as
+        # the previous backup's copy was hard-linked from it (#158).
+        run_rsync backup -a -c --link-dest="$CFG_BACKUP_DEST/$prev" \
             "$CFG_HUB_PATH/" "$dest/" >/dev/null
         log INFO backup "hardlinked unchanged files against $prev"
     else

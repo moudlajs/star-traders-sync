@@ -1319,6 +1319,31 @@ newcase backup
 "$STS" push --force=local >/dev/null 2>&1
 check "backup refuses a non-mount-point volume"         70 "$STS" backup
 
+# A same-size change in the same second reaches the next backup too (#158):
+# backup hard-links unchanged files against the previous one, and rsync's
+# quick check used to take this for unchanged. Needs a real mount point, so
+# a small disk image; skipped, saying so, where one cannot be attached.
+hdiutil create -quiet -size 20m -fs HFS+ -volname STSB "$CASE/v.dmg" 2>/dev/null
+ATTACHED=0
+for i in 1 2 3; do
+    hdiutil attach -quiet -nobrowse -mountpoint "$CASE/vol" "$CASE/v.dmg" 2>/dev/null && { ATTACHED=1; break; }
+    sleep 2
+done
+if [ "$ATTACHED" -eq 1 ]; then
+    sed -i '' "s|^HUB_HOST=.*|HUB_HOST=$(hostname -s)|" "$CASE/cfg/star-traders-sync/config"
+    check "backup to a mounted volume"                     0 "$STS" backup
+    FIRSTB="$(ls "$CASE/vol/b" | grep -v '^\.' | head -1)"
+    printf 'v2-game_1.db\n' > "$CASE/hub/game_1.db"          # same size
+    touch -r "$CASE/vol/b/$FIRSTB/game_1.db" "$CASE/hub/game_1.db"   # same mtime
+    sleep 1                                                 # a second, distinct backup name
+    check "  a second backup"                              0 "$STS" backup
+    LASTB="$(ls "$CASE/vol/b" | grep -v '^\.' | tail -1)"
+    check "  holds the same-size, same-second change"      0 test "$(cat "$CASE/vol/b/$LASTB/game_1.db")" = "v2-game_1.db"
+    hdiutil detach -quiet "$CASE/vol" 2>/dev/null || hdiutil detach -quiet -force "$CASE/vol" 2>/dev/null
+else
+    printf '  skip backup to a mounted volume (no disk image could be attached here)\n'
+fi
+
 # The suite must leave nothing behind outside its sandbox. doctor --fix can
 # append to a shell rc, so this is not hypothetical.
 if [ -n "$(find "$REAL_HOME" -maxdepth 1 -name '.zshrc.sts-backup' -newer "$SB" 2>/dev/null)" ]; then
