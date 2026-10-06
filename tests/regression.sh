@@ -361,11 +361,16 @@ check "  names the key still on its placeholder"         0 sh -c '"$1" doctor 2>
 
 # The shipped defaults must stay ones doctor recognises (#47): a default
 # that reads like a real hostname would pass as configured.
-newcase doctor_shipped_defaults
 for src in "$REPO/config.example" "$REPO/install.sh"; do
-    host="$(grep -m1 '^HUB_HOST=' "$src" | cut -d= -f2)"
-    sed -i '' "s|^HUB_HOST=.*|HUB_HOST=$host|" "$CASE/cfg/star-traders-sync/config"
-    check "default HUB_HOST in ${src##*/} is flagged"     0 sh -c '"$1" doctor 2>&1 | grep -q "placeholders.*HUB_HOST"' _ "$STS"
+    newcase doctor_shipped_defaults
+    for k in HUB_HOST BACKUP_VOLUME BACKUP_DEST; do
+        v="$(grep -m1 "^$k=" "$src" | cut -d= -f2)"
+        check "${src##*/} ships a $k default"              0 test -n "$v"
+        sed -i '' "s|^$k=.*|$k=$v|" "$CASE/cfg/star-traders-sync/config"
+    done
+    for k in HUB_HOST BACKUP_VOLUME BACKUP_DEST; do
+        check "  doctor flags its default $k"             0 sh -c '"$1" doctor 2>&1 | grep -q "placeholders.*$2"' _ "$STS" "$k"
+    done
 done
 
 # doctor without --fix must change nothing at all.

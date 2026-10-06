@@ -27,7 +27,7 @@ if you introduce a new state.
 - Never point a test config at `~/Library/StarTradersFrontiers`,
   `~/star-traders-sync-hub`, or `/Volumes/Backup`. Those hold real saves. Use a
   sandbox, as `tests/regression.sh` does.
-- Run `./tests/regression.sh` before and after. 44 cases; all must pass.
+- Run `./tests/regression.sh` before and after. Every case must pass.
 
 ## Things that have already bitten, verified on this machine
 

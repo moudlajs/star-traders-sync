@@ -86,7 +86,7 @@ is only ever reached *after* that snapshot exists. How to restore one is in
 the target and is moved into place with two renames only after it exits 0.
 A dropped connection leaves the target byte-identical to how it started.
 
-**Fingerprints decide, not timestamps.** On the two machines under test `core.db`
+**Fingerprints decide, not timestamps.** On the machines it was developed on `core.db`
 is 12288 bytes on *both* while holding completely different saves. Size
 and mtime comparison would be actively misleading, so every decision is
 made on a SHA-256 manifest of the directory. Timestamps are shown to you,
