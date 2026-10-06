@@ -814,9 +814,12 @@ mkdir -p "$CASE/nosteam"
 printf '#!/bin/sh\nexit 0\n' > "$CASE/nosteam/open"
 chmod +x "$CASE/nosteam/open"
 printf 'ahead\n' > "$CASE/local/game_1.db"
-# 141 proves the run really died of the closed pipe, not of something else
-# (no game here: 41) that would also have released the lock.
-check "play into a closed pipe exits 141"              141 bash -c 'PATH="$2:$PATH" "$1" play 2>&1 | head -c 1 >/dev/null; exit "${PIPESTATUS[0]}"' _ "$STS" "$CASE/nosteam"
+# The exit code proves the run really died of the closed pipe, not of
+# something else (no game here: 41) that would also have released the lock.
+# 141 where SIGPIPE reaches the trap; 1 where the caller started us with it
+# ignored (GitHub's runner does), which bash cannot undo - the write then
+# fails with EPIPE and set -e ends the run.
+check "play into a closed pipe dies of it (141 or 1)"    0 bash -c 'PATH="$2:$PATH" "$1" play 2>&1 | head -c 1 >/dev/null; rc="${PIPESTATUS[0]}"; [ "$rc" = 141 ] || [ "$rc" = 1 ]' _ "$STS" "$CASE/nosteam"
 check "  no hub lock left"                               1 test -d "$CASE/.sts-lock"
 rm -rf "$CASE/.sts-lock"
 
