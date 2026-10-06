@@ -161,6 +161,19 @@ func (s *syncer) record(direction, lfp, hfp string) {
 	}
 }
 
+// verify is verify_transfer: after a transfer both sides must hold the same
+// saves, or it did not happen (#158). The state is already recorded as the
+// sides really are, so the next decision is DIVERGED_STATE, which every path
+// refuses: nothing syncs on its own until someone looks.
+func (s *syncer) verify(direction, lfp, hfp string) *fail.Failure {
+	if lfp == hfp {
+		return nil
+	}
+	s.log.Log("ERROR", direction, "after the transfer the two sides differ: local=%s hub=%s", lfp, hfp)
+	return fail.New(exitcode.Rsync, direction,
+		"the transfer finished but this machine and the hub still hold different saves, so the %s did not really happen. The side being overwritten was snapshotted first. Nothing will sync on its own until this is resolved - see 'transfer finished but ... different saves' in docs/troubleshooting.md.", direction)
+}
+
 func (s *syncer) warn(format string, a ...any) {
 	fmt.Fprintf(s.env.Stderr, "warning: "+format+"\n", a...)
 }
@@ -232,6 +245,9 @@ func (s *syncer) pull() *fail.Failure {
 	hfp, _ := hm.Fingerprint()
 	s.record("pull", lfp, hfp)
 	s.hubLock.Release()
+	if f := s.verify("pull", lfp, hfp); f != nil {
+		return f
+	}
 	s.say("pull complete - %d files", lm.Count())
 	return nil
 }
@@ -310,6 +326,9 @@ func (s *syncer) push() *fail.Failure {
 	hfp, _ := hm.Fingerprint()
 	s.record("push", rd.lfp, hfp)
 	s.hubLock.Release()
+	if f := s.verify("push", rd.lfp, hfp); f != nil {
+		return f
+	}
 	s.say("push complete - %d files on the hub", hm.Count())
 	return nil
 }
@@ -322,12 +341,12 @@ func (r *run) dryRun() {
 	sshE := "ssh " + strings.Join(r.hub.SSHOpts, " ")
 	plan := func(title, src, dst string) {
 		r.say("  %s", title)
-		args := []string{"-a", "-n", "-i", "--delete"}
+		args := []string{"-a", "-c", "-n", "-i", "--delete"}
 		args = append(args, t.Excludes()...)
 		if r.hub.IsLocal {
-			r.say("    rsync -a --delete %s %s %s", e, src, dst)
+			r.say("    rsync -a -c --delete %s %s %s", e, src, dst)
 		} else {
-			r.say("    rsync -a --delete %s -e '%s' %s %s", e, sshE, src, dst)
+			r.say("    rsync -a -c --delete %s -e '%s' %s %s", e, sshE, src, dst)
 			args = append(args, "-e", sshE)
 		}
 		out, _ := exec.Command("rsync", append(args, src, dst)...).CombinedOutput()

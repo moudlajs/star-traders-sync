@@ -238,6 +238,7 @@ func Main(args []string, env Env) int {
 		pid: os.Getpid(), host: hostnameShort(), ex: &exiter{}}
 	stopSignals := r.ex.watch()
 	defer stopSignals()
+	defer r.ex.finish() // runs first: an interrupt mid-release finishes before Main returns
 	if o.JSON {
 		// stdout carries the JSON object and nothing else; every other
 		// message goes to stderr, so a caller can parse stdout on exit 0.

@@ -100,6 +100,7 @@ EOF
 
 # check NAME EXPECTED_RC COMMAND...
 check() {
+    if [ "$SKIPPING" -eq 1 ]; then SKIPPED=$((SKIPPED + 1)); return 0; fi
     local name="$1" exp="$2"; shift 2
     local out rc
     out="$("$@" 2>&1)"; rc=$?
@@ -111,7 +112,19 @@ check() {
     fi
 }
 
-section() { printf '\n%s\n' "$1"; }
+# STS_SKIP: a regex of section titles not run - for a build that does not
+# have those commands yet (the Go one, #25). Skipped checks are counted and
+# reported, never passed silently.
+SKIPPED=0
+SKIPPING=0
+section() {
+    printf '\n%s\n' "$1"
+    SKIPPING=0
+    if [ -n "${STS_SKIP:-}" ] && printf '%s' "$1" | grep -qE "$STS_SKIP"; then
+        SKIPPING=1
+        printf '  (skipped: STS_SKIP)\n'
+    fi
+}
 
 # --------------------------------------------------------------------------
 section "seeding and the empty-side guards"
@@ -950,9 +963,10 @@ check "  no hub lock left"                               1 test -d "$CASE/.sts-l
 check "  the next push succeeds"                         0 "$STS" push
 
 # A hangup in the instant this machine's saves have been moved aside and the
-# staged copy from the hub is not yet in place. IN_SWAP used to be set only
-# after that first mv, so on_exit swept the staged copy as an ordinary temp
-# dir and left only the parked old saves.
+# staged copy from the hub is not yet in place. Injected through a stub mv,
+# so it is about the script: the Go build swaps with rename(2) and holds a
+# signal until the swap is done (internal/transfer, TestAnInterruptWaitsForTheSwap).
+if [ -z "${STS_BIN:-}" ]; then
 newcase swaphup
 "$STS" push --force=local >/dev/null 2>&1
 printf 'from the other mac\n' > "$CASE/hub/game_1.db"     # the hub moved on
@@ -967,6 +981,9 @@ check "  the staged copy is kept"                        0 sh -c 'test -f "$(ls 
 check "  the old saves are parked, not lost"             0 sh -c 'test -f "$(ls -d "$1"/local.sts-old-* | head -1)/game_1.db"' _ "$CASE"
 check "  no hub lock left"                               1 test -d "$CASE/.sts-lock"
 check "  the next pull refuses until they are restored" 13 "$STS" pull
+else
+    printf '  skip the hangup mid-swap (script-only: the Go build cannot be interrupted between its renames)\n'
+fi
 
 # --------------------------------------------------------------------------
 section "a client of a remote hub, over a loopback ssh"
@@ -1359,5 +1376,9 @@ else
     printf '  ok   the suite left the real home untouched\n'
 fi
 
-printf '\n%s: %s passed, %s failed\n' "$(basename "$0")" "$PASS" "$FAIL"
+if [ "$SKIPPED" -gt 0 ]; then
+    printf '\n%s: %s passed, %s failed, %s skipped (STS_SKIP=%s)\n' "$(basename "$0")" "$PASS" "$FAIL" "$SKIPPED" "$STS_SKIP"
+else
+    printf '\n%s: %s passed, %s failed\n' "$(basename "$0")" "$PASS" "$FAIL"
+fi
 [ "$FAIL" -eq 0 ]

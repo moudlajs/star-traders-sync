@@ -18,7 +18,16 @@ type exiter struct {
 	mu    sync.Mutex
 	hooks []func()
 	guard *transfer.Guard
+	// exiting has one owner: the signal handler that started running the
+	// hooks, or Main on its way out. Neither may exit while the other is
+	// mid-release - a hub lock released over ssh is a script sent on
+	// stdin, and exiting under it cut it off and left the lock behind.
+	exiting sync.Mutex
 }
+
+// finish is Main's side: once it holds exiting, no handler can start, and
+// if one already has, this waits until it exits the process.
+func (e *exiter) finish() { e.exiting.Lock() }
 
 func (e *exiter) add(h func()) {
 	e.mu.Lock()
@@ -54,7 +63,11 @@ func (e *exiter) watch() func() {
 		select {
 		case sig := <-ch:
 			code := signalCodes[sig]
-			out := func() { e.run(); os.Exit(code) }
+			out := func() {
+				e.exiting.Lock() // never unlocked: this path ends the process
+				e.run()
+				os.Exit(code)
+			}
 			e.mu.Lock()
 			g := e.guard
 			e.mu.Unlock()

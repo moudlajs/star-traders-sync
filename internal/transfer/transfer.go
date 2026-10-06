@@ -486,7 +486,7 @@ func (t *T) PullHubToLocal(target string) *fail.Failure {
 		return f
 	}
 	t.say("snapshot: %s", snap)
-	args := append([]string{"-a", "--delete"}, t.Excludes()...)
+	args := append([]string{"-a", "-c", "--delete"}, t.Excludes()...)
 	args = append(args, "--link-dest="+target)
 	if t.Hub.IsLocal {
 		args = append(args, t.Hub.Path+"/", tmp+"/")
@@ -520,7 +520,7 @@ func (t *T) PushLocalToHub(src string) *fail.Failure {
 		return f
 	}
 	t.say("snapshot: %s (on %s)", snap, t.HubHost)
-	args := append([]string{"-a", "--delete"}, t.Excludes()...)
+	args := append([]string{"-a", "-c", "--delete"}, t.Excludes()...)
 	args = append(args, "--link-dest="+t.Hub.Path)
 	if t.Hub.IsLocal {
 		if f := t.Rsync("push", append(args, src+"/", tmp+"/")...); f != nil {
