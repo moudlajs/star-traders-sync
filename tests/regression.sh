@@ -788,6 +788,64 @@ PATH="$PATH_UP_SAVED"
 unset STS_TS_APP_PATH
 
 # --------------------------------------------------------------------------
+section "an interrupted run never leaves the hub lock behind (#129)"
+newcase locksignals
+"$STS" push --force=local >/dev/null 2>&1
+MYID="$(cat "$CASE/state/star-traders-sync/host-id" 2>/dev/null || true)"
+NOW="$(date -u +%s)"
+# A pid that is certainly not running: find a free one.
+DEAD=99999
+while ps -p "$DEAD" >/dev/null 2>&1; do DEAD=$((DEAD - 1)); done
+
+# Our own lock, fresh (well under the TTL), whose run has exited. It used to
+# block this machine for the whole TTL.
+mkdir -p "$CASE/.sts-lock"
+printf '%s\n%s\n2026-01-01T00:00:00Z\n%s\nnonce\n%s\n' \
+    "$(hostname -s)" "$DEAD" "$NOW" "$MYID" > "$CASE/.sts-lock/owner"
+check "own fresh lock, owner pid dead: cleared"          0 "$STS" pull
+check "  lock released"                                  1 test -d "$CASE/.sts-lock"
+
+# Same, but the owner is alive: that run may be mid-transfer. Never cleared.
+mkdir -p "$CASE/.sts-lock"
+printf '%s\n%s\n2026-01-01T00:00:00Z\n%s\nnonce\n%s\n' \
+    "$(hostname -s)" "$$" "$NOW" "$MYID" > "$CASE/.sts-lock/owner"
+check "own fresh lock, owner pid alive: refused"        50 "$STS" pull
+check "  and not cleared"                                0 test -d "$CASE/.sts-lock"
+
+# Our id but another hostname (a cloned disk): its pid means nothing in this
+# machine's process table, so only the TTL may clear it.
+printf 'some-old-hostname\n%s\n2026-01-01T00:00:00Z\n%s\nnonce\n%s\n' \
+    "$DEAD" "$NOW" "$MYID" > "$CASE/.sts-lock/owner"
+check "own id, other hostname, dead pid: refused"       50 "$STS" pull
+check "  and not cleared"                                0 test -d "$CASE/.sts-lock"
+rm -rf "$CASE/.sts-lock"
+
+# A reader that goes away mid-run (`sts play | head -1`). The lock must be
+# gone the moment sts exits, not merely cleared by the next run.
+printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"
+mkdir -p "$CASE/nosteam"
+printf '#!/bin/sh\nexit 0\n' > "$CASE/nosteam/open"
+chmod +x "$CASE/nosteam/open"
+printf 'ahead\n' > "$CASE/local/game_1.db"
+sh -c 'PATH="$2:$PATH" "$1" play 2>&1 | head -c 1 >/dev/null' _ "$STS" "$CASE/nosteam"
+check "play into a closed pipe: no hub lock left"        1 test -d "$CASE/.sts-lock"
+
+# A hangup (terminal closed) while a transfer runs.
+mkdir -p "$CASE/slow"
+printf '#!/bin/sh\nsleep 2\nexec /usr/bin/rsync "$@"\n' > "$CASE/slow/rsync"
+chmod +x "$CASE/slow/rsync"
+printf 'ahead again\n' > "$CASE/local/game_1.db"
+PATH="$CASE/slow:$PATH" "$STS" push >/dev/null 2>&1 &
+BG=$!
+i=0
+while [ ! -d "$CASE/.sts-lock" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+kill -HUP "$BG" 2>/dev/null || true
+wait "$BG"; RC=$?
+check "push hung up mid-transfer exits 129"              0 test "$RC" -eq 129
+check "  no hub lock left"                               1 test -d "$CASE/.sts-lock"
+check "  the next push succeeds"                         0 "$STS" push
+
+# --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
 newcase playemptied
 "$STS" push --force=local >/dev/null 2>&1

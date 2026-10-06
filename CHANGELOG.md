@@ -13,6 +13,17 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-10-06
+
+### Fixed
+
+- A run cut short by a closed pipe (`sts play | head -1`) or a closed
+  terminal no longer leaves the hub lock behind. The leftover lock then
+  blocked the other Mac, and this one too, with "locked by this machine
+  from an earlier run" until `LOCK_TTL_SECONDS` passed. A lock this Mac
+  left behind is now also cleared at once when the run that took it is no
+  longer running ([#129])
+
 ## [1.5.4] - 2026-10-06
 
 ### Fixed
@@ -263,7 +274,8 @@ that was never transferred was simply absent from the replacement - taking
 from the live directory into the staging directory before the swap. Every one
 of those findings has a case in `tests/regression.sh`.
 
-[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.4...HEAD
+[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.5...HEAD
+[1.5.5]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.3...v1.5.4
 [1.5.3]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.2...v1.5.3
 [1.5.2]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.1...v1.5.2
@@ -302,3 +314,4 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#129]: https://github.com/moudlajs/star-traders-sync/issues/129

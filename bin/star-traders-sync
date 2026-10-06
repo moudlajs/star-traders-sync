@@ -11,7 +11,7 @@
 
 set -Eeuo pipefail
 
-readonly STS_VERSION="1.5.4"
+readonly STS_VERSION="1.5.5"
 readonly PROG="star-traders-sync"
 
 # --------------------------------------------------------------------------
@@ -198,6 +198,9 @@ on_err() {
 
 on_exit() {
     local code=$?
+    # The terminal may be the thing that just went away; a second hangup
+    # here must not cut the cleanup short.
+    trap '' HUP
     release_hub_lock
     # While a swap is in flight the staged copy may be the ONLY complete copy
     # of the saves. Never sweep it away on a signal; leave a breadcrumb that
@@ -229,6 +232,25 @@ trap on_exit EXIT
 # transfer is reported as a clean success.
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# `sts play | head -1`: once the reader goes away, the next write raises
+# SIGPIPE, and that run used to leave the hub lock held, blocking the other
+# machine (#129). PIPE and HUP (terminal closed) now both exit through
+# on_exit with the vanished output pointed at /dev/null first, so the
+# cleanup's own messages cannot fail under set -e and cut it short.
+#
+# The echo after the exec matters. bash 3.2 keeps the text of the write
+# that hit the closed pipe in its stdout buffer, and every $(...) forked
+# afterwards inherits that buffer and flushes it into its own output - so
+# on_exit's "$(hub_lock_path)" came back as that text plus the path, and
+# the lock was never removed. A real write flushes it into /dev/null; an
+# empty printf '' writes nothing and does not.
+exit_quietly() {
+    exec >/dev/null 2>&1
+    echo
+    exit "$1"
+}
+trap 'exit_quietly 129' HUP
+trap 'exit_quietly 141' PIPE
 
 cleanup_later() { CLEANUP_PATHS="$CLEANUP_PATHS
 $1"; }
@@ -1305,6 +1327,22 @@ acquire_hub_lock() {
         printf 'Wait for it to finish. If that machine crashed, clear it there,\n' >&2
         printf 'or remove %s on the hub by hand.\n' "$lock" >&2
         exit $EX_LOCK_REMOTE
+    fi
+
+    # Our own lock whose run is provably gone: the pid it recorded is dead
+    # here. Only trusted when the hostname matches too, so a pid from another
+    # host sharing our id (a cloned disk) is never judged on this machine's
+    # process table. A live or reused pid falls through to the TTL rule.
+    # ps, not kill -0: kill -0 also fails for a live process of another user.
+    case "$owner_pid" in ''|*[!0-9]*) owner_pid=0 ;; esac
+    if [ "$owner_host" = "$(this_host_id)" ] && [ "$owner_pid" -gt 1 ] && \
+       [ "$owner_pid" != "$$" ] && ! ps -p "$owner_pid" >/dev/null 2>&1; then
+        log WARN lock "CLEARING our own hub lock from $owner_iso: pid $owner_pid is no longer running (${age}s old)"
+        warn "clearing a hub lock left by an earlier run on this machine (pid $owner_pid has exited)"
+        hub_exec_args 'rm -rf "$1"' "$lock" || die $EX_LOCK_CREATE lock \
+            "failed to clear our dead-owner hub lock at $lock"
+        acquire_hub_lock
+        return 0
     fi
 
     # Our own lock from a crashed earlier run: clear only past the TTL, loudly.
