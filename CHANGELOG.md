@@ -13,6 +13,12 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Fixed
+
+- `--help` lists exit code 65 (`restore`: no such safety copy), which 1.6.0
+  added without documenting it there. CI now checks every code is in
+  `--help` as well as in the troubleshooting table
+
 ## [1.6.0] - 2026-10-06
 
 ### Added

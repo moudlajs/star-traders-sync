@@ -63,15 +63,43 @@ jobs:
           grep -oE '^readonly EX_[A-Z_]+=[0-9]+' bin/star-traders-sync \
             | grep -oE '[0-9]+$' | sort -un > /tmp/codes
           [ -s /tmp/codes ] || { echo "found no exit codes to check"; exit 1; }
+          # --help lists them too (the script's header promises it, and
+          # 65 once shipped without it).
+          bin/star-traders-sync --help > /tmp/help
           missing=0
           while read -r c; do
             grep -qE "^\| $c \|" "$TABLE" || { echo "exit code $c not in $TABLE"; missing=1; }
+            grep -qE "^  $c +[^ ]" /tmp/help || { echo "exit code $c not in --help"; missing=1; }
           done < /tmp/codes
           [ "$missing" -eq 0 ] && echo "ok - $(wc -l < /tmp/codes | tr -d ' ') codes documented"
           exit $missing
 
       - name: Regression suite
         run: ./tests/regression.sh -v
+
+  go:
+    # The Go build (v2.0, #19). Not shipped until #26: until then it is
+    # held to the bash script, which stays the reference, by parity.sh.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          [ -z "$out" ] || { echo "not gofmt-ed:"; echo "$out"; exit 1; }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Parity with the bash script
+        run: tests/parity.sh
 
   setup-app:
     # The macOS app (macos/). Builds the real universal .app and .dmg,
