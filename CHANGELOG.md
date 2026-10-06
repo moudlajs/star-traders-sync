@@ -13,6 +13,13 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Added
+
+- `sts restore` lists this Mac's safety copies (the snapshots taken before
+  every overwrite), and `sts restore NAME` puts one back. The saves it
+  replaces become a new safety copy first, so a restore can be undone,
+  and nothing is pruned. `--json` lists them for the app ([#90])
+
 ### Fixed
 
 - The updater waits up to about 30 seconds, not 7, for a busy disk image
@@ -349,6 +356,7 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#90]: https://github.com/moudlajs/star-traders-sync/issues/90
 [#108]: https://github.com/moudlajs/star-traders-sync/issues/108
 [#124]: https://github.com/moudlajs/star-traders-sync/issues/124
 [#128]: https://github.com/moudlajs/star-traders-sync/issues/128
