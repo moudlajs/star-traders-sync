@@ -3671,6 +3671,7 @@ EXIT CODES
   34  out of disk space on one side
   63  snapshot failed or was incomplete, so nothing was overwritten
   64  --expect-decision no longer holds: the saves changed, nothing was done
+  65  restore: no safety copy by that name, or an empty one
 
   Game and concurrency
   40  the game is running on this machine

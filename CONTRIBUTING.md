@@ -201,6 +201,21 @@ CI change or a docs-only change needs no entry unless it changed something
 observable. Releasing means moving `Unreleased` into a
 `## [X.Y.Z] - <date>` section and adding its compare link at the bottom.
 
+### The Go build (v2.0)
+
+The Go rewrite (#19) lives beside the script: `go.mod`, `cmd/sts` and
+`internal/`. It ships nothing until the cutover (#26). Until then the bash
+script is the reference, and the Go build is held to it:
+
+- `tests/parity.sh` runs both on the same arguments and configs and diffs
+  the exit code, stdout and stderr. Every slice extends it.
+- `go test ./...` also checks the exit-code table, `--help` and the version
+  against `bin/star-traders-sync`.
+
+So **a release bumps `Version` in `internal/cli/cli.go` together with
+`STS_VERSION`**, and a change to the script's `--help` text regenerates
+`internal/cli/usage.go`. CI fails until both match.
+
 ### Release signing
 
 The app installs an update only when `Star-Traders-Sync.dmg.sig`
