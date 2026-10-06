@@ -15,8 +15,15 @@ on:
 # the job-level `if`, so a comment run joins the group and cancels a running
 # review before skipping itself - which meant posting a summary comment
 # destroyed the review being summarised.
+#
+# The draft state is part of the key (#67). A push to a draft runs, finds
+# draft == true and skips - but it used to share the group with the
+# ready_for_review run that `gh pr ready` fires a second later, and cancel
+# it. Draft runs now only ever cancel each other; ready runs only each
+# other. Comment runs have no pull_request, so they land in their own group
+# and, as before, never cancel a review.
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
