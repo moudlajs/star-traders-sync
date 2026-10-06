@@ -16,9 +16,9 @@ upgrade now rather than later.
 ### Fixed
 
 - Two runs clearing the same stale hub lock at the same moment can no
-  longer delete the fresh lock one of them just took. The stale lock is
-  moved aside first, and only removed if it is still the one judged
-  stale ([#132])
+  longer delete the fresh lock one of them just took. Only one run clears
+  at a time, and it checks again that the lock is still the stale one
+  before removing it ([#132])
 
 ## [1.5.5] - 2026-10-06
 

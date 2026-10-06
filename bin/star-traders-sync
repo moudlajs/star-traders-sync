@@ -1237,49 +1237,59 @@ acquire_local_lock() {
 hub_lock_path() { printf '%s/%s' "$(dirname "$CFG_HUB_PATH")" "$LOCK_DIRNAME"; }
 
 # Clear a stale hub lock without ever removing a lock that is not the one we
-# judged stale. Checking the owner and then removing is two steps: two runs
-# can both judge the same lock stale, one clears it and takes a fresh one,
-# and the other's rm would then delete that fresh lock (#132). So move it
-# aside first - rename is atomic, only one run can win it - and judge what
-# was actually moved. $2 is the owner nonce that was read, or "-" for a
-# lock that had no owner file.
+# judged stale. Reading the owner and removing the lock used to be separate
+# steps, so two runs could judge the same lock stale; one cleared it and
+# took a fresh lock, and the other's rm then deleted that fresh lock (#132).
+#
+# Clearers now take a short mutex beside the lock, so only one clears at a
+# time, and re-judge the lock inside it: still the owner nonce that was
+# read, or - for $2 = "-" - still without an owner file AND still older
+# than the TTL (a just-created lock has no owner file for a moment either).
+# Nothing is moved aside, so there is no window in which the lock is
+# missing and a third run could take it.
 clear_stale_hub_lock() {
     local lock="$1" want="$2" what="$3" out
     out="$(hub_exec_args '
-        lock="$1"; want="$2"; aside="$1.stale-$3"
-        mv "$lock" "$aside" 2>/dev/null || { echo STS_CLEAR_GONE; exit 0; }
+        lock="$1"; want="$2"; ttl="$3"; m="$1.clearing"
+        mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+        if ! mkdir "$m" 2>/dev/null; then
+            # Held for milliseconds by a live clearer; a minute means its
+            # run died inside the clear. Remove that one, and let the next
+            # run do the clearing.
+            [ $(( $(date -u +%s) - $(mtime "$m") )) -ge 60 ] && rmdir "$m" 2>/dev/null
+            echo STS_CLEAR_BUSY
+            exit 0
+        fi
+        trap "rmdir \"$m\" 2>/dev/null" EXIT
+        [ -d "$lock" ] || { echo STS_CLEAR_GONE; exit 0; }
         if [ "$want" = "-" ]; then
-            [ -f "$aside/owner" ] && same=0 || same=1
+            same=0
+            if [ ! -e "$lock/owner" ] && \
+               [ $(( $(date -u +%s) - $(mtime "$lock") )) -ge "$ttl" ]; then same=1; fi
         else
-            [ "$(sed -n 5p "$aside/owner" 2>/dev/null)" = "$want" ] && same=1 || same=0
+            [ "$(sed -n 5p "$lock/owner" 2>/dev/null)" = "$want" ] && same=1 || same=0
         fi
         if [ "$same" = 1 ]; then
-            rm -rf "$aside"
+            rm -rf "$lock"
             echo STS_CLEAR_OK
-            exit 0
+        else
+            echo STS_CLEAR_CHANGED
         fi
-        # Not the lock we judged: someone took a fresh one in between. Put
-        # it back, unless yet another lock appeared meanwhile, in which case
-        # mv would nest it inside that one.
-        if [ ! -e "$lock" ] && mv "$aside" "$lock" 2>/dev/null && \
-           [ ! -e "$lock/${aside##*/}" ]; then
-            echo STS_CLEAR_RESTORED
-            exit 0
-        fi
-        echo STS_CLEAR_CONFLICT
-    ' "$lock" "$want" "$HUB_LOCK_NONCE" 2>&1)" || die $EX_LOCK_CREATE lock \
+    ' "$lock" "$want" "$CFG_LOCK_TTL_SECONDS" 2>&1)" || die $EX_LOCK_CREATE lock \
         "failed to clear the $what hub lock at $lock ($out)"
     case "$out" in
         *STS_CLEAR_OK*)
             log WARN lock "cleared the $what hub lock at $lock" ;;
         *STS_CLEAR_GONE*)
             log INFO lock "the $what hub lock at $lock was already cleared by another run" ;;
-        *STS_CLEAR_RESTORED*)
-            log WARN lock "the hub lock at $lock changed hands while clearing it; put it back" ;;
-        *)
-            log ERROR lock "the hub lock at $lock changed hands twice while clearing it: $out"
+        *STS_CLEAR_CHANGED*)
+            log WARN lock "the hub lock at $lock changed hands before it could be cleared; left alone" ;;
+        *STS_CLEAR_BUSY*)
+            log ERROR lock "another run is clearing the hub lock at $lock"
             die $EX_LOCK_REMOTE lock \
-                "the hub lock changed hands while this run was clearing a $what one. Nothing was synced. Check $lock and $lock.stale-* on $CFG_HUB_HOST, then run again" ;;
+                "another run is clearing a $what hub lock at this moment. Nothing was synced. Run again" ;;
+        *)
+            die $EX_LOCK_CREATE lock "unexpected answer while clearing the hub lock at $lock: $out" ;;
     esac
 }
 
