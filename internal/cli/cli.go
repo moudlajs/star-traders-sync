@@ -21,7 +21,7 @@ import (
 
 // Version must equal STS_VERSION in bin/star-traders-sync while both
 // exist; a test enforces it, so a release bump that misses one fails CI.
-const Version = "1.6.0"
+const Version = "1.6.1"
 
 const prog = "star-traders-sync"
 
