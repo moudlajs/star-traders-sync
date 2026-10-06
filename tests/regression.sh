@@ -895,6 +895,14 @@ while [ $# -gt 0 ]; do
         *) shift; break ;;
     esac
 done
+# drop-carry: the connection dies under the excluded-file carry alone.
+if [ -f "${0%/*}/drop-carry" ] && [ "${1%% *}" = bash ]; then   # a bash -s script on stdin; never rsync's stream
+    script="$(cat)"
+    case "$script" in
+        *STS_CARRY_OK*) echo "client_loop: send disconnect" >&2; exit 255 ;;
+    esac
+    printf '%s\n' "$script" | exec /bin/sh -c "$*"
+fi
 exec /bin/sh -c "$*"
 STUB
     chmod +x "$CASE/clientstub/"*
@@ -932,6 +940,22 @@ check "  the hub is unchanged"                           0 test "$(cat "$CASE/hu
 check "  and still has the excluded file"                0 test "$(cat "$CASE/hub/data.db")" = hub-local
 check "  once it can be copied again, the push goes"       0 "$STS" push
 check "  and carries it"                                 0 test "$(cat "$CASE/hub/data.db")" = hub-local
+
+# The connection drops under the carry itself: no verdict, so no swap.
+touch "$CASE/clientstub/drop-carry"
+printf 'third change\n' > "$CASE/local/game_1.db"
+check "client push, carry check lost: refuses (63)"     63 "$STS" push
+check "  and says it could not check"                    0 sh -c '"$1" push 2>&1 | grep -q "could not check the hub.s excluded files"' _ "$STS"
+check "  the hub is unchanged"                           0 test "$(cat "$CASE/hub/game_1.db")" = "second change"
+check "  and still has the excluded file"                0 test "$(cat "$CASE/hub/data.db")" = hub-local
+rm -f "$CASE/clientstub/drop-carry"
+
+# A glob entry matches on the hub side too; it never did before #128.
+sed -i '' 's/^SYNC_EXCLUDE=.*/SYNC_EXCLUDE=data.db steam_autocloud.vdf *.local/' "$CASE/cfg/star-traders-sync/config"
+printf 'a\n' > "$CASE/hub/a.local"; printf 'b\n' > "$CASE/hub/b.local"
+check "client push with a glob exclude"                  0 "$STS" push
+check "  carries every match"                            0 test "$(cat "$CASE/hub/a.local" "$CASE/hub/b.local")" = "a
+b"
 client_off
 
 # --------------------------------------------------------------------------
