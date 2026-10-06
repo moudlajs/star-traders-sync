@@ -11,7 +11,7 @@
 
 set -Eeuo pipefail
 
-readonly STS_VERSION="1.5.4"
+readonly STS_VERSION="1.5.5"
 readonly PROG="star-traders-sync"
 
 # --------------------------------------------------------------------------
@@ -89,6 +89,7 @@ TS_BIN=""
 
 LOCAL_LOCK_FILE=""
 HELD_HUB_LOCK=0
+HUB_LOCK_DIR=""      # saved on acquire, so the release needs no $(...); see exit_quietly
 HUB_LOCK_NONCE=""
 HUB_LOCK_TRIES=0     # bounds the clear-then-retry path in acquire_hub_lock
 IN_SWAP=0            # 1 while a directory swap is half-done - see on_exit
@@ -198,6 +199,12 @@ on_err() {
 
 on_exit() {
     local code=$?
+    # Best effort from here on: a failed write (a closed pipe or terminal)
+    # must not abort the cleanup halfway under set -e.
+    set +e
+    # The terminal may be the thing that just went away; a second hangup
+    # here must not cut the cleanup short.
+    trap '' HUP
     release_hub_lock
     # While a swap is in flight the staged copy may be the ONLY complete copy
     # of the saves. Never sweep it away on a signal; leave a breadcrumb that
@@ -214,10 +221,16 @@ on_exit() {
         log WARN backup "removing incomplete backup $BACKUP_PENDING"
         rm -rf "$BACKUP_PENDING" 2>/dev/null || true
     fi
-    local p
-    printf '%s\n' "$CLEANUP_PATHS" | while IFS= read -r p; do
+    # A for loop over the variable, not printf piped into while: after a
+    # closed pipe that printf can emit stale output too (see exit_quietly),
+    # and every line it emits here is handed to rm -rf.
+    local p IFS='
+'
+    set -f
+    for p in $CLEANUP_PATHS; do
         [ -n "$p" ] && rm -rf "$p" 2>/dev/null || true
     done
+    set +f
     [ -n "$LOCAL_LOCK_FILE" ] && rm -f "$LOCAL_LOCK_FILE" 2>/dev/null || true
     log DEBUG trap "exit status $code"
     return $code
@@ -229,6 +242,34 @@ trap on_exit EXIT
 # transfer is reported as a clean success.
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# `sts play | head -1`: once the reader goes away, the next write raises
+# SIGPIPE, and that run used to leave the hub lock held, blocking the other
+# machine (#129). PIPE and HUP (terminal closed) now both exit through
+# on_exit with the vanished output pointed at /dev/null first.
+#
+# bash 3.2 keeps the text of the write that hit the closed pipe in its
+# stdout buffer, and every $(...) or pipe forked afterwards inherits that
+# buffer and flushes it into its own output - so on_exit's
+# "$(hub_lock_path)" came back as that text plus the path, and the lock was
+# never removed. The echo flushes it into /dev/null on the bash this was
+# found on, but not on every build, so on_exit's cleanup must not depend on
+# it: the lock path is saved at acquire time and nothing there forks for
+# its output.
+exit_quietly() {
+    if [ "$1" = 141 ]; then
+        # Only stdout is known to be gone. stderr may still be a terminal
+        # that should see on_exit's recovery message; if it is the same
+        # closed pipe, its writes now fail with EPIPE instead of a signal.
+        trap '' PIPE
+        exec >/dev/null
+    else
+        exec >/dev/null 2>&1
+    fi
+    echo
+    exit "$1"
+}
+trap 'exit_quietly 129' HUP
+trap 'exit_quietly 141' PIPE
 
 cleanup_later() { CLEANUP_PATHS="$CLEANUP_PATHS
 $1"; }
@@ -1232,6 +1273,7 @@ acquire_hub_lock() {
     case "$out" in
         *STS_LOCK_ACQUIRED*)
             HELD_HUB_LOCK=1
+            HUB_LOCK_DIR="$lock"
             HUB_LOCK_TRIES=0
             log DEBUG lock "hub lock acquired at $lock"
             return 0 ;;
@@ -1277,11 +1319,12 @@ acquire_hub_lock() {
             exit $EX_LOCK_REMOTE ;;
     esac
 
-    local owner_host owner_pid owner_iso owner_epoch owner_id age is_ours
+    local owner_host owner_pid owner_iso owner_epoch owner_nonce owner_id age is_ours
     owner_host="$(printf  '%s' "$out" | sed -n '3p')"
     owner_pid="$(printf   '%s' "$out" | sed -n '4p')"
     owner_iso="$(printf   '%s' "$out" | sed -n '5p')"
     owner_epoch="$(printf '%s' "$out" | sed -n '6p')"
+    owner_nonce="$(printf '%s' "$out" | sed -n '7p')"
     owner_id="$(printf    '%s' "$out" | sed -n '8p')"
     case "$owner_epoch" in ''|*[!0-9]*) owner_epoch=0 ;; esac
 
@@ -1311,7 +1354,11 @@ acquire_hub_lock() {
     if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
         log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
         warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
-        hub_exec_args 'rm -rf "$1"' "$lock" || die $EX_LOCK_CREATE lock \
+        # Only if it is still the lock we just read: another run may have
+        # cleared it and taken a fresh one in between.
+        hub_exec_args '
+            if [ "$(sed -n 5p "$1/owner" 2>/dev/null)" = "$2" ]; then rm -rf "$1"; fi
+        ' "$lock" "$owner_nonce" || die $EX_LOCK_CREATE lock \
             "failed to clear our stale hub lock at $lock"
         acquire_hub_lock
         return 0
@@ -1329,9 +1376,9 @@ acquire_hub_lock() {
 release_hub_lock() {
     [ "$HELD_HUB_LOCK" -eq 1 ] || return 0
     HELD_HUB_LOCK=0
-    local lock info
-    lock="$(hub_lock_path)"
-    info="$lock/owner"
+    # The path saved at acquire time, not "$(hub_lock_path)": on the way out
+    # after a closed pipe a $(...) can come back polluted (see exit_quietly).
+    local lock="$HUB_LOCK_DIR"
     # Only remove it if it is still OURS. Deleting someone else's lock is
     # worse than leaking our own.
     hub_exec_args '
@@ -1689,7 +1736,7 @@ push_local_to_hub() {
         IN_SWAP=1
         hub_exec_args '
             set -e
-            trap "" HUP INT TERM
+            trap "" HUP INT TERM PIPE
             hub="$1"; tmp="$2"; old="$1.sts-old-$3"
             rm -rf "$old"
             mv "$hub" "$old"
@@ -1710,9 +1757,14 @@ swap_into_place() {
     local tmp="$1" target="$2" old
     old="$target.sts-old-$$"
     rm -rf "$old"
-    mv "$target" "$old" || die $EX_RSYNC swap \
-        "could not move $target aside - nothing was changed"
+    # Set before the first mv, not after it: an exit between the two would
+    # otherwise find IN_SWAP=0 with $target moved aside, and on_exit would
+    # sweep the staged copy as an ordinary temp dir.
     IN_SWAP=1
+    if ! mv "$target" "$old"; then
+        IN_SWAP=0
+        die $EX_RSYNC swap "could not move $target aside - nothing was changed"
+    fi
     if ! mv "$tmp" "$target"; then
         mv "$old" "$target"
         IN_SWAP=0

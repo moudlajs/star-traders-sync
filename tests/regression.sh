@@ -788,6 +788,81 @@ PATH="$PATH_UP_SAVED"
 unset STS_TS_APP_PATH
 
 # --------------------------------------------------------------------------
+section "an interrupted run never leaves the hub lock behind (#129)"
+newcase locksignals
+"$STS" push --force=local >/dev/null 2>&1
+MYID="$(cat "$CASE/state/star-traders-sync/host-id" 2>/dev/null || true)"
+NOW="$(date -u +%s)"
+# A pid that is certainly not running: find a free one.
+DEAD=99999
+while ps -p "$DEAD" >/dev/null 2>&1; do DEAD=$((DEAD - 1)); done
+
+# Our own lock, fresh, whose recorded pid is gone, still waits for the TTL.
+# A dead sts pid does not prove its work stopped: an rsync child or the
+# hub-side swap over ssh can outlive a SIGKILLed client (#131 review).
+mkdir -p "$CASE/.sts-lock"
+printf '%s\n%s\n2026-01-01T00:00:00Z\n%s\nnonce\n%s\n' \
+    "$(hostname -s)" "$DEAD" "$NOW" "$MYID" > "$CASE/.sts-lock/owner"
+check "own fresh lock, owner pid dead: still refused"   50 "$STS" pull
+check "  and not cleared"                                0 test -d "$CASE/.sts-lock"
+rm -rf "$CASE/.sts-lock"
+
+# A reader that goes away mid-run (`sts play | head -1`). The lock must be
+# gone the moment sts exits, not merely cleared by the next run.
+printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"
+mkdir -p "$CASE/nosteam"
+printf '#!/bin/sh\nexit 0\n' > "$CASE/nosteam/open"
+chmod +x "$CASE/nosteam/open"
+printf 'ahead\n' > "$CASE/local/game_1.db"
+# The exit code proves the run really died of the closed pipe, not of
+# something else (no game here: 41) that would also have released the lock.
+# 141 where SIGPIPE reaches the trap; 1 where the caller started us with it
+# ignored (GitHub's runner does), which bash cannot undo - the write then
+# fails with EPIPE and set -e ends the run.
+check "play into a closed pipe dies of it (141 or 1)"    0 bash -c 'PATH="$2:$PATH" "$1" play 2>&1 | head -c 1 >/dev/null; rc="${PIPESTATUS[0]}"; [ "$rc" = 141 ] || [ "$rc" = 1 ]' _ "$STS" "$CASE/nosteam"
+check "  no hub lock left"                               1 test -d "$CASE/.sts-lock"
+rm -rf "$CASE/.sts-lock"
+
+# A hangup (terminal closed) while a transfer runs.
+mkdir -p "$CASE/slow"
+printf '#!/bin/sh\nsleep 2\nexec /usr/bin/rsync "$@"\n' > "$CASE/slow/rsync"
+chmod +x "$CASE/slow/rsync"
+printf 'ahead again\n' > "$CASE/local/game_1.db"
+PATH="$CASE/slow:$PATH" "$STS" push >/dev/null 2>&1 &
+BG=$!
+# Wait until the lock is this push's own: then sts is past its traps. A
+# HUP that lands earlier hits the forked child while it is still a copy of
+# this suite, and bash runs the suite's EXIT trap (rm -rf "$SB") in it.
+i=0
+while [ "$(sed -n 2p "$CASE/.sts-lock/owner" 2>/dev/null)" != "$BG" ] && [ "$i" -lt 100 ]; do
+    sleep 0.1; i=$((i + 1))
+done
+kill -HUP "$BG" 2>/dev/null || true
+wait "$BG"; RC=$?
+check "push hung up mid-transfer exits 129"              0 test "$RC" -eq 129
+check "  no hub lock left"                               1 test -d "$CASE/.sts-lock"
+check "  the next push succeeds"                         0 "$STS" push
+
+# A hangup in the instant this machine's saves have been moved aside and the
+# staged copy from the hub is not yet in place. IN_SWAP used to be set only
+# after that first mv, so on_exit swept the staged copy as an ordinary temp
+# dir and left only the parked old saves.
+newcase swaphup
+"$STS" push --force=local >/dev/null 2>&1
+printf 'from the other mac\n' > "$CASE/hub/game_1.db"     # the hub moved on
+mkdir -p "$CASE/hupmv"
+# Hang up our caller while it moves the save folder aside; bash runs the
+# trap as soon as this mv returns.
+printf '#!/bin/sh\nif [ "$1" = "%s" ]; then kill -HUP "$PPID"; fi\nexec /bin/mv "$@"\n' \
+    "$CASE/local" > "$CASE/hupmv/mv"
+chmod +x "$CASE/hupmv/mv"
+check "pull hung up mid-swap exits 129"                129 env PATH="$CASE/hupmv:$PATH" "$STS" pull
+check "  the staged copy is kept"                        0 sh -c 'test -f "$(ls -d "$1"/.sts-incoming-* | head -1)/game_1.db"' _ "$CASE"
+check "  the old saves are parked, not lost"             0 sh -c 'test -f "$(ls -d "$1"/local.sts-old-* | head -1)/game_1.db"' _ "$CASE"
+check "  no hub lock left"                               1 test -d "$CASE/.sts-lock"
+check "  the next pull refuses until they are restored" 13 "$STS" pull
+
+# --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
 newcase playemptied
 "$STS" push --force=local >/dev/null 2>&1
