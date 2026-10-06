@@ -15,6 +15,9 @@ public enum SyncAction: String, CaseIterable, Identifiable {
     /// sync is a first run and asks which saves to keep (troubleshooting
     /// row 46). No save file is touched.
     case resetRecord
+    /// sts restore NAME: put one of this Mac's safety copies back (#90).
+    /// Only ever offered by the Restore sheet, never planned or automatic.
+    case restore
 
     public var id: String { rawValue }
 
@@ -36,6 +39,7 @@ public enum SyncAction: String, CaseIterable, Identifiable {
         case .keepHub:     return ["pull", "--force=hub"]
         case .keepLocal:   return ["push", "--force=local"]
         case .resetRecord: return nil
+        case .restore:     return nil   // needs the copy's name: ActionButton.scriptArguments
         }
     }
 
@@ -50,6 +54,8 @@ public enum SyncAction: String, CaseIterable, Identifiable {
             return ["Check both sides", "Send this Mac's saves to the Hub"]
         case .resetRecord:
             return ["Reset this Mac's sync record"]
+        case .restore:
+            return ["Keep the saves here as a safety copy, then put the chosen one back"]
         }
     }
 }
@@ -67,7 +73,16 @@ public struct ActionButton: Equatable, Identifiable {
     public let prominent: Bool
     /// Asked before running; nil runs straight away.
     public let confirmation: Confirmation?
-    public var id: String { action.rawValue + label }
+    /// For restore: the safety copy's name, exactly as sts restore lists it.
+    public var restoreName: String?
+    public var id: String { action.rawValue + label + (restoreName ?? "") }
+
+    /// What the script is run with; nil only for resetRecord, which is
+    /// not a script command, and for a restore with no copy chosen.
+    public var scriptArguments: [String]? {
+        if action == .restore { return restoreName.map { ["restore", $0] } }
+        return action.arguments(expecting: expected)
+    }
 
     public struct Confirmation: Equatable {
         public let title: String
@@ -83,6 +98,19 @@ public struct ActionPlan: Equatable {
 }
 
 public enum SyncActions {
+    /// The Restore sheet's button for one safety copy. Its confirmation
+    /// says what happens to the saves here now.
+    public static func restore(_ copy: SafetyCopy) -> ActionButton {
+        var b = ActionButton(
+            action: .restore, label: "Restore", prominent: true,
+            confirmation: .init(
+                title: "Put back the saves from \(copy.displayDate)?",
+                message: "This Mac's saves are replaced by this safety copy (\(copy.summary)). The saves here now are kept as a new safety copy first, so this can be undone. Nothing on the Hub changes until the next sync.",
+                button: "Restore"))
+        b.restoreName = copy.name
+        return b
+    }
+
     /// The buttons for a status. Every button is one the script accepts in
     /// that state: a plain pull where pull would refuse is never offered.
     public static func plan(for s: SyncStatus) -> ActionPlan {
@@ -250,7 +278,7 @@ public struct ActionProgress: Equatable {
             if l.hasPrefix("pulling ") || l.hasPrefix("first seed") { current = max(current, 1) }
         case .push, .keepLocal:
             if l.hasPrefix("pushing ") || l.hasPrefix("seeding the empty hub") { current = max(current, 1) }
-        case .resetRecord:
+        case .resetRecord, .restore:
             break
         }
     }

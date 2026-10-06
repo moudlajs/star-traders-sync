@@ -31,6 +31,8 @@ final class DashboardModel: ObservableObject {
 
     /// The health check opens inside the main window, not as a sheet.
     @Published var showingHealth = false
+    /// The Restore previous saves sheet (#90).
+    @Published var showingRestore = false
 
     /// Something worth knowing about a run that otherwise succeeded, such
     /// as the game crashing (the saves were still sent). Shown under the
@@ -57,6 +59,13 @@ final class DashboardModel: ObservableObject {
     // Seams for tests: the script calls and the clock. The app uses the
     // defaults; DashboardModelTests swap in fakes.
     var fetchStatus: (String) -> Result<SyncStatus, SyncProblem> = { StatusClient.fetch(script: $0) }
+    /// sts restore --json: this Mac's safety copies, newest first (#90).
+    var fetchSafetyCopies: (String) -> Result<[SafetyCopy], SyncProblem> = { script in
+        let r = Shell.run("/bin/bash", [script, "restore", "--json"])
+        guard r.ok else { return .failure(SyncProblem.from(code: r.status, stderr: r.stderr)) }
+        do { return .success(try SafetyCopy.list(from: Data(r.stdout.utf8))) }
+        catch { return .failure(SyncProblem.from(code: 1, stderr: "error: could not read the list of safety copies")) }
+    }
     var runScript: (String, [String], @escaping (String) -> Void) -> Int32 = { script, args, onLine in
         Shell.stream("/bin/bash", [script] + args, onLine: onLine)
     }
@@ -231,7 +240,7 @@ final class DashboardModel: ObservableObject {
         justSynced = nil
         let script = self.script
 
-        guard let args = action.arguments(expecting: button.expected) else {
+        if action == .resetRecord {
             // resetRecord: the documented manual fix for a diverged state,
             // under the same local lock the script takes.
             do {
@@ -257,6 +266,10 @@ final class DashboardModel: ObservableObject {
                 r.finish(status: 1, output: "error: \(error.localizedDescription)")
             }
             refresh()
+            return
+        }
+        guard let args = button.scriptArguments else {
+            r.finish(status: 2, output: "error: no safety copy was chosen")
             return
         }
 
@@ -387,6 +400,8 @@ struct DashboardView: View {
                         withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = true }
                         d.runDoctor()
                     }
+                    Button("Restore previous saves…") { d.showingRestore = true }
+                        .disabled(d.busy)
                     Button("Open logs") { d.openLogs() }
                     Divider()
                     Toggle("Show in menu bar", isOn: $showInMenuBar)
@@ -411,6 +426,7 @@ struct DashboardView: View {
         } message: { b in
             Text(b.confirmation?.message ?? "")
         }
+        .sheet(isPresented: $d.showingRestore) { RestoreSheet() }
         .animation(.easeOut(duration: 0.25), value: d.run?.id)
     }
 

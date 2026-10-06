@@ -92,6 +92,7 @@ struct MainHero: View {
             case .pull, .keepHub:  return "Fetching the Hub's saves"
             case .push, .keepLocal: return "Sending to the Hub"
             case .resetRecord:     return "Resetting"
+            case .restore:         return "Restoring a safety copy"
             }
         case .justSynced:
             return "Up to date"
@@ -117,6 +118,7 @@ struct MainHero: View {
             case .play:                     return "Played and synced. Your saves are on the Hub."
             case .push, .keepLocal:         return "Sent this Mac's saves to the Hub just now."
             case .resetRecord:              return "This Mac's sync record was reset."
+            case .restore:                  return "Restored. The saves it replaced are kept as a safety copy."
             default:                        return "Copied the Hub's saves to this Mac just now."
             }
         case .status(let s):
