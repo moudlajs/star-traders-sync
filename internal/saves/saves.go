@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
@@ -44,6 +45,20 @@ func CheckPath(p string, log *logx.Logger, stderr io.Writer) (string, *fail.Fail
 	return p, nil
 }
 
+// globEscape makes a path literal in a glob pattern, as the script's quoted
+// "$path".sts-old-* is: config validation keeps *, ? and [ out of paths
+// today, but this must not depend on it.
+func globEscape(p string) string {
+	var b strings.Builder
+	for _, r := range p {
+		if strings.ContainsRune(`*?[\`, r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // RecoverOrphans looks for what an interrupted run left beside the save
 // directory. A missing save directory with a parked .sts-old copy is an
 // interrupted swap: the saves are intact there, and nothing runs until
@@ -52,7 +67,7 @@ func CheckPath(p string, log *logx.Logger, stderr io.Writer) (string, *fail.Fail
 // (sweep); status only reports them (sweep false).
 func RecoverOrphans(savePath string, sweep bool, now time.Time, log *logx.Logger) *fail.Failure {
 	if st, err := os.Stat(savePath); err != nil || !st.IsDir() {
-		if parked, _ := filepath.Glob(savePath + ".sts-old-*"); len(parked) > 0 {
+		if parked, _ := filepath.Glob(globEscape(savePath) + ".sts-old-*"); len(parked) > 0 {
 			for _, old := range parked {
 				if st, err := os.Stat(old); err == nil && st.IsDir() {
 					log.Log("ERROR", "recover", "interrupted swap detected: %s missing, saves parked at %s", savePath, old)
@@ -69,7 +84,7 @@ func RecoverOrphans(savePath string, sweep bool, now time.Time, log *logx.Logger
 
 	// A staging directory younger than this may belong to a run that is
 	// still going; the cost of waiting is nil, of deleting live data total.
-	incoming, _ := filepath.Glob(filepath.Join(filepath.Dir(savePath), ".sts-incoming-*"))
+	incoming, _ := filepath.Glob(filepath.Join(globEscape(filepath.Dir(savePath)), ".sts-incoming-*"))
 	for _, d := range incoming {
 		st, err := os.Stat(d)
 		if err != nil || !st.IsDir() {
@@ -86,7 +101,7 @@ func RecoverOrphans(savePath string, sweep bool, now time.Time, log *logx.Logger
 			_ = os.RemoveAll(d)
 		}
 	}
-	parked, _ := filepath.Glob(savePath + ".sts-old-*")
+	parked, _ := filepath.Glob(globEscape(savePath) + ".sts-old-*")
 	for _, old := range parked {
 		if st, err := os.Stat(old); err == nil && st.IsDir() {
 			log.Log("WARN", "recover", "previous generation left at %s - safe to delete once you are happy", old)
