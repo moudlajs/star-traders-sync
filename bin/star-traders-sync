@@ -1236,7 +1236,7 @@ acquire_local_lock() {
 
 hub_lock_path() { printf '%s/%s' "$(dirname "$CFG_HUB_PATH")" "$LOCK_DIRNAME"; }
 
-# Clear a stale hub lock without ever removing a lock that is not the one we
+# Clear a stale hub lock without removing a lock that is not the one we
 # judged stale. Reading the owner and removing the lock used to be separate
 # steps, so two runs could judge the same lock stale; one cleared it and
 # took a fresh lock, and the other's rm then deleted that fresh lock (#132).
@@ -1246,7 +1246,10 @@ hub_lock_path() { printf '%s/%s' "$(dirname "$CFG_HUB_PATH")" "$LOCK_DIRNAME"; }
 # read, or - for $2 = "-" - still without an owner file AND still older
 # than the TTL (a just-created lock has no owner file for a moment either).
 # Nothing is moved aside, so there is no window in which the lock is
-# missing and a third run could take it.
+# missing and a third run could take it. The mutex serialises clearers only:
+# a lock released by its owner and retaken between the re-judgment and the
+# rm, a few syscalls apart, would still be removed - but that needs an owner
+# alive past the TTL, which the TTL already assumes away.
 clear_stale_hub_lock() {
     local lock="$1" want="$2" what="$3" out
     out="$(hub_exec_args '
