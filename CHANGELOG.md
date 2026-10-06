@@ -13,6 +13,11 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Fixed
+
+- The updater waits up to about 30 seconds, not 7, for a busy disk image
+  before giving up ([#124])
+
 ## [1.5.6] - 2026-10-06
 
 ### Security

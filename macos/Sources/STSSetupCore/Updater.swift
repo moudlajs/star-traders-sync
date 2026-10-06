@@ -207,7 +207,9 @@ public enum UpdateInstaller {
     /// EAGAIN ("Resource temporarily unavailable") while diskarbitrationd is
     /// busy with another image. That is not a bad download, so it is retried
     /// before it becomes a refusal; any other failure is final at once.
-    static let attachBackoff: [TimeInterval] = [0.5, 1, 2, 4]
+    /// About 30 s in all: CI once saw the busy spell outlast 7.5 s (#124),
+    /// and a user waiting on an update is better off waiting than refused.
+    static let attachBackoff: [TimeInterval] = [0.5, 1, 2, 4, 8, 15]
 
     static func attachWithRetry(dmg: URL, at mount: URL, run: (String, [String]) -> CommandResult,
                                 sleep: (TimeInterval) -> Void) -> CommandResult {
