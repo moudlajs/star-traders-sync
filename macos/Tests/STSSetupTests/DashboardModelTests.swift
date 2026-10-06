@@ -160,6 +160,21 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertFalse(d.autoHeldAfterRestore, "and ends the hold")
     }
 
+    /// #143 review: a restore that fails still holds automatic sync; it
+    /// may have changed the saves before it stopped.
+    func testAFailedRestoreStillHoldsAutomaticSync() async throws {
+        fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")], exit: 63)
+        d.start()
+        await settle { !self.d.loading && self.d.status != nil }
+        let copy = try XCTUnwrap(SafetyCopy.list(from: Data(#"{"snapshots":[{"name":"2026-10-06T12:00:00Z","files":5,"campaign_saves":1,"newest":1790000000}]}"#.utf8)).first)
+        d.perform(SyncActions.restore(copy))
+        await settle { self.d.run?.ended == true && !self.d.loading }
+        d.refresh()
+        await settle(1) { false }
+        XCTAssertTrue(d.autoHeldAfterRestore)
+        XCTAssertEqual(calls.all, [["restore", "2026-10-06T12:00:00Z"]], "nothing automatic after the failure")
+    }
+
     /// #143 review: the hold survives a relaunch (or a launch at login).
     func testTheHoldAfterARestoreSurvivesARelaunch() async throws {
         UserDefaults.standard.removeObject(forKey: DashboardModel.holdKey)

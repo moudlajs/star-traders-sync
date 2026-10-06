@@ -245,8 +245,12 @@ final class DashboardModel: ObservableObject {
         // sync, a confirmation answered late).
         guard active, !updating, !busy else { return }
         pending = nil
-        // Anything the user starts themselves ends the hold a restore set.
-        if !automatic { autoHeldAfterRestore = false }
+        // A restore holds automatic sync from the moment it starts, not
+        // only once it succeeds: one that fails or is cut short may still
+        // have changed the saves here. Anything else the user starts
+        // themselves ends the hold.
+        if action == .restore { autoHeldAfterRestore = true }
+        else if !automatic { autoHeldAfterRestore = false }
         let r = ActionRun(action: action, automatic: automatic)
         run = r
         notice = nil
@@ -307,10 +311,7 @@ final class DashboardModel: ObservableObject {
                     self.autoFailedAt = status == 0 ? nil : self.now()
                 }
                 if status == 0 {
-                    if action == .restore {
-                        self.autoHeldAfterRestore = true
-                        self.notice = Self.holdNotice
-                    }
+                    if action == .restore { self.notice = Self.holdNotice }
                     if r.progress.gameCrashed {
                         self.notice = "The game crashed during your last session. Your saves were still sent to the Hub."
                     }
