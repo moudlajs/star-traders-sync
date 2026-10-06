@@ -19,6 +19,10 @@ upgrade now rather than later.
   longer delete the fresh lock one of them just took. Only one run clears
   at a time, and it checks again that the lock is still the stale one
   before removing it ([#132])
+- A push from a client no longer deletes a `SYNC_EXCLUDE` file on the hub
+  that it could not carry across the swap. It refuses with 63 instead, as
+  a push from the Hub host already did. `SYNC_EXCLUDE` patterns with a
+  glob now match on the hub side too ([#128])
 
 ## [1.5.5] - 2026-10-06
 
@@ -322,5 +326,6 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#128]: https://github.com/moudlajs/star-traders-sync/issues/128
 [#129]: https://github.com/moudlajs/star-traders-sync/issues/129
 [#132]: https://github.com/moudlajs/star-traders-sync/issues/132
