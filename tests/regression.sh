@@ -12,7 +12,12 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-STS="$REPO/bin/star-traders-sync"
+# STS_BIN runs the suite against another build of the tool - the Go one
+# (#25) - which must pass it unchanged.
+STS="${STS_BIN:-$REPO/bin/star-traders-sync}"
+# Cases that test the script's own functions read them from here, whatever
+# build $STS is.
+BASH_STS="$REPO/bin/star-traders-sync"
 SB="$(mktemp -d "${TMPDIR:-/tmp}/sts-tests.XXXXXX")"
 REAL_HOME="$HOME"
 VERBOSE=0
@@ -215,7 +220,7 @@ rm -rf "$CASE/.sts-lock"
 # that has no id yet.
 newcase hostid_race
 RACE="$CASE/racefn.sh"
-sed -n '/^stable_host_id() {/,/^}/p' "$STS" > "$RACE"
+sed -n '/^stable_host_id() {/,/^}/p' "$BASH_STS" > "$RACE"
 mkdir -p "$CASE/raceout"
 i=1
 while [ "$i" -le 20 ]; do
@@ -310,7 +315,7 @@ check "  nothing executed"                               1 test -e /tmp/sts-pwne
 section "remote command construction"
 newcase inject
 INJ="$CASE/injfn.sh"
-sed -n '/^shq() {/,/^}/p; /^hub_exec_args() {/,/^}/p' "$STS" > "$INJ"
+sed -n '/^shq() {/,/^}/p; /^hub_exec_args() {/,/^}/p' "$BASH_STS" > "$INJ"
 rm -f "$CASE/PWNED"
 INJ_OK=1
 # Values that would be code if they were interpolated into shell text.

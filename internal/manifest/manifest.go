@@ -161,6 +161,13 @@ func Build(dir string, exclude []string) (Manifest, error) {
 				return nil
 			}
 		}
+		// A newline in a name cannot survive the script's line-based
+		// manifest (a remote hub's): refuse it as unhashable, as the script
+		// does, rather than fingerprint what the other side cannot.
+		if strings.ContainsAny(dot, "\n\r") {
+			unreadable = append(unreadable, dot)
+			return nil
+		}
 		files = append(files, dot)
 		return nil
 	})

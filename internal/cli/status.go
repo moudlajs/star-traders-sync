@@ -39,6 +39,8 @@ type run struct {
 	local   string // LOCAL_SAVE_PATH, after a symlink is resolved
 	hub     *hub.Hub
 	lockLoc *lock.Local
+	inPlay  bool // play's pull: LOCAL_ONLY is "nothing to fetch", not a refusal
+	ex      *exiter
 }
 
 func (r *run) say(format string, a ...any) { fmt.Fprintf(r.out, format+"\n", a...) }
@@ -61,6 +63,7 @@ func (r *run) prepare(now time.Time) *fail.Failure {
 		return f
 	}
 	r.lockLoc = l
+	r.ex.add(l.Release)
 	// Only after the local lock: the sweep deletes staging directories,
 	// and before the lock it could delete a running sync's own.
 	if f := saves.RecoverOrphans(r.cfg.Get("LOCAL_SAVE_PATH"), r.opt.Command != "status", now, r.log); f != nil {
@@ -105,7 +108,7 @@ func (r *run) prepare(now time.Time) *fail.Failure {
 			"--offline-ok only applies to '%s play'; '%s' needs the hub, and %s is offline", prog, r.opt.Command, r.hub.Host)
 	}
 	if r.opt.DryRun {
-		return fail.New(1, "dry-run", "--dry-run is not in the Go build yet - use bin/%s", prog)
+		return nil // the caller prints the plan; nothing past this point runs
 	}
 	if r.hub.EndpointKind != "offline" {
 		return r.hub.CheckPath(r.opt.Command == "push")

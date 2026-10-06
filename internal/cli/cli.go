@@ -158,6 +158,12 @@ func parseArgs(args []string, p paths) (Options, *exit) {
 	if o.Command == "restore" && (o.DryRun || o.Force != "" || o.OfflineOK) {
 		return o, usageErr(`error: "restore" takes only the name of a safety copy, and --json to list them.`)
 	}
+	if o.Command == "play" && o.Force != "" {
+		return o, usageErr(`error: --force cannot be used with "play", which pulls before and pushes after.`,
+			"Resolve the conflict explicitly first, then play:",
+			fmt.Sprintf("  %s pull --force=hub     keep the hub's saves", prog),
+			fmt.Sprintf("  %s push --force=local   keep this machine's saves", prog))
+	}
 	return o, nil
 }
 
@@ -223,11 +229,15 @@ func Main(args []string, env Env) int {
 	log.Log("INFO", "start", "command=%s dry_run=%d force='%s' offline_ok=%d version=%s",
 		o.Command, b2i(o.DryRun), o.Force, b2i(o.OfflineOK), Version)
 
-	if o.Command != "status" {
+	switch o.Command {
+	case "status", "pull", "push":
+	default:
 		return notYet(env, o.Command)
 	}
 	r := &run{env: env, opt: o, cfg: cfg, p: p, log: log, out: env.Stdout, json: io.Discard,
-		pid: os.Getpid(), host: hostnameShort()}
+		pid: os.Getpid(), host: hostnameShort(), ex: &exiter{}}
+	stopSignals := r.ex.watch()
+	defer stopSignals()
 	if o.JSON {
 		// stdout carries the JSON object and nothing else; every other
 		// message goes to stderr, so a caller can parse stdout on exit 0.
@@ -236,9 +246,28 @@ func Main(args []string, env Env) int {
 	// A closure: r.lockLoc is set later, in prepare, and a plain
 	// "defer r.lockLoc.Release()" would bind the nil it holds now.
 	defer func() { r.lockLoc.Release() }() // status takes no hub lock
-	f = r.prepare(time.Now())
-	if f == nil {
+	now := time.Now()
+	f = r.prepare(now)
+	switch {
+	case f != nil:
+	case o.DryRun:
+		r.dryRun()
+	case o.Command == "status":
 		f = r.status()
+	default:
+		s := r.newSyncer(now)
+		if o.Command == "pull" {
+			f = s.pull()
+		} else {
+			f = s.push()
+		}
+		if f != nil {
+			code := report(env, log, p, f)
+			s.release()
+			return code
+		}
+		s.release()
+		return 0
 	}
 	if f != nil {
 		return report(env, log, p, f)
