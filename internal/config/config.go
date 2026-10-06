@@ -14,22 +14,14 @@ import (
 	"strings"
 
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
+	"github.com/moudlajs/star-traders-sync/internal/fail"
 )
 
-// Failure is a refusal: the exit code, the log step, and the message the
-// script prints after "error: ". Lines, when set, is printed as-is instead
-// (the missing-keys report, which has its own shape).
-type Failure struct {
-	Code  exitcode.Code
-	Step  string
-	Msg   string
-	Lines []string
-}
+// Failure is a refusal (see package fail).
+type Failure = fail.Failure
 
-func (f *Failure) Error() string { return f.Msg }
-
-func fail(code exitcode.Code, format string, a ...any) *Failure {
-	return &Failure{Code: code, Step: "config", Msg: fmt.Sprintf(format, a...)}
+func refuse(code exitcode.Code, format string, a ...any) *Failure {
+	return fail.New(code, "config", format, a...)
 }
 
 // Known keys, in the script's config_key_known order.
@@ -102,14 +94,14 @@ func (c *Config) Exclude() []string { return strings.Fields(c.values["SYNC_EXCLU
 func Load(path, home string) (*Config, *Failure) {
 	st, err := os.Stat(path)
 	if err != nil {
-		return nil, fail(exitcode.ConfigMissing, "no config at %s - copy config.example there and edit it", path)
+		return nil, refuse(exitcode.ConfigMissing, "no config at %s - copy config.example there and edit it", path)
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fail(exitcode.ConfigMissing, "%s exists but is not a regular file", path)
+		return nil, refuse(exitcode.ConfigMissing, "%s exists but is not a regular file", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fail(exitcode.ConfigMissing, "%s is not readable by %s", path, whoami())
+		return nil, refuse(exitcode.ConfigMissing, "%s is not readable by %s", path, whoami())
 	}
 
 	c := &Config{File: path, values: map[string]string{}}
@@ -129,7 +121,7 @@ func Load(path, home string) (*Config, *Failure) {
 		}
 		eq := strings.IndexByte(line, '=')
 		if eq < 0 {
-			return nil, fail(exitcode.ConfigMalformed, "%s line %d is not KEY=value: %s", path, lineno, line)
+			return nil, refuse(exitcode.ConfigMalformed, "%s line %d is not KEY=value: %s", path, lineno, line)
 		}
 		// The script deletes every whitespace character from the key
 		// (tr -d '[:space:]'), not only the ends.
@@ -140,7 +132,7 @@ func Load(path, home string) (*Config, *Failure) {
 			return r
 		}, line[:eq])
 		if !isKnown(key) {
-			return nil, fail(exitcode.ConfigMalformed, "%s line %d: unknown key '%s' - see config.example", path, lineno, key)
+			return nil, refuse(exitcode.ConfigMalformed, "%s line %d: unknown key '%s' - see config.example", path, lineno, key)
 		}
 		val := strings.Trim(line[eq+1:], " \t\n\v\f\r")
 		if isPath(key) && val != "" {
@@ -196,26 +188,25 @@ func (c *Config) Validate() *Failure {
 			lines = append(lines, "  "+k)
 		}
 		lines = append(lines, fmt.Sprintf("edit %s - see config.example for what each one means", c.File))
-		return &Failure{Code: exitcode.ConfigIncomplete, Step: "config",
-			Msg: "missing required keys: " + strings.Join(missing, " "), Lines: lines}
+		return fail.Printed(exitcode.ConfigIncomplete, "config", "missing required keys: "+strings.Join(missing, " "), lines...)
 	}
 
 	for _, k := range numeric {
 		v := c.values[k]
 		if v == "" || !onlyChars(v, "0123456789") {
-			return fail(exitcode.ConfigMalformed, "%s must be a non-negative integer, got '%s'", k, v)
+			return refuse(exitcode.ConfigMalformed, "%s must be a non-negative integer, got '%s'", k, v)
 		}
 	}
 
 	switch c.values["LOG_LEVEL"] {
 	case "DEBUG", "INFO", "WARN", "ERROR":
 	default:
-		return fail(exitcode.ConfigMalformed, "LOG_LEVEL must be DEBUG, INFO, WARN or ERROR, got '%s'", c.values["LOG_LEVEL"])
+		return refuse(exitcode.ConfigMalformed, "LOG_LEVEL must be DEBUG, INFO, WARN or ERROR, got '%s'", c.values["LOG_LEVEL"])
 	}
 
 	hub := c.values["HUB_PATH"]
 	if !strings.HasPrefix(hub, "/") {
-		return fail(exitcode.ConfigMalformed, "HUB_PATH must be absolute - it is evaluated on the hub host, where ~ is the hub user's home, got '%s'", hub)
+		return refuse(exitcode.ConfigMalformed, "HUB_PATH must be absolute - it is evaluated on the hub host, where ~ is the hub user's home, got '%s'", hub)
 	}
 
 	// rsync hands a remote path to the hub's login shell, and openrsync
@@ -223,29 +214,29 @@ func (c *Config) Validate() *Failure {
 	for _, k := range pathKeys {
 		v := c.values[k]
 		if !onlyChars(v, alnum+"._/@+-") {
-			return fail(exitcode.ConfigMalformed, "%s contains a character that cannot survive being passed to a remote shell: '%s'. Allowed: letters, digits, and . _ / @ + - (no spaces, quotes or shell metacharacters).", k, v)
+			return refuse(exitcode.ConfigMalformed, "%s contains a character that cannot survive being passed to a remote shell: '%s'. Allowed: letters, digits, and . _ / @ + - (no spaces, quotes or shell metacharacters).", k, v)
 		}
 	}
 	for _, name := range c.Exclude() {
 		if !onlyChars(name, alnum+"._*@+-") {
-			return fail(exitcode.ConfigMalformed, "SYNC_EXCLUDE entry '%s' contains an unsafe character", name)
+			return refuse(exitcode.ConfigMalformed, "SYNC_EXCLUDE entry '%s' contains an unsafe character", name)
 		}
 	}
 
 	local := c.values["LOCAL_SAVE_PATH"]
 	if hub == local {
-		return fail(exitcode.ConfigMalformed, "HUB_PATH and LOCAL_SAVE_PATH are the same directory. The hub must be separate from the game's save directory, on every machine including the hub itself.")
+		return refuse(exitcode.ConfigMalformed, "HUB_PATH and LOCAL_SAVE_PATH are the same directory. The hub must be separate from the game's save directory, on every machine including the hub itself.")
 	}
 	if strings.HasPrefix(local+"/", hub+"/") {
-		return fail(exitcode.ConfigMalformed, "LOCAL_SAVE_PATH (%s) is inside HUB_PATH (%s) - a push would move the live save directory out from under the game", local, hub)
+		return refuse(exitcode.ConfigMalformed, "LOCAL_SAVE_PATH (%s) is inside HUB_PATH (%s) - a push would move the live save directory out from under the game", local, hub)
 	}
 	if strings.HasPrefix(hub+"/", local+"/") {
-		return fail(exitcode.ConfigMalformed, "HUB_PATH (%s) is inside LOCAL_SAVE_PATH (%s) - the hub would be synced into itself", hub, local)
+		return refuse(exitcode.ConfigMalformed, "HUB_PATH (%s) is inside LOCAL_SAVE_PATH (%s) - the hub would be synced into itself", hub, local)
 	}
 
 	vol, dest := c.values["BACKUP_VOLUME"], c.values["BACKUP_DEST"]
 	if !strings.HasPrefix(dest, vol+"/") {
-		return fail(exitcode.ConfigMalformed, "BACKUP_DEST (%s) must live under BACKUP_VOLUME (%s)", dest, vol)
+		return refuse(exitcode.ConfigMalformed, "BACKUP_DEST (%s) must live under BACKUP_VOLUME (%s)", dest, vol)
 	}
 	return nil
 }
