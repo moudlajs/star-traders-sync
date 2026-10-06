@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
             DashboardModel.refreshAppScript(layout: layout, when: "launch")
         }
         showingSetup = !configured || !FileManager.default.isExecutableFile(atPath: layout.installedScript.path)
+        AppDelegate.app = self
     }
 
     func showSetup() {
@@ -42,12 +43,15 @@ final class AppModel: ObservableObject {
 /// would silently never reach the hub.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static weak var dashboard: DashboardModel?
+    @MainActor static weak var app: AppModel?
 
     /// With the menu bar icon showing, closing the window keeps the app,
-    /// and automatic sync, running (#91). Without it, closing the window
-    /// quits, through the guard below.
+    /// and automatic sync, running (#91). Without it - turned off, or
+    /// hidden because setup is showing - closing the window quits, through
+    /// the guard below. Never a process left with nothing to click.
+    @MainActor
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !MenuBarPreference.shown
+        !(MenuBarPreference.shown && Self.app?.showingSetup == false)
     }
 
     @MainActor

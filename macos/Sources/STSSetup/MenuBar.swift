@@ -96,7 +96,10 @@ struct MenuBarView: View {
     /// choice is made in the window, where its confirmation can be read.
     @ViewBuilder var primary: some View {
         let plan = d.status.map { SyncActions.plan(for: $0) }
-        if let play = plan?.buttons.first(where: { $0.action == .play }), plan?.blockedBecause == nil, !d.busy {
+        // Only a Play that runs straight away: a confirmation is shown by
+        // the window, and one left pending would hold every check.
+        if let play = plan?.buttons.first(where: { $0.action == .play && $0.confirmation == nil }),
+           plan?.blockedBecause == nil, !d.busy {
             Button { d.tapped(play) } label: {
                 Label("Play Star Traders", systemImage: "play.fill").frame(maxWidth: .infinity)
             }
