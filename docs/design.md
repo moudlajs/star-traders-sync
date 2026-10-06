@@ -237,8 +237,19 @@ shell. Lifting the restriction means solving that first.
 
 macOS 15 ships **openrsync** (`protocol version 29`, "rsync 2.6.9
 compatible"), not GNU rsync. Everything used here was tested against it:
-`-a`, `-n`, `-i`, `--delete`, `--link-dest`, `--exclude`, `-e`. Dry-run
-itemizing is accurate.
+`-a`, `-c`, `-n`, `-i`, `--delete`, `--link-dest`, `--exclude`, `-e`.
+Dry-run itemizing is accurate. openrsync accepts `-c` but not the long
+`--checksum`, so the short form is used.
+
+`-c` is required (#158). rsync's default quick check calls a file
+unchanged when its size and its mtime, to the second, match. With
+`--link-dest`, a save rewritten at the same size in the same second was
+hard-linked from the old copy instead of sent: the push "completed" and
+the hub kept the old save. `core.db` is always 12288 bytes. With `-c`,
+files of equal size are compared by content, and an unchanged file is
+still hard-linked. After every transfer both sides' fingerprints must
+match too, or the run fails (33) instead of reporting a sync that did not
+happen.
 
 `-E` is deliberately **not** used. It means `--extended-attributes` in
 openrsync but `--executability` in GNU rsync, so it would silently change
