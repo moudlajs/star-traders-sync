@@ -57,15 +57,26 @@ func pathOf(line string) string {
 // Count is how many files it lists.
 func (m Manifest) Count() int { return len(m.Lines) + len(m.Unhashable) }
 
+// ErrUnhashable: the manifest lists something whose contents could not be
+// read. Its fingerprint would compare equal to another side's with the
+// same unreadable path whatever the contents, so there is none: a sync
+// refuses (13) rather than decide on it (the script's
+// assert_manifest_hashable).
+var ErrUnhashable = errors.New("some files cannot be fingerprinted")
+
 // Fingerprint is the sha256 of Text, or "empty" for no files, as
-// fingerprint_of_manifest computes it.
-func (m Manifest) Fingerprint() string {
+// fingerprint_of_manifest computes it - and an error if anything in it is
+// unhashable, so such a manifest can never reach a decision.
+func (m Manifest) Fingerprint() (string, error) {
+	if len(m.Unhashable) > 0 {
+		return "", fmt.Errorf("%w: %s", ErrUnhashable, strings.Join(m.Unhashable, ", "))
+	}
 	t := m.Text()
 	if t == "" {
-		return "empty"
+		return "empty", nil
 	}
 	sum := sha256.Sum256([]byte(t))
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // matcher is one exclude name, with find(1)'s fnmatch semantics and no
@@ -111,9 +122,11 @@ func Build(dir string, exclude []string) (Manifest, error) {
 	}
 	// WalkDir does not follow a symlinked root - it would report the link
 	// itself and no files, an "empty" side. The script's cd follows it.
-	if dir, err = filepath.EvalSymlinks(dir); err != nil {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
 		return m, fmt.Errorf("cannot resolve %s: %w", dir, err)
 	}
+	dir = real
 	var unreadable []string
 	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

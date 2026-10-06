@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,7 +141,7 @@ func TestNothingUnreadableIsSkippedSilently(t *testing.T) {
 	}
 	defer os.Chmod(root, 0o755)
 	if m, err := Build(root, nil); err == nil {
-		t.Fatalf("an unreadable dir must be an error, not %q (%s)", m.Text(), m.Fingerprint())
+		t.Fatalf("an unreadable dir must be an error, not %q", m.Text())
 	}
 }
 
@@ -159,7 +160,7 @@ func TestASymlinkedDirIsFollowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Count() != 2 {
-		t.Fatalf("a symlinked dir read as %d files (%s)", got.Count(), got.Fingerprint())
+		t.Fatalf("a symlinked dir read as %d files", got.Count())
 	}
 	if want := bashManifest(t, link, nil); got.Text() != want {
 		t.Fatalf("differs from the script\n--- bash\n%s\n--- go\n%s", want, got.Text())
@@ -183,22 +184,59 @@ func TestOnlyAMissingDirIsEmpty(t *testing.T) {
 		}
 		defer os.Chmod(locked, 0o755)
 		if m, err := Build(filepath.Join(locked, "saves"), nil); err == nil {
-			t.Errorf("a parent that cannot be searched must be an error, got %q", m.Fingerprint())
+			t.Errorf("a parent that cannot be searched must be an error, got %d files", m.Count())
 		}
 	}
-	if m, err := Build(filepath.Join(base, "nope"), nil); err != nil || m.Fingerprint() != "empty" {
-		t.Errorf("a missing dir is empty: %v %q", err, m.Fingerprint())
+	if m, err := Build(filepath.Join(base, "nope"), nil); err != nil || fp(t, m) != "empty" {
+		t.Errorf("a missing dir is empty: %v", err)
+	}
+}
+
+func fp(t *testing.T, m Manifest) string {
+	t.Helper()
+	f, err := m.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// The same path unreadable on both sides must never compare equal: there
+// is no fingerprint at all, so no decision (INSYNC) can be made on it.
+func TestAnUnhashableManifestHasNoFingerprint(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	var sides []Manifest
+	for _, body := range []string{"local contents", "hub contents, different"} {
+		dir := t.TempDir()
+		write(t, dir, "core.db", body)
+		p := filepath.Join(dir, "core.db")
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(p, 0o644)
+		m, _ := Build(dir, nil)
+		sides = append(sides, m)
+	}
+	if sides[0].Text() != sides[1].Text() {
+		t.Fatal("the fixture should give identical manifest text")
+	}
+	for i, m := range sides {
+		if f, err := m.Fingerprint(); err == nil || !errors.Is(err, ErrUnhashable) {
+			t.Errorf("side %d: fingerprint %q with no error", i, f)
+		}
 	}
 }
 
 func TestFingerprint(t *testing.T) {
 	empty := t.TempDir()
 	m, _ := Build(empty, nil)
-	if m.Fingerprint() != "empty" || m.Count() != 0 {
-		t.Fatalf("an empty dir is %q/%d", m.Fingerprint(), m.Count())
+	if fp := fp(t, m); fp != "empty" || m.Count() != 0 {
+		t.Fatalf("an empty dir is %q/%d", fp, m.Count())
 	}
 	missing, _ := Build(filepath.Join(empty, "nope"), nil)
-	if missing.Fingerprint() != "empty" {
+	if fp(t, missing) != "empty" {
 		t.Fatal("a missing dir is empty, as the script's cd || exit 0")
 	}
 	dir := t.TempDir()
@@ -206,7 +244,7 @@ func TestFingerprint(t *testing.T) {
 	a, _ := Build(dir, nil)
 	write(t, dir, "core.db", "12288 bytes either wax")
 	b, _ := Build(dir, nil)
-	if a.Fingerprint() == b.Fingerprint() {
+	if fp(t, a) == fp(t, b) {
 		t.Fatal("same size, different contents: the fingerprints must differ")
 	}
 	// The script: printf '%s' "$m" | shasum -a 256.
@@ -214,7 +252,7 @@ func TestFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(out[:64]) != b.Fingerprint() {
-		t.Fatalf("fingerprint %s, the script's %s", b.Fingerprint(), out[:64])
+	if string(out[:64]) != fp(t, b) {
+		t.Fatalf("fingerprint %s, the script's %s", fp(t, b), out[:64])
 	}
 }
