@@ -15,6 +15,12 @@ upgrade now rather than later.
 
 ### Added
 
+- **Disconnect this Mac…** in the gear menu. It removes the app's `sts`
+  and `star-traders-sync` links from `~/bin` and moves the config to a
+  dated backup. Your saves, their safety copies and the Hub are not
+  touched, and setup connects it again. "Run setup again…" is now
+  **Change hub, account or backup disk…** and opens the wizard with the
+  current settings filled in ([#75])
 - `sts restore` lists this Mac's safety copies (the snapshots taken before
   every overwrite), and `sts restore NAME` puts one back. The saves it
   replaces become a new safety copy first, so a restore can be undone,
@@ -361,6 +367,7 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#75]: https://github.com/moudlajs/star-traders-sync/issues/75
 [#90]: https://github.com/moudlajs/star-traders-sync/issues/90
 [#91]: https://github.com/moudlajs/star-traders-sync/issues/91
 [#108]: https://github.com/moudlajs/star-traders-sync/issues/108

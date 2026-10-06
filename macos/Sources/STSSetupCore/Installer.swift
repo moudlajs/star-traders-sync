@@ -177,6 +177,48 @@ public enum Installer {
         return ["wrote \(shown)"]
     }
 
+    /// Disconnect this Mac (#75): undo what setup did to this Mac's command
+    /// line and config, and nothing else. The ~/bin links go only if they
+    /// point at the app's own copy (never a link to a repo checkout, never
+    /// a real file). The config is renamed to a dated backup, not deleted.
+    /// Saves, safety copies, the sync record and the hub are not touched;
+    /// running setup again brings it all back.
+    public static func disconnect(layout: InstallLayout, now: Date = Date(),
+                                  isRunning: () -> Bool = scriptIsRunning,
+                                  fileManager fm: FileManager = .default) throws -> [String] {
+        // The script reads its config as it goes: never pull it out from
+        // under a running sync.
+        if isRunning() { throw InstallError.scriptRunning }
+        var report: [String] = []
+        for name in layout.linkNames {
+            let link = layout.binDir.appendingPathComponent(name)
+            let shown = tilde(link.path, layout)
+            guard let target = try? fm.destinationOfSymbolicLink(atPath: link.path) else {
+                if fm.fileExists(atPath: link.path) {
+                    report.append("left \(shown) alone: it is a real file, not the app's link")
+                }
+                continue
+            }
+            let resolved = URL(fileURLWithPath: target, relativeTo: layout.binDir).standardizedFileURL
+            if resolved.path == layout.installedScript.standardizedFileURL.path {
+                try fm.removeItem(at: link)
+                report.append("removed \(shown)")
+            } else {
+                report.append("left \(shown) alone: it points at your own copy, \(tilde(resolved.path, layout))")
+            }
+        }
+        if fm.fileExists(atPath: layout.configFile.path) {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyyMMdd-HHmmss"
+            let backup = layout.configDir.appendingPathComponent("config.disconnected-\(f.string(from: now))")
+            try fm.moveItem(at: layout.configFile, to: backup)
+            report.append("moved your config to \(tilde(backup.path, layout))")
+        }
+        report.append("your saves, their safety copies and the Hub were not touched")
+        return report
+    }
+
     // MARK: - helpers
 
     /// Write to a temp file beside the target, then rename over it. A

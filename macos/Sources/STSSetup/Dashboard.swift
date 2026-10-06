@@ -332,6 +332,7 @@ struct DashboardView: View {
     @EnvironmentObject var updates: UpdateModel
     @EnvironmentObject var d: DashboardModel
     @AppStorage(MenuBarPreference.key) private var showInMenuBar = true
+    @State private var confirmingDisconnect = false
 
     var body: some View {
         // A fixed-size window. The centre holds the status, or while an
@@ -390,7 +391,10 @@ struct DashboardView: View {
                     Button("Open logs") { d.openLogs() }
                     Divider()
                     Toggle("Show in menu bar", isOn: $showInMenuBar)
-                    Button("Run setup again…") { app.showSetup() }
+                    // The wizard, pre-filled from the config (#75).
+                    Button("Change hub, account or backup disk…") { app.showSetup() }
+                        .disabled(d.busy)
+                    Button("Disconnect this Mac…") { confirmingDisconnect = true }
                         .disabled(d.busy)
                 } label: {
                     Label("Settings", systemImage: "gearshape")
@@ -410,6 +414,12 @@ struct DashboardView: View {
             Button("Cancel", role: .cancel) { d.pending = nil }
         } message: { b in
             Text(b.confirmation?.message ?? "")
+        }
+        .alert("Disconnect this Mac?", isPresented: $confirmingDisconnect) {
+            Button("Disconnect", role: .destructive) { app.disconnect() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This Mac stops syncing. The sts command and the settings are removed (the settings are kept as a backup). Your saves, their safety copies and the Hub are not touched, and running setup again connects it back.")
         }
         .animation(.easeOut(duration: 0.25), value: d.run?.id)
     }
