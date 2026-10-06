@@ -44,8 +44,16 @@ type Hub struct {
 	tries int
 }
 
-// Path is the lock directory: beside HUB_PATH.
-func (h *Hub) Path() string { return filepath.Dir(h.HubPath) + "/" + DirName }
+// Path is the lock directory: beside HUB_PATH, its parent computed as
+// dirname(1) does. filepath.Dir("/a/hub/") is "/a/hub", which would put the
+// lock inside the hub - and a swap replaces the hub.
+func (h *Hub) Path() string {
+	p := strings.TrimRight(h.HubPath, "/")
+	if p == "" {
+		p = "/"
+	}
+	return strings.TrimSuffix(filepath.Dir(p), "/") + "/" + DirName
+}
 
 // Held reports whether this run holds it.
 func (h *Hub) Held() bool { return h.held }
@@ -59,6 +67,11 @@ func (h *Hub) warn(format string, a ...any) {
 func (h *Hub) Acquire() *fail.Failure {
 	if h.held {
 		return nil
+	}
+	if h.Nonce == "" {
+		// The release and the clear match on it; an empty one would match
+		// every owner record shorter than five lines - someone else's.
+		return fail.New(exitcode.LockCreate, "lock", "internal error: no lock nonce")
 	}
 	lock := h.Path()
 	out, err := h.Exec.Run(acquireScript, lock, h.HostName, strconv.Itoa(h.Pid),
@@ -203,12 +216,12 @@ func (h *Hub) clearStale(lock, want, what string) *fail.Failure {
 // deleting someone else's lock is worse than leaking our own. A failure is
 // logged, never fatal - this runs on the way out.
 func (h *Hub) Release() {
-	if !h.held {
+	if !h.held || h.Nonce == "" {
 		return
 	}
 	h.held = false
 	if _, err := h.Exec.Run(releaseScript, h.dir, h.Nonce); err != nil {
-		h.Log.Log("WARN", "lock", "could not release the hub lock at %s - clear it by hand", h.dir)
+		h.Log.Log("WARN", "lock", "could not release the hub lock at %s - clear it by hand; until then it blocks the other Mac, and this one, for LOCK_TTL_SECONDS", h.dir)
 	}
 	h.Log.Log("DEBUG", "lock", "hub lock released")
 }
@@ -292,16 +305,21 @@ func newUUID() string {
 	return strings.ToUpper(fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]))
 }
 
-// Local is this machine's lock: a directory, made atomically, and a pid
-// file that says whether a leftover one is stale. (macOS shlock does not
-// break a stale lock even for a dead pid, which once wedged the tool.)
+// Local is this machine's lock. Among Go runs it is a kernel flock on
+// <name>.flock, held for the whole run: the kernel drops it when the
+// process dies, so there is no stale lock to judge and no window between
+// checking one and clearing it. The script's own lock - a directory made
+// atomically, and a pid file that says whether a leftover one is stale -
+// is kept too, so the script and doctor still see a Go run.
 type Local struct {
 	dir, file string
+	pid       int
+	flock     *os.File
 }
 
-// youngLock: a lock directory this new, with no live holder recorded yet,
-// is most likely a run between its mkdir and its pid write. Clearing it
-// would let two runs in at once, so it is refused instead.
+// youngLock: a script lock directory this new, with no live holder
+// recorded yet, is most likely a script run between its mkdir and its pid
+// write. Clearing it would let two runs in at once, so it is refused.
 const youngLock = 10 * time.Second
 
 // AcquireLocal takes the local lock: backup.lock for backup, so a nightly
@@ -311,18 +329,36 @@ func AcquireLocal(stateDir string, backup bool, pid int, now time.Time, log *log
 	if backup {
 		name = "backup.lock"
 	}
-	l := &Local{dir: filepath.Join(stateDir, name+".d"), file: filepath.Join(stateDir, name)}
+	l := &Local{dir: filepath.Join(stateDir, name+".d"), file: filepath.Join(stateDir, name), pid: pid}
 	_ = os.MkdirAll(stateDir, 0o755)
+
+	fl, err := os.OpenFile(filepath.Join(stateDir, name+".flock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fail.New(exitcode.LockLocal, "lock", "could not open the local lock in %s: %v", stateDir, err)
+	}
+	if err := syscall.Flock(int(fl.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fl.Close()
+		holder := strings.TrimSpace(firstLine(l.file))
+		if !digits(holder) {
+			holder = "unknown"
+		}
+		return nil, fail.New(exitcode.LockLocal, "lock",
+			"another star-traders-sync is already running on this machine (pid %s) - wait for it to finish", holder)
+	}
+	l.flock = fl
+
 	if os.Mkdir(l.dir, 0o755) != nil {
 		holder := strings.TrimSpace(firstLine(l.file))
 		if !digits(holder) {
 			holder = ""
 		}
 		if holder != "" && alive(holder) {
+			l.unflock()
 			return nil, fail.New(exitcode.LockLocal, "lock",
 				"another star-traders-sync is already running on this machine (pid %s) - wait for it to finish", holder)
 		}
 		if st, err := os.Stat(l.dir); err == nil && now.Sub(st.ModTime()) < youngLock {
+			l.unflock()
 			return nil, fail.New(exitcode.LockLocal, "lock",
 				"another star-traders-sync is starting on this machine - wait for it to finish")
 		}
@@ -333,22 +369,40 @@ func AcquireLocal(stateDir string, backup bool, pid int, now time.Time, log *log
 		log.Log("WARN", "lock", "clearing stale local lock (pid %s is gone)", shown)
 		_ = os.RemoveAll(l.dir)
 		if os.Mkdir(l.dir, 0o755) != nil {
+			l.unflock()
 			return nil, fail.New(exitcode.LockLocal, "lock",
 				"could not take the local lock at %s - remove it by hand if no star-traders-sync is running", l.dir)
 		}
 	}
-	_ = os.WriteFile(l.file, []byte(strconv.Itoa(pid)+"\n"), 0o644)
+	// A lock with no recorded holder would read as stale to the next run.
+	if err := os.WriteFile(l.file, []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
+		_ = os.Remove(l.dir)
+		l.unflock()
+		return nil, fail.New(exitcode.LockLocal, "lock", "could not record this run in %s: %v", l.file, err)
+	}
 	log.Log("DEBUG", "lock", "local lock held, pid %d", pid)
 	return l, nil
 }
 
-// Release removes the local lock.
+func (l *Local) unflock() {
+	if l.flock != nil {
+		_ = syscall.Flock(int(l.flock.Fd()), syscall.LOCK_UN)
+		l.flock.Close()
+		l.flock = nil
+	}
+}
+
+// Release removes the script-visible lock if it still names this run, then
+// drops the flock. A lock some other run has taken meanwhile is left alone.
 func (l *Local) Release() {
 	if l == nil {
 		return
 	}
-	_ = os.RemoveAll(l.dir)
-	_ = os.Remove(l.file)
+	if strings.TrimSpace(firstLine(l.file)) == strconv.Itoa(l.pid) {
+		_ = os.Remove(l.file)
+		_ = os.RemoveAll(l.dir)
+	}
+	l.unflock()
 }
 
 func alive(pid string) bool {

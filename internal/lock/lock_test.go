@@ -272,3 +272,97 @@ func TestLocalLock(t *testing.T) {
 		t.Fatal("released")
 	}
 }
+
+// The lock sits beside HUB_PATH however it is written: dirname(1), not
+// filepath.Dir, which keeps a trailing slash's last element.
+func TestThePathIsBesideTheHub(t *testing.T) {
+	for in, want := range map[string]string{
+		"/a/hub": "/a/.sts-lock", "/a/hub/": "/a/.sts-lock", "/a/hub//": "/a/.sts-lock", "/hub": "/.sts-lock",
+	} {
+		if got := (&Hub{HubPath: in}).Path(); got != want {
+			t.Errorf("HUB_PATH %q: lock %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAnEmptyNonceNeverTakesOrReleases(t *testing.T) {
+	f := newFixture(t)
+	h := f.hub("A")
+	h.Nonce = ""
+	if r := h.Acquire(); r == nil || exists(f.lock()) {
+		t.Fatal("acquired without a nonce")
+	}
+	// A nonce-less record of someone else's must survive an empty-nonce release.
+	f.writeOwner("mac", "1", "2026-01-01T00:00:00Z", fmt.Sprint(time.Now().Unix()))
+	h.held, h.dir = true, f.lock()
+	h.Release()
+	if !exists(f.lock()) {
+		t.Fatal("an empty nonce released someone else's lock")
+	}
+}
+
+// Runs racing over one stale leftover: exactly one gets in. Repeated, since
+// one round of a race proves little either way.
+func TestRacingOverAStaleLocalLockLetsOneIn(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		dir := t.TempDir()
+		log := &logx.Logger{File: filepath.Join(dir, "log"), Level: "DEBUG"}
+		if err := os.Mkdir(filepath.Join(dir, "local.lock.d"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(dir, "local.lock"), []byte("999999\n"), 0o644)
+		ago := time.Now().Add(-time.Minute)
+		os.Chtimes(filepath.Join(dir, "local.lock.d"), ago, ago)
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var won []*Local
+		start := make(chan struct{})
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				if l, r := AcquireLocal(dir, false, 50000+i, time.Now(), log); r == nil {
+					mu.Lock()
+					won = append(won, l)
+					mu.Unlock()
+				}
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		if len(won) != 1 {
+			t.Fatalf("round %d: %d runs hold the local lock at once", round, len(won))
+		}
+		won[0].Release()
+	}
+}
+
+func TestReleaseLeavesAnotherRunsLocalLock(t *testing.T) {
+	dir := t.TempDir()
+	log := &logx.Logger{File: filepath.Join(dir, "log"), Level: "DEBUG"}
+	l, r := AcquireLocal(dir, false, 4242, time.Now(), log)
+	if r != nil {
+		t.Fatal(r)
+	}
+	os.WriteFile(filepath.Join(dir, "local.lock"), []byte("4343\n"), 0o644) // someone else's now
+	l.Release()
+	if !exists(filepath.Join(dir, "local.lock.d")) || firstLine(filepath.Join(dir, "local.lock")) != "4343" {
+		t.Fatal("released a lock that names another run")
+	}
+}
+
+func TestAFailedPidWriteLeavesNoLock(t *testing.T) {
+	dir := t.TempDir()
+	log := &logx.Logger{File: filepath.Join(dir, "log"), Level: "DEBUG"}
+	if err := os.Mkdir(filepath.Join(dir, "local.lock"), 0o755); err != nil { // the pid file cannot be written
+		t.Fatal(err)
+	}
+	if _, r := AcquireLocal(dir, false, 4242, time.Now(), log); r == nil {
+		t.Fatal("held a lock with no recorded holder")
+	}
+	if exists(filepath.Join(dir, "local.lock.d")) {
+		t.Fatal("the failed attempt left its lock directory")
+	}
+}
