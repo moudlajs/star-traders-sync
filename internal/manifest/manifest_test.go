@@ -144,6 +144,53 @@ func TestNothingUnreadableIsSkippedSilently(t *testing.T) {
 	}
 }
 
+// A symlinked save dir or hub (~/star-traders-sync-hub -> /Volumes/...)
+// must list its files, as the script's cd does - not read as empty.
+func TestASymlinkedDirIsFollowed(t *testing.T) {
+	real := t.TempDir()
+	write(t, real, "game_1.db", "g")
+	write(t, real, "sub/map_1.db", "m")
+	link := filepath.Join(t.TempDir(), "hub")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Build(link, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Count() != 2 {
+		t.Fatalf("a symlinked dir read as %d files (%s)", got.Count(), got.Fingerprint())
+	}
+	if want := bashManifest(t, link, nil); got.Text() != want {
+		t.Fatalf("differs from the script\n--- bash\n%s\n--- go\n%s", want, got.Text())
+	}
+}
+
+// Only "does not exist" is empty. Anything else that stops the read is an
+// error, never "no files".
+func TestOnlyAMissingDirIsEmpty(t *testing.T) {
+	base := t.TempDir()
+	file := filepath.Join(base, "a-file")
+	write(t, base, "a-file", "x")
+	if _, err := Build(file, nil); err == nil {
+		t.Error("a file where the dir should be must be an error")
+	}
+	if os.Geteuid() != 0 {
+		locked := filepath.Join(base, "locked")
+		write(t, locked, "saves/game_1.db", "g")
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(locked, 0o755)
+		if m, err := Build(filepath.Join(locked, "saves"), nil); err == nil {
+			t.Errorf("a parent that cannot be searched must be an error, got %q", m.Fingerprint())
+		}
+	}
+	if m, err := Build(filepath.Join(base, "nope"), nil); err != nil || m.Fingerprint() != "empty" {
+		t.Errorf("a missing dir is empty: %v %q", err, m.Fingerprint())
+	}
+}
+
 func TestFingerprint(t *testing.T) {
 	empty := t.TempDir()
 	m, _ := Build(empty, nil)

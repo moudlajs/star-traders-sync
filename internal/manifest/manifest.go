@@ -8,6 +8,7 @@ package manifest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -100,8 +101,18 @@ func Build(dir string, exclude []string) (Manifest, error) {
 	var m Manifest
 	var files []string
 	st, err := os.Stat(dir)
-	if err != nil || !st.IsDir() {
-		return m, nil
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return m, nil // nothing there yet: empty, as the script's cd || exit 0
+	case err != nil:
+		return m, fmt.Errorf("cannot read %s: %w", dir, err) // EACCES, EIO, a stale mount
+	case !st.IsDir():
+		return m, fmt.Errorf("%s is not a directory", dir)
+	}
+	// WalkDir does not follow a symlinked root - it would report the link
+	// itself and no files, an "empty" side. The script's cd follows it.
+	if dir, err = filepath.EvalSymlinks(dir); err != nil {
+		return m, fmt.Errorf("cannot resolve %s: %w", dir, err)
 	}
 	var unreadable []string
 	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
