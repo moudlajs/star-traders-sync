@@ -47,18 +47,14 @@ compare() {
     fi
 }
 
-# accepted NAME - a config both accept: bash goes on to its next check
-# (never a config code, 10-12), the Go build stops where it ends (1).
+# accepted NAME - a config both accept: neither gives a config code
+# (10-12), and both stop at the same next check with the same words.
 accepted() {
-    local name="$1" brc grc
-    "$BASH_STS" status >/dev/null 2>&1; brc=$?
-    "$GO_STS"   status >"$SB/g.out" 2>"$SB/g.err"; grc=$?
-    if [ "$brc" -ge 10 ] && [ "$brc" -le 12 ] || [ "$grc" != 1 ] || ! grep -q "not in the Go build yet" "$SB/g.err"; then
-        FAIL=$((FAIL + 1)); printf '  FAIL %s: bash %s, go %s (both should accept the config)\n' "$name" "$brc" "$grc"
-        sed 's/^/       /' "$SB/g.err" | head -5
-    else
-        PASS=$((PASS + 1)); printf '  ok   %s (accepted)\n' "$name"
-    fi
+    local name="$1"
+    compare "$name" status
+    case "$(tail -1 "$SB/b.err" 2>/dev/null)" in
+        *"exit code 1"[012]" "*) FAIL=$((FAIL + 1)); printf '  FAIL %s: refused as a config error\n' "$name" ;;
+    esac
 }
 
 config() { mkdir -p "$(dirname "$CFG")"; rm -rf "$CFG"; printf '%b' "$1" > "$CFG"; }
@@ -131,6 +127,80 @@ config '# comment\n\nHUB_HOST = hubhost \nHUB_USER=me\nHUB_PATH=/srv/sts/hub///\
 with 'HUB_HOST=other\nSYNC_EXCLUDE=data.db *.vdf\n'; accepted "a later line wins; a glob exclude"
 config "${GOOD%\\n}";                           accepted "no newline at the end"
 with 'HUB_PATH=~/hub\n';                        accepted "HUB_PATH with ~, expanded before the absolute check"
+
+# --------------------------------------------------------------------------
+# status: both read the same sandbox through a tailscale stub, and must
+# print the same text and the same JSON.
+echo "status"
+ME="$(hostname -s | tr '[:upper:]' '[:lower:]')"
+mkdir -p "$SB/stub"
+# TS_MODE picks what the stub says: hub (this Mac is the hub), down,
+# notjson, missing (hub not in the tailnet), offline, pingfail.
+cat > "$SB/stub/tailscale" <<STUB
+#!/bin/bash
+mode="\$(cat "$SB/stub/mode" 2>/dev/null || echo hub)"
+case "\$*" in
+    *"status --json"*)
+        case "\$mode" in
+            down)    echo "failed to connect to local backend" >&2; exit 1 ;;
+            notjson) echo "Tailscale is stopped." ; exit 0 ;;
+            missing) printf '{"BackendState":"Running","Self":{"HostName":"elsewhere","DNSName":"elsewhere.t.ts.net.","TailscaleIPs":["100.64.0.9"],"Online":true},"Peer":{}}\n' ;;
+            offline|pingfail) printf '{"BackendState":"Running","Self":{"HostName":"elsewhere","DNSName":"elsewhere.t.ts.net.","TailscaleIPs":["100.64.0.9"],"Online":true},"Peer":{"p":{"HostName":"$ME","DNSName":"$ME.t.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":\$([ "\$mode" = offline ] && echo false || echo true)}}}\n' ;;
+            *)       printf '{"BackendState":"Running","Self":{"HostName":"$ME","DNSName":"$ME.t.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":true},"Peer":{}}\n' ;;
+        esac ;;
+    *ping*) [ "\$mode" = pingfail ] && { echo "no reply"; exit 1; }; echo pong ;;
+esac
+exit 0
+STUB
+printf '#!/bin/sh\nexit 1\n' > "$SB/stub/ping"   # MagicDNS never resolves here: the IP path
+chmod +x "$SB/stub/tailscale" "$SB/stub/ping"
+export PATH="$SB/stub:$PATH" STS_TS_APP_PATH=/nonexistent/Tailscale
+tsmode() { echo "$1" > "$SB/stub/mode"; }
+
+S="$SB/s"
+fresh() {   # a sandbox Mac that is its own hub, with four saves
+    rm -rf "$S" "$XDG_STATE_HOME"; mkdir -p "$S/local" "$S/hub" "$S/vol/b"
+    config "HUB_HOST=$ME\nHUB_USER=$(whoami)\nHUB_PATH=$S/hub\nLOCAL_SAVE_PATH=$S/local\nSTEAM_APPID=335620\nGAME_PROCESS_NAME=ststestgame\nSYNC_EXCLUDE=data.db steam_autocloud.vdf\nBACKUP_VOLUME=$S/vol\nBACKUP_DEST=$S/vol/b\n"
+    for f in core.db game_1.db map_1.db template_1.json; do printf 'v1-%s\n' "$f" > "$S/local/$f"; done
+    printf 'static\n' > "$S/local/data.db"
+    tsmode hub
+}
+both() {   # compare status and status --json in this state
+    compare "$1" status
+    compare "$1, --json" status --json
+}
+fresh;                                                   both "first run, hub empty"
+"$BASH_STS" push --force=local >/dev/null 2>&1;          both "in sync"
+printf 'other mac\n' > "$S/hub/game_1.db";               both "only the hub changed"
+"$BASH_STS" pull >/dev/null 2>&1; printf 'here\n' > "$S/local/game_1.db"; both "only this Mac changed"
+printf 'there\n' > "$S/hub/game_1.db";                   both "both changed"
+rm -f "$S/local"/*.db "$S/local"/*.json;                 both "this Mac emptied after a sync"
+fresh; "$BASH_STS" push --force=local >/dev/null 2>&1; rm -f "$XDG_STATE_HOME/star-traders-sync/last-sync.json"
+printf 'mine\n' > "$S/local/game_1.db";                  both "first run, both have saves"
+fresh; "$BASH_STS" push --force=local >/dev/null 2>&1; rm -f "$S/hub"/*;   both "the hub emptied after a sync"
+fresh; mkdir "$S/.sts-lock"; printf 'otherhost\n1234\n2026-10-06T12:00:00Z\n' > "$S/.sts-lock/owner"
+"$BASH_STS" push --force=local >/dev/null 2>&1;          compare "hub lock held (shown)" status
+rm -rf "$S/.sts-lock"
+
+echo "status refusals"
+fresh; rm -rf "$S/hub";                                  compare "hub path missing (14)" status
+mkdir "$S/hub.sts-old-123";                              compare "hub swap interrupted (14)" status
+rm -rf "$S/hub.sts-old-123"; : > "$S/hub";               compare "hub path not a directory (14)" status
+fresh; rm -rf "$S/local";                                compare "save folder missing (13)" status
+mkdir "$S/local.sts-old-9";                              compare "save folder swap interrupted (13)" status
+fresh; chmod 000 "$S/local/map_1.db";                    compare "an unreadable save (13)" status
+chmod 644 "$S/local/map_1.db"
+fresh; mv "$S/local" "$S/real"; ln -s "$S/real" "$S/local"; compare "a symlinked save folder" status --json
+fresh; mkdir -p "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; echo $$ > "$XDG_STATE_HOME/star-traders-sync/local.lock"
+                                                         compare "another run holds the local lock (52)" status
+fresh; tsmode down;                                      compare "tailscaled down (21)" status
+tsmode notjson;                                          compare "tailscale not connected (22)" status
+tsmode missing;                                          compare "the hub not in the tailnet (24)" status
+tsmode offline;                                          compare "the hub offline (25)" status
+compare "the hub offline, --offline-ok is play only" status --offline-ok
+tsmode pingfail;                                         compare "tailscale ping fails (26)" status
+tsmode hub
+unset STS_TS_APP_PATH
 
 echo
 echo "parity.sh: $PASS passed, $FAIL failed"

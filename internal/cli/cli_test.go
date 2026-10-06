@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestUsageMatchesTheBashScript(t *testing.T) {
 	}
 }
 
-func run(args ...string) (int, string, string) {
+func runMain(args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
 	env := Env{Stdout: &out, Stderr: &errb,
 		Getenv:   func(k string) string { return map[string]string{"HOME": "/nonexistent-home"}[k] },
@@ -71,12 +72,41 @@ func TestArgumentRefusals(t *testing.T) {
 		{[]string{"status"}, 17, "required tools not on PATH: rsync ssh"},
 	}
 	for _, c := range cases {
-		code, _, errOut := run(c.args...)
+		code, _, errOut := runMain(c.args...)
 		if code != c.code || !bytes.Contains([]byte(errOut), []byte(c.err)) {
 			t.Errorf("%v: got %d %q, want %d containing %q", c.args, code, errOut, c.code, c.err)
 		}
 	}
-	if code, out, _ := run("--version"); code != 0 || out != "star-traders-sync "+Version+"\n" {
+	if code, out, _ := runMain("--version"); code != 0 || out != "star-traders-sync "+Version+"\n" {
 		t.Errorf("--version: %d %q", code, out)
+	}
+}
+
+// A refused status still releases the local lock (a deferred release once
+// bound the nil lock it saw before prepare took one).
+func TestARefusedRunLeavesNoLocalLock(t *testing.T) {
+	home := t.TempDir()
+	cfgDir := filepath.Join(home, ".config", "star-traders-sync")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "HUB_HOST=h\nHUB_USER=u\nHUB_PATH=" + home + "/hub\nLOCAL_SAVE_PATH=" + home + "/missing\n" +
+		"STEAM_APPID=1\nGAME_PROCESS_NAME=g\nBACKUP_VOLUME=/V\nBACKUP_DEST=/V/b\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	env := Env{Stdout: &out, Stderr: &errb,
+		Getenv:   func(k string) string { return map[string]string{"HOME": home}[k] },
+		Geteuid:  func() int { return 501 },
+		LookPath: func(string) (string, error) { return "/usr/bin/true", nil }}
+	if code := Main([]string{"status"}, env); code != 13 {
+		t.Fatalf("exit %d, want 13 (no save folder): %s", code, errb.String())
+	}
+	state := filepath.Join(home, ".local", "state", "star-traders-sync")
+	for _, f := range []string{"local.lock", "local.lock.d"} {
+		if _, err := os.Stat(filepath.Join(state, f)); err == nil {
+			t.Errorf("%s left behind", f)
+		}
 	}
 }
