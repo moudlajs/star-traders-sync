@@ -154,16 +154,55 @@ final class UpdaterTests: XCTestCase {
         XCTAssertEqual(leftovers, [], "no staged copy left behind")
     }
 
+    /// A staged app folder in place of a disk image, for the refusal checks.
+    func makeStage(version: String, id: String? = nil, tamper: Bool = false) throws -> URL {
+        let stage = dir.appendingPathComponent("stage-\(UUID().uuidString)")
+        let app = stage.appendingPathComponent(UpdateInstaller.appName)
+        try makeApp(at: app, version: version, id: id)
+        if tamper {
+            // Changed after signing: the seal no longer matches.
+            try "#!/bin/sh\necho evil\n".write(to: app.appendingPathComponent("Contents/MacOS/STSSetup"),
+                                               atomically: true, encoding: .utf8)
+        }
+        return stage
+    }
+
+    /// hdiutil faked through install's run seam (#124): "attach" copies the
+    /// staged folder to the mount point, "detach" empties it. Everything
+    /// else - codesign, ditto - runs for real, so what is refused is still
+    /// decided by the real checks. On CI, back-to-back real attaches hit
+    /// EAGAIN for longer than any sensible retry; the one real attach is in
+    /// testInstallsAVerifiedUpdateInPlace.
+    func fakeHdiutil(_ exe: String, _ args: [String]) -> CommandResult {
+        guard exe == "/usr/bin/hdiutil" else { return Shell.run(exe, args) }
+        switch args.first {
+        case "attach":
+            guard let i = args.firstIndex(of: "-mountpoint"), i + 1 < args.count, let src = args.last else { break }
+            return Shell.run("/usr/bin/ditto", [src, args[i + 1]])
+        case "detach":
+            if let m = args.dropFirst().first, let items = try? fm.contentsOfDirectory(atPath: m) {
+                items.forEach { try? fm.removeItem(atPath: m + "/" + $0) }
+            }
+            return CommandResult(status: 0, stdout: "", stderr: "")
+        default: break
+        }
+        return CommandResult(status: 1, stdout: "", stderr: "fake hdiutil: unexpected \(args)")
+    }
+
     func testRefusalsLeaveTheCurrentAppUntouched() throws {
         let target = dir.appendingPathComponent(UpdateInstaller.appName)
         try makeApp(at: target, version: "1.4.0")
 
-        XCTAssertThrowsError(try UpdateInstaller.install(dmg: try makeDMG(version: "1.4.2"), expectedVersion: "1.4.1",
-                                                         bundleID: bundleID, over: target), "not the advertised version")
-        XCTAssertThrowsError(try UpdateInstaller.install(dmg: try makeDMG(version: "1.4.1", id: "com.example.other"),
-                                                         expectedVersion: "1.4.1", bundleID: bundleID, over: target), "not our app")
-        XCTAssertThrowsError(try UpdateInstaller.install(dmg: try makeDMG(version: "1.4.1", tamper: true),
-                                                         expectedVersion: "1.4.1", bundleID: bundleID, over: target)) { e in
+        XCTAssertThrowsError(try UpdateInstaller.install(dmg: try makeStage(version: "1.4.2"), expectedVersion: "1.4.1",
+                                                         bundleID: bundleID, over: target, run: fakeHdiutil), "not the advertised version") { e in
+            guard case UpdateError.wrongApp = e else { return XCTFail("expected a version refusal, got \(e)") }
+        }
+        XCTAssertThrowsError(try UpdateInstaller.install(dmg: try makeStage(version: "1.4.1", id: "com.example.other"),
+                                                         expectedVersion: "1.4.1", bundleID: bundleID, over: target, run: fakeHdiutil), "not our app") { e in
+            guard case UpdateError.wrongApp = e else { return XCTFail("expected a bundle-id refusal, got \(e)") }
+        }
+        XCTAssertThrowsError(try UpdateInstaller.install(dmg: try makeStage(version: "1.4.1", tamper: true),
+                                                         expectedVersion: "1.4.1", bundleID: bundleID, over: target, run: fakeHdiutil)) { e in
             guard case UpdateError.signatureInvalid = e else { return XCTFail("expected a signature failure, got \(e)") }
         }
         XCTAssertEqual(installedVersion(target), "1.4.0", "every refusal left the app as it was")
