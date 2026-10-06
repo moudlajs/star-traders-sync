@@ -1057,6 +1057,18 @@ for i in 1 2 3; do
 done
 check "client refusal into a closed pipe: never leaves the lock" 0 test "$LEFT" -eq 0
 
+# An untrusted host key whose other address is already trusted with the
+# same key: the advice says adding it is safe - all of it on stderr, with
+# the refusal (its first line once went to stdout).
+mkdir -p "$CASE/hkstub"
+printf '#!/bin/sh\necho "Host key verification failed." >&2\nexit 255\n' > "$CASE/hkstub/ssh"
+printf '#!/bin/sh\ncase "$*" in *-F*) echo "remotehub ssh-ed25519 AAAAsame" ;; esac\nexit 0\n' > "$CASE/hkstub/ssh-keygen"
+printf '#!/bin/sh\necho "100.64.0.1 ssh-ed25519 AAAAsame"\n' > "$CASE/hkstub/ssh-keyscan"
+chmod +x "$CASE/hkstub/"*
+check "untrusted host key: refused (31)"                31 env PATH="$CASE/hkstub:$PATH" "$STS" status
+check "  says the same key is already trusted"           0 sh -c 'PATH="$2:$PATH" "$1" status 2>&1 >/dev/null | grep -q "identical host key"' _ "$STS" "$CASE/hkstub"
+check "  and prints nothing of it on stdout"             0 test -z "$(PATH="$CASE/hkstub:$PATH" "$STS" status 2>/dev/null)"
+
 # The connection drops under the carry itself: no verdict, so no swap.
 touch "$CASE/clientstub/drop-carry"
 printf 'third change\n' > "$CASE/local/game_1.db"
