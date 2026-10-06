@@ -1649,7 +1649,8 @@ preserve_excluded_hub() {
     set +e
     out="$(hub_exec_args '
         hub="$1"; staged="$2"; shift 2
-        cd "$hub" 2>/dev/null || exit 0   # no hub yet: nothing to carry
+        [ -d "$hub" ] || exit 0           # no hub yet: nothing to carry
+        cd "$hub" || exit 3                # there but unreadable: refuse, never skip
         n_carried=0
         for n in "$@"; do
             for f in $n; do               # a glob entry expands here, like the local side
@@ -1680,7 +1681,7 @@ preserve_excluded_hub() {
             die $EX_SNAPSHOT preserve \
                 "failed to preserve the excluded path $CFG_HUB_PATH/$f on the hub - refusing to swap, because the swap would delete it" ;;
     esac
-    [ "$rc" -eq 0 ] && return 0   # cd failed: no hub directory, nothing to carry
+    [ "$rc" -eq 0 ] && return 0   # no hub directory yet, nothing to carry
     log ERROR preserve "excluded-file carry on the hub failed (rc=$rc): $out"
     die $EX_SNAPSHOT preserve \
         "could not check the hub's excluded files before the swap - refusing to swap, because it could delete them ($out)"
