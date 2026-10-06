@@ -13,6 +13,14 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Security
+
+- The app now installs an update only if the dmg carries a valid Ed25519
+  signature from this project's release key, which is built into the app.
+  Before this, the only checks were GitHub's SHA-256 digest and an ad-hoc
+  codesign, both of which someone controlling the GitHub account or the
+  release download could have produced. Releases are signed in CI ([#108])
+
 ### Fixed
 
 - The hub lock is also released when a run on a client Mac (not the Hub
@@ -333,6 +341,7 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#108]: https://github.com/moudlajs/star-traders-sync/issues/108
 [#124]: https://github.com/moudlajs/star-traders-sync/issues/124
 [#128]: https://github.com/moudlajs/star-traders-sync/issues/128
 [#129]: https://github.com/moudlajs/star-traders-sync/issues/129

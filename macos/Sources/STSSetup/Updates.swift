@@ -52,7 +52,8 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
                   let release = try? UpdateFeed.parse(data) else {
                 return   // offline or a hiccup: stay quiet, try again later
             }
-            guard testFeed || UpdateFeed.isTrustedDownload(release.dmgURL) else {
+            guard testFeed || (UpdateFeed.isTrustedDownload(release.dmgURL)
+                               && UpdateFeed.isTrustedDownload(release.signatureURL)) else {
                 await MainActor.run { SetupLog.write("update: ignored \(release.version): download is not this repository's (\(release.dmgURL.absoluteString))") }
                 return
             }
@@ -148,8 +149,17 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
             guard moved else { self.state = .failed("The download could not be saved."); return }
             do {
                 try UpdateInstaller.verifyChecksum(kept, expected: release.sha256)
+                // The signature, from the same repository, checked against
+                // the key built into this app (#108). Never relaxed, not even
+                // for an STS_UPDATE_FEED test feed: testing an update locally
+                // means a dmg signed with the release key.
+                let (sig, response) = try await URLSession.shared.data(from: release.signatureURL)
+                if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                    throw UpdateError.io("The release's signature could not be downloaded (HTTP \(http.statusCode)). Nothing was changed.")
+                }
+                try ReleaseSignature.verify(kept, signatureBase64: String(decoding: sig, as: UTF8.self))
                 self.state = .ready(release, kept)
-                SetupLog.write("update: \(release.version) downloaded and verified")
+                SetupLog.write("update: \(release.version) downloaded, checksum and release signature verified")
             } catch {
                 try? FileManager.default.removeItem(at: kept)
                 self.state = .failed((error as? UpdateError)?.description ?? error.localizedDescription)

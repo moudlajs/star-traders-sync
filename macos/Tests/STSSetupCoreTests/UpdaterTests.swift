@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 @testable import STSSetupCore
 
@@ -9,7 +10,9 @@ final class UpdaterTests: XCTestCase {
        "browser_download_url":"https://example.com/star-traders-sync"},
       {"name":"Star-Traders-Sync.dmg","size":2638857,
        "digest":"sha256:3c0b12989491a664316fcc5fc9acfdf7b5c9d477e5e96de84c43c0f778198403",
-       "browser_download_url":"https://github.com/moudlajs/star-traders-sync/releases/download/v1.4.1/Star-Traders-Sync.dmg"}]}
+       "browser_download_url":"https://github.com/moudlajs/star-traders-sync/releases/download/v1.4.1/Star-Traders-Sync.dmg"},
+      {"name":"Star-Traders-Sync.dmg.sig","size":89,
+       "browser_download_url":"https://github.com/moudlajs/star-traders-sync/releases/download/v1.4.1/Star-Traders-Sync.dmg.sig"}]}
     """
 
     func testParsesTheReleaseAndItsDigest() throws {
@@ -18,6 +21,46 @@ final class UpdaterTests: XCTestCase {
         XCTAssertEqual(r.sha256, "3c0b12989491a664316fcc5fc9acfdf7b5c9d477e5e96de84c43c0f778198403")
         XCTAssertEqual(r.dmgURL.lastPathComponent, "Star-Traders-Sync.dmg")
         XCTAssertEqual(r.notes, "Fixes things.")
+        XCTAssertEqual(r.signatureURL.lastPathComponent, "Star-Traders-Sync.dmg.sig")
+        XCTAssertTrue(UpdateFeed.isTrustedDownload(r.signatureURL))
+    }
+
+    // #108: a release without its signature is not offered, the same as
+    // one without a digest.
+    func testAnUnsignedReleaseIsNotOffered() {
+        let unsigned = Self.feed.replacingOccurrences(of: "\"name\":\"Star-Traders-Sync.dmg.sig\"", with: "\"name\":\"other\"")
+        XCTAssertNotEqual(unsigned, Self.feed)
+        XCTAssertThrowsError(try UpdateFeed.parse(Data(unsigned.utf8))) { e in
+            XCTAssertEqual(e as? UpdateError, .badFeed("no Star-Traders-Sync.dmg.sig in release v1.4.1"))
+        }
+    }
+
+    func testReleaseSignatureIsVerified() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sig-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("x.dmg")
+        try Data("a release".utf8).write(to: file)
+
+        let key = Curve25519.Signing.PrivateKey()
+        let pub = key.publicKey.rawRepresentation.base64EncodedString()
+        let sig = try key.signature(for: Data("a release".utf8)).base64EncodedString()
+
+        XCTAssertNoThrow(try ReleaseSignature.verify(file, signatureBase64: sig + "\n", publicKeyBase64: pub),
+                         "the .sig file ends in a newline")
+        XCTAssertThrowsError(try ReleaseSignature.verify(file, signatureBase64: sig), "signed by another key: the embedded one")
+        let other = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation.base64EncodedString()
+        XCTAssertThrowsError(try ReleaseSignature.verify(file, signatureBase64: sig, publicKeyBase64: other))
+        XCTAssertThrowsError(try ReleaseSignature.verify(file, signatureBase64: "not base64!", publicKeyBase64: pub))
+        try Data("a release, tampered".utf8).write(to: file)
+        XCTAssertThrowsError(try ReleaseSignature.verify(file, signatureBase64: sig, publicKeyBase64: pub)) { e in
+            XCTAssertEqual(e as? UpdateError, .releaseSignatureInvalid)
+        }
+    }
+
+    func testTheEmbeddedKeyIsAnEd25519PublicKey() throws {
+        let data = try XCTUnwrap(Data(base64Encoded: ReleaseSignature.publicKeyBase64))
+        XCTAssertNoThrow(try Curve25519.Signing.PublicKey(rawRepresentation: data))
     }
 
     func testAReleaseWithoutADigestIsNotOffered() {
