@@ -147,15 +147,16 @@ func (h *Hub) Acquire() *fail.Failure {
 
 	// Our own lock from a crashed earlier run: clear only past the TTL, loudly.
 	if age >= int64(h.TTL) {
-		h.Log.Log("WARN", "lock", "CLEARING our own stale hub lock from %s, age %ds >= TTL %ds (pid %s)", ownerISO, age, h.TTL, ownerPid)
-		h.warn("clearing a stale hub lock left by this machine on %s (%ds old, pid %s)", ownerISO, age, ownerPid)
 		// Without a nonce the clear cannot tell this lock from a fresh one
-		// whose owner file is not written yet, so it is never automatic.
+		// whose owner file is not written yet, so it is never automatic -
+		// and it is not announced as cleared either (#151).
 		if ownerNonce == "" {
 			h.Log.Log("ERROR", "lock", "stale hub lock at %s has no nonce; not clearing it automatically", lock)
 			return fail.New(exitcode.LockRemote, "lock",
 				"the hub lock from %s is stale but its owner record is incomplete, so it is not cleared automatically. Make sure no sts is running on either Mac, then on %s: rm -rf %s", ownerISO, h.HubHost, lock)
 		}
+		h.Log.Log("WARN", "lock", "CLEARING our own stale hub lock from %s, age %ds >= TTL %ds (pid %s)", ownerISO, age, h.TTL, ownerPid)
+		h.warn("clearing a stale hub lock left by this machine on %s (%ds old, pid %s)", ownerISO, age, ownerPid)
 		if f := h.clearStale(lock, ownerNonce, "stale"); f != nil {
 			return f
 		}

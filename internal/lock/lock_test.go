@@ -151,7 +151,11 @@ func TestOwnLock(t *testing.T) {
 
 	// Stale but with no nonce: never cleared automatically.
 	f.writeOwner("mac", "1", "2020-01-01T00:00:00Z", "1577836800")
+	f.stderr.Reset()
 	wantRefusal(t, f.hub("A").Acquire(), exitcode.LockRemote, "rm -rf")
+	if strings.Contains(f.stderr.String(), "clearing") {
+		t.Fatalf("a lock that is not cleared is not announced as cleared: %q", f.stderr.String())
+	}
 	if !exists(f.lock()) {
 		t.Fatal("a nonce-less lock was cleared")
 	}
