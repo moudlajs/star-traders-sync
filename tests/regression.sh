@@ -1194,6 +1194,23 @@ printf 'SSH_PORT=\xc2\xb2\n' >> "$CASE/cfg/star-traders-sync/config"
 check "UTF-8: a superscript digit is not a number (11)"    11 env LC_ALL=$U "$STS" status
 
 # --------------------------------------------------------------------------
+section "a failed hub snapshot never passes for a good one (#156)"
+newcase hubsnap
+"$STS" push --force=local >/dev/null 2>&1
+HS="$CASE/star-traders-sync-snapshots"
+# The hub and the saves are siblings in the sandbox: count only what a push
+# adds, before and after.
+BEFORE="$(ls "$HS" 2>/dev/null | grep -c .)"
+printf 'changed\n' > "$CASE/local/game_1.db"
+mkdir -p "$CASE/nocpio"; printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$CASE/nocpio/cpio"; chmod +x "$CASE/nocpio/cpio"
+check "a hub snapshot that copied nothing: push refuses (63)" 63 env PATH="$CASE/nocpio:$PATH" "$STS" push
+check "  the hub is unchanged"                           0 test "$(cat "$CASE/hub/game_1.db")" = "v1-game_1.db"
+check "  the partial snapshot is not listed"             0 test "$(ls "$HS" | grep -c .)" -eq "$BEFORE"
+check "  it is kept aside, hidden"                       0 sh -c 'ls -d "$1"/.partial-* >/dev/null 2>&1' _ "$HS"
+check "the next push snapshots and goes"                 0 "$STS" push
+check "  with one more listed snapshot"                  0 test "$(ls "$HS" | grep -c .)" -eq $((BEFORE + 1))
+
+# --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
 newcase playemptied
 "$STS" push --force=local >/dev/null 2>&1

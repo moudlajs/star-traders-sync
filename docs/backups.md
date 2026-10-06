@@ -96,8 +96,8 @@ It never prunes, so the copy you restored from is still there afterwards.
 It refuses while the game is running (40), and refuses a name that is
 not one of the listed copies (65). It touches nothing on the hub.
 
-A snapshot is built under a hidden `.partial-<stamp>` name and renamed
-only once its file count checks out. One that failed part way (refused
+A snapshot, on this machine or on the hub, is built under a hidden
+`.partial-<stamp>` name and renamed only once its file count checks out. One that failed part way (refused
 as incomplete, or killed mid-copy) stays hidden and is never listed or
 pruned. It can be deleted by hand once the saves are fine.
 

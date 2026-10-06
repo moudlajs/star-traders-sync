@@ -1626,24 +1626,32 @@ snapshot_hub() {
         hub="$1"; snaproot="$2"; snapdir="$3"; stamp="$4"; keep="$5"
         snapdirs="$6"; lockdir="$7"
         mkdir -p "$snaproot"
+        snaproot=$(cd "$snaproot" && pwd -P)
+        # Built under a hidden .partial- name and renamed only once its file
+        # count checks out, as snapshot_local does: a snapshot that failed
+        # part way must never look like a good one, nor take a good one'"'"'s
+        # place in SNAPSHOT_KEEP (#156). ls skips dot names.
+        name="$stamp"
         suffix=2
-        while ! mkdir "$snapdir" 2>/dev/null; do
-            snapdir="$snaproot/$stamp-$suffix"
+        while [ -e "$snaproot/$name" ] || ! mkdir "$snaproot/.partial-$name" 2>/dev/null; do
+            name="$stamp-$suffix"
             suffix=$((suffix + 1))
             [ "$suffix" -gt 50 ] && { echo STS_SNAP_NODIR; exit 1; }
         done
-        snapdir=$(cd "$snapdir" && pwd -P)
+        partial="$snaproot/.partial-$name"
+        snapdir="$snaproot/$name"
         cd "$hub"
         src_n=$(find . -type f ! -path "./$snapdirs/*" 2>/dev/null | grep -c . || true)
         if ! find . -type f ! -path "./$snapdirs/*" -print0 2>/dev/null \
-             | cpio -0 -pdm "$snapdir" 2>/dev/null; then
-            cp -Rp "$hub"/ "$snapdir"/ 2>/dev/null || { echo STS_SNAP_FAIL; exit 1; }
+             | cpio -0 -pdm "$partial" 2>/dev/null; then
+            cp -Rp "$hub"/ "$partial"/ 2>/dev/null || { echo STS_SNAP_FAIL; exit 1; }
         fi
-        dst_n=$(find "$snapdir" -type f 2>/dev/null | grep -c . || true)
+        dst_n=$(find "$partial" -type f 2>/dev/null | grep -c . || true)
         if [ "${dst_n:-0}" -lt "${src_n:-0}" ]; then
             echo "STS_SNAP_SHORT $src_n $dst_n"
             exit 1
         fi
+        [ ! -e "$snapdir" ] && mv "$partial" "$snapdir" || { echo STS_SNAP_FAIL; exit 1; }
         livecount=$(find "$hub" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)
         if [ "$keep" -gt 0 ] && [ "${livecount:-0}" -gt 0 ]; then
             n=$(ls -1 "$snaproot" 2>/dev/null | grep -c . || true)

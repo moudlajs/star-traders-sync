@@ -15,6 +15,11 @@ upgrade now rather than later.
 
 ### Fixed
 
+- A hub snapshot that fails part way (incomplete, or interrupted) no
+  longer looks like a good one. It used to stay under a normal name and
+  count toward `SNAPSHOT_KEEP`, so later pushes pruned a good older
+  snapshot in its place. It is now built under a hidden `.partial-` name,
+  as this Mac's snapshots already were ([#156])
 - Two runs starting at the same moment after a crash can no longer both
   get in: a brand-new local lock is no longer cleared as stale. A run
   interrupted mid-swap now releases its local lock fully, and a stale hub
@@ -398,3 +403,4 @@ of those findings has a case in `tests/regression.sh`.
 [#129]: https://github.com/moudlajs/star-traders-sync/issues/129
 [#132]: https://github.com/moudlajs/star-traders-sync/issues/132
 [#151]: https://github.com/moudlajs/star-traders-sync/issues/151
+[#156]: https://github.com/moudlajs/star-traders-sync/issues/156
