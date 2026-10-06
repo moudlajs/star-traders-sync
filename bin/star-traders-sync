@@ -1502,25 +1502,29 @@ release_hub_lock() {
 # assumed, and the timestamp directory is created with a plain mkdir so two
 # snapshots in the same second cannot merge into one.
 snapshot_local() {
-    local dir="$1" stamp snaproot snapdir src_n dst_n suffix
+    local dir="$1" stamp snaproot snapdir name partial src_n dst_n suffix
     snaproot="$(dirname "$dir")/$SNAP_DIRNAME"
     mkdir -p "$snaproot" || die $EX_SNAPSHOT snapshot \
         "could not create snapshot root $snaproot"
+    snaproot="$(cd "$snaproot" && pwd -P)"
 
+    # Built under a hidden .partial- name and renamed only once its file
+    # count is verified, so a snapshot that died part way (refused as
+    # incomplete, or killed mid-copy) never looks like a safety copy that
+    # 'restore' would offer (#90). ls, and so pruning and the list, skip
+    # dot names.
     stamp="$(iso_now)"
-    snapdir="$snaproot/$stamp"
+    name="$stamp"
     suffix=2
-    while ! mkdir "$snapdir" 2>/dev/null; do
-        snapdir="$snaproot/$stamp-$suffix"
+    while [ -e "$snaproot/$name" ] || ! mkdir "$snaproot/.partial-$name" 2>/dev/null; do
+        name="$stamp-$suffix"
         suffix=$((suffix + 1))
         if [ "$suffix" -gt 50 ]; then
             die $EX_SNAPSHOT snapshot "could not create a unique snapshot directory under $snaproot"
         fi
     done
-
-    # cpio will not extract through a symlinked parent (macOS /var and /tmp
-    # are symlinks) and exits 0 having copied nothing, so resolve first.
-    snapdir="$(cd "$snapdir" && pwd -P)"
+    partial="$snaproot/.partial-$name"
+    snapdir="$partial"
 
     src_n="$(cd "$dir" && find . -type f ! -path "./$SNAP_DIRNAME/*" 2>/dev/null | grep -c . || true)"
     src_n="${src_n:-0}"
@@ -1538,6 +1542,12 @@ snapshot_local() {
         die $EX_SNAPSHOT snapshot \
             "snapshot of $dir is INCOMPLETE - $src_n files in the source, only $dst_n copied to $snapdir. Refusing to overwrite anything. Check permissions on $dir."
     fi
+
+    snapdir="$snaproot/$name"
+    # A directory of that name appearing meanwhile would make mv nest the
+    # snapshot inside it.
+    [ ! -e "$snapdir" ] && mv "$partial" "$snapdir" || die $EX_SNAPSHOT snapshot \
+        "could not finish the snapshot $partial as $snapdir. Refusing to overwrite anything."
 
     prune_snapshots_local "$snaproot" "$dir"
     log INFO snapshot "local snapshot $snapdir ($dst_n files)"

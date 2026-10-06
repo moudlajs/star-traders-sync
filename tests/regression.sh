@@ -1114,6 +1114,17 @@ check "restore the oldest of SNAPSHOT_KEEP"              0 "$STS" restore "$OLDE
 check "  nothing was pruned"                             0 test "$(ls "$SNAPS" | grep -c .)" -eq 4
 check "  the oldest is still there"                      0 test -d "$SNAPS/$OLDEST"
 
+# A snapshot that fails part way never becomes a listed safety copy. A
+# cpio that copies nothing and exits 0 - what macOS cpio does through a
+# symlinked parent - makes the pull's snapshot INCOMPLETE (63).
+COUNT_BEFORE="$(ls "$SNAPS" | grep -c .)"
+printf 'newer on the hub\n' > "$CASE/hub/game_1.db"
+mkdir -p "$CASE/nocpio"; printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$CASE/nocpio/cpio"; chmod +x "$CASE/nocpio/cpio"
+check "an incomplete snapshot refuses the pull (63)"    63 env PATH="$CASE/nocpio:$PATH" "$STS" pull --force=hub
+check "  and is not listed as a safety copy"             0 test "$(ls "$SNAPS" | grep -c .)" -eq "$COUNT_BEFORE"
+check "  restore --json does not offer it either"        0 sh -c '"$1" restore --json 2>/dev/null | python3 -c "import json,sys; assert len(json.load(sys.stdin)[\"snapshots\"])==int(sys.argv[1])" "$2"' _ "$STS" "$COUNT_BEFORE"
+check "  the partial copy is kept aside, hidden"         0 sh -c 'ls -d "$1"/.partial-* >/dev/null 2>&1' _ "$SNAPS"
+
 check "a name that is a path: refused (65)"             65 "$STS" restore "../local"
 check "a dotted name: refused (65)"                     65 "$STS" restore ".."
 check "no such safety copy: refused (65)"               65 "$STS" restore 2001-01-01T00:00:00Z

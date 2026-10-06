@@ -94,6 +94,11 @@ It never prunes, so the copy you restored from is still there afterwards.
 It refuses while the game is running (40), and refuses a name that is
 not one of the listed copies (65). It touches nothing on the hub.
 
+A snapshot is built under a hidden `.partial-<stamp>` name and renamed
+only once its file count checks out. One that failed part way (refused
+as incomplete, or killed mid-copy) stays hidden and is never listed or
+pruned. It can be deleted by hand once the saves are fine.
+
 Afterwards this machine usually differs from the hub. `sts status` says
 what the next sync will do: usually `sts push` sends the restored saves,
 and the hub's are snapshotted there first. If the hub also changed since
