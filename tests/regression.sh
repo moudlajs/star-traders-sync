@@ -1069,6 +1069,90 @@ b"
 client_off
 
 # --------------------------------------------------------------------------
+section "restore a safety copy (#90)"
+newcase restore
+# Saves and hub as on a real Mac, in different parents: in the sandbox they
+# are siblings, and their safety copies would share one directory.
+mkdir -p "$CASE/mac" && mv "$CASE/local" "$CASE/mac/local"
+sed -i '' "s|^LOCAL_SAVE_PATH=.*|LOCAL_SAVE_PATH=$CASE/mac/local|" "$CASE/cfg/star-traders-sync/config"
+ln -s "$CASE/mac/local" "$CASE/local"   # the shared helpers and checks use $CASE/local
+SNAPS="$CASE/mac/star-traders-sync-snapshots"
+check "no safety copies yet: lists none"                 0 sh -c '"$1" restore 2>&1 | grep -q "no safety copies"' _ "$STS"
+check "  and --json says so too"                         0 test "$("$STS" restore --json 2>/dev/null)" = '{"snapshots": []}'
+"$STS" push --force=local >/dev/null 2>&1
+# The other Mac played: the hub moves on, and a pull overwrites this one.
+printf 'from the other mac\n' > "$CASE/hub/game_1.db"
+"$STS" pull >/dev/null 2>&1
+check "the pull left a safety copy of the old saves"     0 test "$(ls "$SNAPS" | grep -c .)" -eq 1
+FIRST="$(ls "$SNAPS")"
+check "  restore lists it"                               0 sh -c '"$1" restore 2>&1 | grep -q "$2"' _ "$STS" "$FIRST"
+check "  --json lists it with its counts"                0 sh -c '"$1" restore --json 2>/dev/null | python3 -c "
+import json,sys; s=json.load(sys.stdin)[\"snapshots\"]
+assert [x[\"name\"] for x in s]==[sys.argv[1]], s
+assert s[0][\"files\"]>=4 and s[0][\"campaign_saves\"]==1 and s[0][\"newest\"]>0, s
+" "$2"' _ "$STS" "$FIRST"
+
+HUB_BEFORE="$(cat "$CASE/hub/game_1.db")"
+printf 'machine-local, changed since\n' > "$CASE/local/data.db"
+check "restore NAME"                                     0 "$STS" restore "$FIRST"
+check "  this Mac has the old saves back"                0 test "$(cat "$CASE/local/game_1.db")" = "v1-game_1.db"
+check "  the hub is untouched"                           0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
+check "  the copy restored from is still there"          0 test -d "$SNAPS/$FIRST"
+check "  what was here is a new safety copy"             0 test "$(ls "$SNAPS" | grep -c .)" -eq 2
+SECOND="$(ls "$SNAPS" | LC_ALL=C sort | tail -1)"
+check "  holding the saves it replaced"                  0 test "$(cat "$SNAPS/$SECOND/game_1.db")" = "from the other mac"
+check "  the live machine-local data.db was kept, not the copy's" 0 test "$(cat "$CASE/local/data.db")" = "machine-local, changed since"
+check "  status now sees this Mac changed"               0 test "$(jget decision)" = LOCAL_ONLY
+check "undo: restore the copy it made"                   0 "$STS" restore "$SECOND"
+check "  back to the saves before the restore"           0 test "$(cat "$CASE/local/game_1.db")" = "from the other mac"
+
+# Never prunes: SNAPSHOT_KEEP is 3 here. Restoring the oldest of three
+# would have pruned that very copy if the restore's own snapshot pruned.
+check "three safety copies now"                          0 test "$(ls "$SNAPS" | grep -c .)" -eq 3
+OLDEST="$(ls "$SNAPS" | LC_ALL=C sort | head -1)"
+check "restore the oldest of SNAPSHOT_KEEP"              0 "$STS" restore "$OLDEST"
+check "  nothing was pruned"                             0 test "$(ls "$SNAPS" | grep -c .)" -eq 4
+check "  the oldest is still there"                      0 test -d "$SNAPS/$OLDEST"
+
+# A snapshot that fails part way never becomes a listed safety copy. A
+# cpio that copies nothing and exits 0 - what macOS cpio does through a
+# symlinked parent - makes the pull's snapshot INCOMPLETE (63).
+COUNT_BEFORE="$(ls "$SNAPS" | grep -c .)"
+printf 'newer on the hub\n' > "$CASE/hub/game_1.db"
+mkdir -p "$CASE/nocpio"; printf '#!/bin/sh\ncat >/dev/null\nexit 0\n' > "$CASE/nocpio/cpio"; chmod +x "$CASE/nocpio/cpio"
+check "an incomplete snapshot refuses the pull (63)"    63 env PATH="$CASE/nocpio:$PATH" "$STS" pull --force=hub
+check "  and is not listed as a safety copy"             0 test "$(ls "$SNAPS" | grep -c .)" -eq "$COUNT_BEFORE"
+check "  restore --json does not offer it either"        0 sh -c '"$1" restore --json 2>/dev/null | python3 -c "import json,sys; assert len(json.load(sys.stdin)[\"snapshots\"])==int(sys.argv[1])" "$2"' _ "$STS" "$COUNT_BEFORE"
+check "  the partial copy is kept aside, hidden"         0 sh -c 'ls -d "$1"/.partial-* >/dev/null 2>&1' _ "$SNAPS"
+
+check "a name that is a path: refused (65)"             65 "$STS" restore "../local"
+check "a dotted name: refused (65)"                     65 "$STS" restore ".."
+check "no such safety copy: refused (65)"               65 "$STS" restore 2001-01-01T00:00:00Z
+mkdir "$SNAPS/2002-02-02T00:00:00Z"
+check "an empty safety copy: refused (65)"              65 "$STS" restore 2002-02-02T00:00:00Z
+rmdir "$SNAPS/2002-02-02T00:00:00Z"
+check "--json with a name: usage error"                  2 "$STS" restore --json "$OLDEST"
+check "--force with restore: usage error"                2 "$STS" restore --force=hub "$OLDEST"
+check "two names: usage error"                           2 "$STS" restore "$OLDEST" "$SECOND"
+
+# A stand-in game: a real binary, so pgrep -x sees its name (a copied
+# system binary is killed on launch, and a script shows up as sh). The
+# name stays under the 16 characters macOS keeps for a process name.
+LOCAL_BEFORE="$(cat "$CASE/local/game_1.db")"
+if printf '#include <unistd.h>\nint main(void){sleep(30);return 0;}\n' \
+       | cc -x c - -o "$CASE/ststestgame" 2>/dev/null; then
+    sed -i '' 's/^GAME_PROCESS_NAME=.*/GAME_PROCESS_NAME=ststestgame/' "$CASE/cfg/star-traders-sync/config"
+    "$CASE/ststestgame" &
+    GAME=$!
+    sleep 0.5
+    check "the game running: refused (40)"              40 "$STS" restore "$SECOND"
+    check "  and nothing changed"                        0 test "$(cat "$CASE/local/game_1.db")" = "$LOCAL_BEFORE"
+    kill "$GAME" 2>/dev/null; wait "$GAME" 2>/dev/null
+else
+    printf '  skip the game running (no C compiler here)\n'
+fi
+
+# --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
 newcase playemptied
 "$STS" push --force=local >/dev/null 2>&1

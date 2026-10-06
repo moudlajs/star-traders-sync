@@ -85,6 +85,7 @@ you which later checks it skipped as a result.
 | 62 | hub is empty; seeding needs `push --force=local`, or the hub is empty and pulling would wipe this machine |
 | 63 | snapshot failed or was incomplete, so nothing was overwritten |
 | 64 | `--expect-decision` no longer holds: the saves changed after the choice was made, nothing was done |
+| 65 | `restore`: no safety copy by that name, or an empty one |
 | 70 | backup volume not mounted |
 | 71 | `backup` run on a machine that is not the hub host |
 
@@ -145,4 +146,6 @@ you which later checks it skipped as a result.
 | 51 | `another run is clearing the stale hub lock` (or `the ownerless hub lock`) `at this moment` | 50 | Two runs found the same stale hub lock at once, and the other one is clearing it. Nothing was synced. Run again. |
 | 52 | `a run died while clearing the ... hub lock, and left .sts-lock.clearing behind` | 50 | A run was killed in the instant it was clearing a stale lock. Nothing was synced. It is not removed automatically, because that could remove a live clearer's. Make sure no `sts` is running on either Mac, then run the `rmdir` command printed. |
 | 53 | `the hub lock from ... is stale but its owner record is incomplete` | 50 | The lock is past the TTL, but its owner file has no nonce, so it cannot be told apart from a lock that is being taken right now. Make sure no `sts` is running on either Mac, then run the `rm -rf` command printed. |
+| 54 | `there is no safety copy named ...` or `... is not the name of a safety copy` | 65 | `sts restore` takes a name exactly as `sts restore` (with no name) lists it. A path, or anything outside this machine's snapshot directory, is refused. Nothing was changed. |
+| 55 | `the safety copy ... is empty` | 65 | That snapshot has no files, so restoring it would empty this machine. Nothing was changed. Choose another from `sts restore`. |
 

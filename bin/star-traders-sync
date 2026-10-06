@@ -56,6 +56,7 @@ readonly EX_CONFLICT_FIRSTRUN=61   # first run, both sides non-empty
 readonly EX_HUB_EMPTY=62           # hub empty, explicit first push needed
 readonly EX_SNAPSHOT=63            # snapshot failed, so no overwrite allowed
 readonly EX_STATE_CHANGED=64       # --expect-decision no longer true; nothing done
+readonly EX_NO_SNAPSHOT=65         # restore: no such safety copy, or an empty one
 
 readonly EX_BACKUP_NOT_MOUNTED=70  # backup volume not mounted
 readonly EX_BACKUP_NOT_HUB=71      # sts backup run off the hub host
@@ -77,6 +78,7 @@ OPT_OFFLINE_OK=0
 OPT_FIX=0
 OPT_JSON=0            # status only: one JSON object on stdout, see status_json
 OPT_EXPECT=""         # pull/push: refuse unless this is still the decision
+RESTORE_FROM=""       # restore: the safety copy to restore; empty lists them
 IN_PLAY=0             # 1 while cmd_play runs its pull; see LOCAL_ONLY in cmd_pull
 COMMAND=""
 
@@ -1500,25 +1502,29 @@ release_hub_lock() {
 # assumed, and the timestamp directory is created with a plain mkdir so two
 # snapshots in the same second cannot merge into one.
 snapshot_local() {
-    local dir="$1" stamp snaproot snapdir src_n dst_n suffix
+    local dir="$1" stamp snaproot snapdir name partial src_n dst_n suffix
     snaproot="$(dirname "$dir")/$SNAP_DIRNAME"
     mkdir -p "$snaproot" || die $EX_SNAPSHOT snapshot \
         "could not create snapshot root $snaproot"
+    snaproot="$(cd "$snaproot" && pwd -P)"
 
+    # Built under a hidden .partial- name and renamed only once its file
+    # count is verified, so a snapshot that died part way (refused as
+    # incomplete, or killed mid-copy) never looks like a safety copy that
+    # 'restore' would offer (#90). ls, and so pruning and the list, skip
+    # dot names.
     stamp="$(iso_now)"
-    snapdir="$snaproot/$stamp"
+    name="$stamp"
     suffix=2
-    while ! mkdir "$snapdir" 2>/dev/null; do
-        snapdir="$snaproot/$stamp-$suffix"
+    while [ -e "$snaproot/$name" ] || ! mkdir "$snaproot/.partial-$name" 2>/dev/null; do
+        name="$stamp-$suffix"
         suffix=$((suffix + 1))
         if [ "$suffix" -gt 50 ]; then
             die $EX_SNAPSHOT snapshot "could not create a unique snapshot directory under $snaproot"
         fi
     done
-
-    # cpio will not extract through a symlinked parent (macOS /var and /tmp
-    # are symlinks) and exits 0 having copied nothing, so resolve first.
-    snapdir="$(cd "$snapdir" && pwd -P)"
+    partial="$snaproot/.partial-$name"
+    snapdir="$partial"
 
     src_n="$(cd "$dir" && find . -type f ! -path "./$SNAP_DIRNAME/*" 2>/dev/null | grep -c . || true)"
     src_n="${src_n:-0}"
@@ -1536,6 +1542,12 @@ snapshot_local() {
         die $EX_SNAPSHOT snapshot \
             "snapshot of $dir is INCOMPLETE - $src_n files in the source, only $dst_n copied to $snapdir. Refusing to overwrite anything. Check permissions on $dir."
     fi
+
+    snapdir="$snaproot/$name"
+    # A directory of that name appearing meanwhile would make mv nest the
+    # snapshot inside it.
+    [ ! -e "$snapdir" ] && mv "$partial" "$snapdir" || die $EX_SNAPSHOT snapshot \
+        "could not finish the snapshot $partial as $snapdir. Refusing to overwrite anything."
 
     prune_snapshots_local "$snaproot" "$dir"
     log INFO snapshot "local snapshot $snapdir ($dst_n files)"
@@ -3299,6 +3311,133 @@ list_complete_backups() {
     return 0
 }
 
+# --------------------------------------------------------------------------
+# restore (#90): put one of this machine's safety copies back. Every pull
+# that overwrote this machine snapshotted it first; this is the way back,
+# through the same staging and swap as a pull, so the saves it replaces are
+# snapshotted too and a restore can itself be undone. Nothing is deleted:
+# the snapshot taken here does not prune, so the copy being restored from
+# (perhaps the oldest one kept) is still there afterwards.
+# --------------------------------------------------------------------------
+
+local_snaproot() { printf '%s/%s' "$(dirname "$CFG_LOCAL_SAVE_PATH")" "$SNAP_DIRNAME"; }
+
+# One tab-separated line per safety copy, newest first:
+# name, files, campaign saves, newest file mtime (epoch).
+restore_candidates() {
+    local root d name files saves newest
+    root="$(local_snaproot)"
+    [ -d "$root" ] || return 0
+    ls -1 "$root" 2>/dev/null | LC_ALL=C sort -r | while IFS= read -r name; do
+        d="$root/$name"
+        [ -d "$d" ] || continue
+        files="$(find "$d" -type f 2>/dev/null | grep -c . || true)"
+        saves="$(find "$d" -type f -name 'game_*.db' 2>/dev/null | grep -c 'game_[0-9]*\.db$' || true)"
+        newest="$(find "$d" -type f -exec stat -f%m {} + 2>/dev/null | sort -n | tail -1 || true)"
+        printf '%s\t%s\t%s\t%s\n' "$name" "${files:-0}" "${saves:-0}" "${newest:-0}"
+    done
+}
+
+cmd_restore() {
+    if [ -z "$RESTORE_FROM" ]; then
+        cmd_restore_list
+        return 0
+    fi
+
+    local root snap n tmp aside dst_n
+    root="$(local_snaproot)"
+    # A name, never a path: nothing outside the snapshot directory.
+    case "$RESTORE_FROM" in
+        */*|.*) die $EX_NO_SNAPSHOT restore \
+            "'$RESTORE_FROM' is not the name of a safety copy. List them with: $PROG restore" ;;
+    esac
+    snap="$root/$RESTORE_FROM"
+    [ -d "$snap" ] || die $EX_NO_SNAPSHOT restore \
+        "there is no safety copy named $RESTORE_FROM in $root. List them with: $PROG restore"
+    n="$(find "$snap" -type f 2>/dev/null | grep -c . || true)"
+    [ "${n:-0}" -gt 0 ] || die $EX_NO_SNAPSHOT restore \
+        "the safety copy $RESTORE_FROM is empty - there is nothing in it to restore"
+
+    check_game_not_running
+
+    # Stage first, then snapshot what is here now, then swap: the same
+    # order as a pull, with the copy checked before anything moves.
+    tmp="$(dirname "$CFG_LOCAL_SAVE_PATH")/.sts-incoming-$$"
+    cleanup_later "$tmp"
+    rm -rf "$tmp"; mkdir -p "$tmp"
+    tmp="$(cd "$tmp" && pwd -P)"   # cpio and symlinked parents: see snapshot_local
+    if ! (cd "$snap" && find . -type f -print0 2>/dev/null | cpio -0 -pdm --quiet "$tmp" 2>/dev/null); then
+        log WARN restore "cpio path failed for $snap, falling back to cp -Rp"
+        cp -Rp "$snap"/ "$tmp"/ 2>/dev/null || die $EX_SNAPSHOT restore \
+            "could not copy the safety copy $RESTORE_FROM - nothing was changed"
+    fi
+    dst_n="$(find "$tmp" -type f 2>/dev/null | grep -c . || true)"
+    [ "${dst_n:-0}" -ge "$n" ] || die $EX_SNAPSHOT restore \
+        "copying the safety copy $RESTORE_FROM was INCOMPLETE - $n files in it, only ${dst_n:-0} copied. Nothing was changed."
+
+    aside=""
+    if [ -n "$(find "$CFG_LOCAL_SAVE_PATH" -type f 2>/dev/null | head -1)" ]; then
+        # No pruning here (see above): CFG_SNAPSHOT_KEEP=0 turns it off.
+        aside="$(CFG_SNAPSHOT_KEEP=0 snapshot_local "$CFG_LOCAL_SAVE_PATH")"
+    fi
+
+    # The snapshot holds its own, older copy of every machine-local
+    # (SYNC_EXCLUDE) file, and preserve_excluded only fills in what the
+    # staged copy lacks. Drop the snapshot's copy of each one this machine
+    # still has, so the live one is what gets carried across.
+    local name f
+    set -f
+    for name in $CFG_SYNC_EXCLUDE; do
+        set +f
+        for f in "$CFG_LOCAL_SAVE_PATH"/$name; do
+            [ -e "$f" ] && rm -rf "${tmp:?}/$(basename "$f")"
+        done
+        set -f
+    done
+    set +f
+    preserve_excluded "$CFG_LOCAL_SAVE_PATH" "$tmp"
+    swap_into_place "$tmp" "$CFG_LOCAL_SAVE_PATH"
+    log INFO restore "restored $RESTORE_FROM ($n files) into $CFG_LOCAL_SAVE_PATH; previous saves kept as ${aside:-nothing, it was empty}"
+    say "restored the safety copy $RESTORE_FROM ($n files)"
+    if [ -n "$aside" ]; then
+        say "the saves that were here are kept as the safety copy $(basename "$aside"),"
+        say "so this can be undone with: $PROG restore $(basename "$aside")"
+    fi
+    say "run '$PROG status' to see what the next sync will do with them."
+}
+
+cmd_restore_list() {
+    local lines
+    lines="$(restore_candidates)"
+    if [ "$OPT_JSON" -eq 1 ]; then
+        printf '%s' "$lines" | python3 -c '
+import json, sys
+def num(s):
+    try:
+        return int(s)
+    except ValueError:
+        return 0
+out = []
+for line in sys.stdin.read().splitlines():
+    f = line.split("\t")
+    if len(f) == 4:
+        out.append({"name": f[0], "files": num(f[1]), "campaign_saves": num(f[2]), "newest": num(f[3])})
+print(json.dumps({"snapshots": out}))
+' >&3
+        return 0
+    fi
+    if [ -z "$lines" ]; then
+        say "no safety copies of this machine's saves yet, under $(local_snaproot)"
+        return 0
+    fi
+    say "safety copies of this machine's saves, newest first:"
+    printf '%s\n' "$lines" | while IFS="$(printf '\t')" read -r name files saves newest; do
+        say "  $name   $files files, $saves campaign saves, newest $(human_time "$newest")"
+    done
+    say ""
+    say "restore one with: $PROG restore NAME"
+}
+
 cmd_backup() {
     if ! is_hub_by_hostname; then
         die $EX_BACKUP_NOT_HUB backup \
@@ -3456,6 +3595,11 @@ COMMANDS
   push      this machine -> hub. Run after playing.
   play      pull, launch the game, wait for it to exit, then push.
   backup    hub -> external disk, timestamped. Hub host only.
+  restore   list this machine's safety copies (taken before every overwrite).
+  restore NAME
+            put that safety copy back as this machine's saves. What is here
+            now is kept as a new safety copy first, so it can be undone.
+            Touches nothing on the hub; the next sync decides from there.
 
 FLAGS
   --dry-run        print the real rsync plan for BOTH directions and exit.
@@ -3547,7 +3691,7 @@ USAGE_EOF
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            status|pull|push|play|backup|doctor)
+            status|pull|push|play|backup|doctor|restore)
                 [ -n "$COMMAND" ] && { printf 'error: more than one command given: %s and %s\n' "$COMMAND" "$1" >&2; exit $EX_USAGE; }
                 COMMAND="$1" ;;
             --dry-run)    OPT_DRY_RUN=1 ;;
@@ -3572,6 +3716,15 @@ parse_args() {
                 exit $EX_USAGE ;;
             -h|--help)    usage; exit $EX_OK ;;
             --version)    printf '%s %s\n' "$PROG" "$STS_VERSION"; exit $EX_OK ;;
+            [!-]*)
+                # The one positional argument: the safety copy to restore.
+                if [ "$COMMAND" = restore ] && [ -z "$RESTORE_FROM" ]; then
+                    RESTORE_FROM="$1"
+                else
+                    printf 'error: unknown argument "%s"\n' "$1" >&2
+                    printf "run '%s --help'\n" "$PROG" >&2
+                    exit $EX_USAGE
+                fi ;;
             *)
                 printf 'error: unknown argument "%s"\n' "$1" >&2
                 printf "run '%s --help'\n" "$PROG" >&2
@@ -3603,9 +3756,15 @@ parse_args() {
         printf 'error: --expect-decision only applies to "pull" and "push".\n' >&2
         exit $EX_USAGE
     fi
-    if [ "$OPT_JSON" -eq 1 ] && [ "$COMMAND" != "status" ]; then
-        printf 'error: --json only applies to "status".\n' >&2
+    if [ "$OPT_JSON" -eq 1 ] && [ "$COMMAND" != "status" ] && \
+       ! { [ "$COMMAND" = restore ] && [ -z "$RESTORE_FROM" ]; }; then
+        printf 'error: --json only applies to "status" and to listing with "restore".\n' >&2
         printf 'Use:  %s status --json\n' "$PROG" >&2
+        exit $EX_USAGE
+    fi
+    if [ "$COMMAND" = restore ] && \
+       { [ "$OPT_DRY_RUN" -eq 1 ] || [ -n "$OPT_FORCE" ] || [ "$OPT_OFFLINE_OK" -eq 1 ]; }; then
+        printf 'error: "restore" takes only the name of a safety copy, and --json to list them.\n' >&2
         exit $EX_USAGE
     fi
     case "$COMMAND:$OPT_FORCE" in
@@ -3662,6 +3821,13 @@ main() {
     # backup is local to the hub and deliberately does not need the tailnet.
     if [ "$COMMAND" = "backup" ]; then
         cmd_backup
+        exit $EX_OK
+    fi
+
+    # restore only touches this machine's saves, from this machine's own
+    # safety copies: no tailnet, no hub.
+    if [ "$COMMAND" = "restore" ]; then
+        cmd_restore
         exit $EX_OK
     fi
 

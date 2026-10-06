@@ -81,16 +81,28 @@ the current time, so restoring twice never moves one into the other.
 
 Snapshots of this machine's saves are in
 `~/Library/star-traders-sync-snapshots/`, one directory per overwrite,
-named by UTC time.
+named by UTC time. `sts restore` lists them and puts one back:
 
 ```bash
-ls ~/Library/star-traders-sync-snapshots/
-mv ~/Library/StarTradersFrontiers ~/Library/StarTradersFrontiers.before-restore-$(date +%s)
-cp -Rp ~/Library/star-traders-sync-snapshots/<stamp> ~/Library/StarTradersFrontiers
+sts restore                          # list them, newest first
+sts restore 2026-10-06T12:00:00Z     # put that one back
 ```
 
-Then `sts push` to make it the hub's copy. If the hub changed since this
-machine last synced, push reports a conflict; `sts push --force=local`
+A restore works like a pull. It stages the copy, snapshots the saves that
+are here now (so `sts restore` with that new name undoes it), then swaps.
+It never prunes, so the copy you restored from is still there afterwards.
+It refuses while the game is running (40), and refuses a name that is
+not one of the listed copies (65). It touches nothing on the hub.
+
+A snapshot is built under a hidden `.partial-<stamp>` name and renamed
+only once its file count checks out. One that failed part way (refused
+as incomplete, or killed mid-copy) stays hidden and is never listed or
+pruned. It can be deleted by hand once the saves are fine.
+
+Afterwards this machine usually differs from the hub. `sts status` says
+what the next sync will do: usually `sts push` sends the restored saves,
+and the hub's are snapshotted there first. If the hub also changed since
+this machine last synced, push reports a conflict; `sts push --force=local`
 keeps the restored save.
 
 ### The hub, from a snapshot or a backup

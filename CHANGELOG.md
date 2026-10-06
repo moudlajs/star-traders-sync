@@ -15,6 +15,10 @@ upgrade now rather than later.
 
 ### Added
 
+- `sts restore` lists this Mac's safety copies (the snapshots taken before
+  every overwrite), and `sts restore NAME` puts one back. The saves it
+  replaces become a new safety copy first, so a restore can be undone,
+  and nothing is pruned. `--json` lists them for the app ([#90])
 - A menu bar icon showing how things stand (up to date, syncing, saves to
   sync, needs you). Its popover has Play, both sides, the automatic-sync
   and Open-at-login switches, Health check and Quit. With the icon on,
@@ -357,6 +361,7 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#90]: https://github.com/moudlajs/star-traders-sync/issues/90
 [#91]: https://github.com/moudlajs/star-traders-sync/issues/91
 [#108]: https://github.com/moudlajs/star-traders-sync/issues/108
 [#124]: https://github.com/moudlajs/star-traders-sync/issues/124
