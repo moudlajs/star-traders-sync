@@ -11,7 +11,7 @@
 # --- Required -------------------------------------------------------------
 
 # Tailscale node name of the hub machine.
-HUB_HOST=my-mac-mini
+HUB_HOST=your-hub-tailnet-name
 
 # Account ON THE HUB that ssh logs in as.
 HUB_USER=youruser

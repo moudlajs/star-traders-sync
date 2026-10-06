@@ -6,7 +6,7 @@ if you want to know why it refuses things other sync tools guess at.
 ## Architecture
 
 ```
-   MacBook  (my-macbook)                    Mac mini  (my-mac-mini)
+   a playing Mac (client)                   the Hub host
    ~/Library/StarTradersFrontiers        ~/Library/StarTradersFrontiers
             |                                       |
             |  rsync over ssh                       |  local path copy
@@ -17,13 +17,13 @@ if you want to know why it refuses things other sync tools guess at.
                             |
                             |  sts backup  (hub host only, daily)
                             v
-              /Volumes/Backup/Backups/star-traders-sync/<ISO>/
+              /Volumes/<your disk>/Backups/star-traders-sync/<ISO>/
 ```
 
-The hub is a plain directory on the Mac mini. It is **not** a game save
-directory, even on the mini itself. Both machines are clients of it,
-including the mini, which uses a local path copy instead of ssh — every
-other code path is identical.
+The hub is a plain directory on the Hub host, the Mac that is on most of
+the time. It is **not** a game save directory, even on the Hub host itself.
+Every machine is a client of it, the Hub host included, which uses a local
+path copy instead of ssh — every other code path is identical.
 
 One script, identical on both machines. All differences live in
 `~/.config/star-traders-sync/config`.
@@ -32,7 +32,7 @@ One script, identical on both machines. All differences live in
 ## Finding your save directory
 
 Never copy a path out of this file into the config without checking it.
-On both machines tested it is `~/Library/StarTradersFrontiers` — directly
+On every machine tested so far it is `~/Library/StarTradersFrontiers` — directly
 under `~/Library`, **not** under `Application Support` — but verify:
 
 ```bash
@@ -86,7 +86,7 @@ is only ever reached *after* that snapshot exists. How to restore one is in
 the target and is moved into place with two renames only after it exits 0.
 A dropped connection leaves the target byte-identical to how it started.
 
-**Fingerprints decide, not timestamps.** On these two machines `core.db`
+**Fingerprints decide, not timestamps.** On the machines it was developed on `core.db`
 is 12288 bytes on *both* while holding completely different saves. Size
 and mtime comparison would be actively misleading, so every decision is
 made on a SHA-256 manifest of the directory. Timestamps are shown to you,

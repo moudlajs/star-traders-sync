@@ -19,6 +19,13 @@ upgrade now rather than later.
   release workflow now refuses to publish a tag that has no section here
   ([#49])
 
+### Changed
+
+- A fresh install's config now defaults `HUB_HOST` to `your-hub-tailnet-name`
+  and the backup volume to `/Volumes/YourDisk`, instead of names from one
+  particular setup. `sts doctor` reports both as placeholders still to fill
+  in ([#47])
+
 ## [1.5.3] - 2026-10-06
 
 ### Changed
@@ -258,6 +265,7 @@ of those findings has a case in `tests/regression.sh`.
 [1.0.0]: https://github.com/moudlajs/star-traders-sync/releases/tag/v1.0.0
 [#7]: https://github.com/moudlajs/star-traders-sync/issues/7
 [#27]: https://github.com/moudlajs/star-traders-sync/issues/27
+[#47]: https://github.com/moudlajs/star-traders-sync/issues/47
 [#49]: https://github.com/moudlajs/star-traders-sync/issues/49
 [#63]: https://github.com/moudlajs/star-traders-sync/issues/63
 [#65]: https://github.com/moudlajs/star-traders-sync/issues/65

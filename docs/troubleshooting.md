@@ -130,7 +130,7 @@ you which later checks it skipped as a result.
 | 36 | `first seed: this machine has no saves` | 0 | A pull is allowed, and logged as a first seed rather than an ordinary pull. |
 | 37 | `the hub's clock is Ns away from this machine's` | 0 | Warning. Timestamps shown become unreliable; the decision is made on content fingerprints, which do not care about clocks. |
 | 38 | `<volume> exists but is NOT a mount point` | 70 | The disk is unplugged, and `/Volumes/Backup` is a plain empty directory on the internal disk. Detected by comparing device ids, not by `-d`. Nothing is written. |
-| 39 | `backup only runs on the hub host` | 71 | Run it on the mini. |
+| 39 | `backup only runs on the hub host` | 71 | Run it on the Hub host: the Mac whose name is `HUB_HOST`. |
 | 40 | `the hub has 0 files and this machine has N` | 62 | Syncing *from* an empty side is refused unconditionally — `--force=hub` will not override it. An empty hub means something went wrong there, not that your saves should be deleted. |
 | 41 | `this machine has 0 files and the hub has N` | 61 | The symmetric case. Refused the same way. |
 | 42 | `snapshot ... is INCOMPLETE - N files in the source, only M copied` | 63 | Some files could not be read, so the snapshot cannot protect them. Nothing was overwritten. Fix permissions on the source directory. |
