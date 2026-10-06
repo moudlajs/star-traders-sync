@@ -802,7 +802,10 @@ check "emptied after a sync: decision is LOCAL_EMPTIED"  0 test "$(jget decision
 check "play refuses (61), not 'ahead of the hub'"       61 env PATH="$CASE/nosteam:$PATH" "$STS" play
 check "  and never launched the game"                    1 test -f "$CASE/launched"
 check "  and left the Hub alone"                         0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
-check "  and says how to restore"                        0 sh -c 'PATH="$2:$PATH" "$1" play 2>&1 | grep -q "pull --force=hub"' _ "$STS" "$CASE/nosteam"
+# Captured to a file, not piped into grep -q: grep stops reading at its
+# first match, and play then dies of SIGPIPE before releasing the hub
+# lock, which the next case finds still held (CI saw exit 50).
+check "  and says how to restore"                        0 sh -c 'PATH="$2:$PATH" "$1" play >"$3" 2>&1; grep -q "pull --force=hub" "$3"' _ "$STS" "$CASE/nosteam" "$CASE/play.out"
 check "pull --force=hub restores"                        0 "$STS" pull --force=hub
 check "  after which: INSYNC"                            0 test "$(jget decision)" = INSYNC
 
