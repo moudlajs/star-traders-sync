@@ -135,7 +135,10 @@ public enum UpdateInstaller {
         let mount = fm.temporaryDirectory.appendingPathComponent("sts-update-\(UUID().uuidString)")
         try fm.createDirectory(at: mount, withIntermediateDirectories: true)
         let attach = attachWithRetry(dmg: dmg, at: mount, run: run, sleep: sleep)
-        guard attach.ok else { throw UpdateError.mountFailed(attach.combined) }
+        guard attach.ok else {
+            try? fm.removeItem(at: mount)   // the defer below is not set up yet
+            throw UpdateError.mountFailed(attach.combined)
+        }
         defer {
             _ = run("/usr/bin/hdiutil", ["detach", mount.path, "-force"])
             try? fm.removeItem(at: mount)
