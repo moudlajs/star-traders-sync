@@ -20,9 +20,10 @@ upgrade now rather than later.
 - A run cut short by a closed pipe (`sts play | head -1`) or a closed
   terminal no longer leaves the hub lock behind. The leftover lock then
   blocked the other Mac, and this one too, with "locked by this machine
-  from an earlier run" until `LOCK_TTL_SECONDS` passed. A lock this Mac
-  left behind is now also cleared at once when the run that took it is no
-  longer running ([#129])
+  from an earlier run" until `LOCK_TTL_SECONDS` passed ([#129])
+- A run interrupted in the instant between moving a directory aside and
+  moving the new copy in is now recognised as mid-swap, so its staged copy
+  is kept for recovery instead of swept away
 
 ## [1.5.4] - 2026-10-06
 
