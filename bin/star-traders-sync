@@ -929,7 +929,7 @@ hostkey_help() {
         altkey="$(ssh-keygen -F "$alt" 2>/dev/null | grep -v '^#' | awk '{print $3}' | head -1)"
         wantkey="$(ssh-keyscan -t ed25519 "$want" 2>/dev/null | awk '{print $3}' | head -1)"
         if [ -n "$altkey" ] && [ "$altkey" = "$wantkey" ]; then
-            printf 'You already trust this machine as %s, and %s presents the\n' "$alt" "$want"
+            printf 'You already trust this machine as %s, and %s presents the\n' "$alt" "$want" >&2
             printf 'identical host key. Adding the name is safe. Run:\n\n' >&2
             printf '    ssh-keyscan -t ed25519 %s >> ~/.ssh/known_hosts\n\n' "$want" >&2
             printf 'Then re-run this command.\n' >&2
