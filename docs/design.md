@@ -71,10 +71,11 @@ resolve by hand, and never something this tool tries to be clever about.
 
 ## How a transfer runs
 
-`sts pull` in full. `sts push` is the mirror image: the same order with the
-two sides swapped, `--force=local` in place of `--force=hub`, and the
-emptied-side guard pointing the other way (this machine empty, hub not:
-refuse 61, never overridable).
+`sts pull` in full. `sts push` runs the same order with the two sides
+swapped and `--force=local` in place of `--force=hub`. The emptied-side
+guards are where it is **not** symmetric: on push, this machine empty with
+the hub not is refused with 61 and nothing overrides it, while an empty hub
+is a seed, which `--force=local` allows (62 without it).
 
 Every refusal carries its exit code, so this reads alongside
 [troubleshooting.md](troubleshooting.md#exit-codes). **The order is the
@@ -93,14 +94,16 @@ flowchart TB
     EXP -->|yes| X64(["refuse - 64<br/>nothing was done"])
     EXP -->|no| EMPTY{"hub empty, and this<br/>machine is not?"}
     EMPTY -->|yes| X62(["refuse - 62<br/>no --force overrides this"])
-    EMPTY -->|no| ST{"fingerprints against<br/>the recorded state"}
-    ST -->|"equal"| OK1(["already in sync - 0"])
+    EMPTY -->|no| EQ{"local and hub<br/>fingerprints equal?"}
+    EQ -->|yes| OK1(["already in sync - 0"])
+    EQ -->|no| ST{"what changed since<br/>the recorded state?"}
     ST -->|"only the hub changed"| SNAP
     ST -->|"first run, this machine empty"| SNAP
     ST -->|"first run, both sides have saves"| F61{"--force=hub?"}
     ST -->|"only this machine changed"| PLAY{"inside sts play?"}
     ST -->|"both sides changed"| F60{"--force=hub?"}
     ST -->|"neither changed, yet they differ"| X60D(["refuse - 60<br/>never overridable"])
+    PLAY -->|"yes, --force=hub"| SNAP
     PLAY -->|"yes, no --force"| OK3(["nothing to fetch - 0<br/>play pushes after the game"])
     PLAY -->|no| F60
     F61 -->|no| X61(["refuse - 61"])
@@ -110,7 +113,7 @@ flowchart TB
     SNAP["snapshot this machine"] --> CNT{"snapshot complete?<br/>file count == source"}
     CNT -->|no| X63(["abort - 63<br/>nothing was overwritten"])
     CNT -->|yes| STAGE["rsync into .sts-incoming-PID<br/>beside the target"]
-    STAGE -->|"rsync exit non-zero"| X33(["refuse - 33<br/>target untouched"])
+    STAGE -->|"rsync exit non-zero"| X33(["refuse - 33, or 34 if out of space<br/>target untouched"])
     STAGE -->|"exit 0"| CARRY["carry SYNC_EXCLUDE files<br/>into the staged copy"]
     CARRY --> SWAP["two renames<br/>target to .sts-old-PID<br/>staged to target"]
     SWAP -.->|"interrupted between them"| X13(["every later run refuses - 13<br/>until .sts-old-PID is restored"])
