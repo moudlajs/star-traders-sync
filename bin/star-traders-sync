@@ -99,6 +99,7 @@ HUB_IP=""             # the peer's tailnet IP
 TS_BIN=""
 
 LOCAL_LOCK_FILE=""
+LOCAL_LOCK_DIR=""     # its mkdir'd directory, released on every exit path
 HELD_HUB_LOCK=0
 HUB_LOCK_DIR=""      # saved on acquire, so the release needs no $(...); see exit_quietly
 HUB_LOCK_NONCE=""
@@ -224,8 +225,11 @@ on_exit() {
         log ERROR trap "interrupted mid-swap - staged data left in place deliberately, run $PROG again to recover"
         printf 'error: interrupted while swapping directories.\n' >&2
         printf 'Nothing was deleted. Re-run %s and it will recover.\n' "$PROG" >&2
-        # Still release the lock: the guard protects data, not the lock file.
+        # Still release the lock: the guard protects data, not the lock -
+        # its directory included, or the next run finds a lock with no
+        # holder (#151).
         [ -n "$LOCAL_LOCK_FILE" ] && rm -f "$LOCAL_LOCK_FILE" 2>/dev/null
+        [ -n "$LOCAL_LOCK_DIR" ] && rmdir "$LOCAL_LOCK_DIR" 2>/dev/null
         return $code
     fi
     if [ -n "$BACKUP_PENDING" ] && [ -d "$BACKUP_PENDING" ]; then
@@ -1259,6 +1263,18 @@ acquire_local_lock() {
             die $EX_LOCK_LOCAL lock \
                 "another $PROG is already running on this machine (pid $holder) - wait for it to finish"
         fi
+        # A lock directory this new, with no live holder recorded, is most
+        # likely a run between its mkdir and its pid write (the pid file
+        # still names the run before it). Clearing it would let two runs
+        # in at once, so it is refused instead (#151).
+        local lock_mtime
+        lock_mtime="$(stat -f%m "$lockdir" 2>/dev/null || echo 0)"
+        case "$lock_mtime" in ''|*[!${CH_DIGITS}]*) lock_mtime=0 ;; esac
+        if [ $(( $(date -u +%s) - lock_mtime )) -lt 10 ]; then
+            LOCAL_LOCK_FILE=""
+            die $EX_LOCK_LOCAL lock \
+                "another $PROG is starting on this machine - wait for it to finish"
+        fi
         log WARN lock "clearing stale local lock (pid ${holder:-unknown} is gone)"
         rm -rf "$lockdir"
         if ! mkdir "$lockdir" 2>/dev/null; then
@@ -1268,6 +1284,7 @@ acquire_local_lock() {
         fi
     fi
     printf '%s\n' "$$" > "$LOCAL_LOCK_FILE"
+    LOCAL_LOCK_DIR="$lockdir"
     cleanup_later "$lockdir"
     log DEBUG lock "local lock held, pid $$"
 }
@@ -1460,15 +1477,16 @@ acquire_hub_lock() {
 
     # Our own lock from a crashed earlier run: clear only past the TTL, loudly.
     if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
-        log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
-        warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
         # Without a nonce the clear cannot tell this lock from a fresh one
-        # whose owner file is not written yet, so it is never automatic.
+        # whose owner file is not written yet, so it is never automatic -
+        # and it is not announced as cleared either (#151).
         if [ -z "$owner_nonce" ]; then
             log ERROR lock "stale hub lock at $lock has no nonce; not clearing it automatically"
             die $EX_LOCK_REMOTE lock \
                 "the hub lock from $owner_iso is stale but its owner record is incomplete, so it is not cleared automatically. Make sure no sts is running on either Mac, then on $CFG_HUB_HOST: rm -rf $lock"
         fi
+        log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
+        warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
         clear_stale_hub_lock "$lock" "$owner_nonce" stale
         acquire_hub_lock
         return 0

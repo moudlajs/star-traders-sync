@@ -153,6 +153,11 @@ check "no hub lock left after an INSYNC pull"            1 sh -c '"$1" pull >/de
 
 mkdir -p "$CASE/state/star-traders-sync/local.lock.d"
 printf '99999\n' > "$CASE/state/star-traders-sync/local.lock"
+# Brand new with a dead pid: most likely a run between its mkdir and its
+# pid write (the file still names the run before it), so not cleared (#151).
+check "brand-new local lock, dead pid: refused (52)"   52 "$STS" status
+check "  and says another run is starting"                0 sh -c '"$1" status 2>&1 | grep -q "is starting"' _ "$STS"
+touch -t 202001010000 "$CASE/state/star-traders-sync/local.lock.d"
 check "stale local lock (dead pid) is broken"            0 "$STS" status
 mkdir -p "$CASE/state/star-traders-sync/local.lock.d"
 printf '%s\n' "$$" > "$CASE/state/star-traders-sync/local.lock"
@@ -880,6 +885,7 @@ printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\n' "$(hostname -s)" > "$L/own
 check "stale lock with no nonce: refused"               50 "$STS" pull
 check "  and says how to remove it"                      0 sh -c '"$1" pull 2>&1 | grep -q "rm -rf .*\.sts-lock"' _ "$STS"
 check "  and not cleared"                                0 test -f "$L/owner"
+check "  nor announced as cleared"                       1 sh -c '"$1" pull 2>&1 | grep -q "clearing a stale hub lock"' _ "$STS"
 rm -rf "$L"
 
 # An mtime that cannot be read is never "old": a stat that fails must not

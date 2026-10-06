@@ -15,6 +15,11 @@ upgrade now rather than later.
 
 ### Fixed
 
+- Two runs starting at the same moment after a crash can no longer both
+  get in: a brand-new local lock is no longer cleared as stale. A run
+  interrupted mid-swap now releases its local lock fully, and a stale hub
+  lock that is refused for having no nonce is no longer announced as
+  being cleared ([#151])
 - `--help` lists exit code 65 (`restore`: no such safety copy), which 1.6.0
   added without documenting it there. CI now checks every code is in
   `--help` as well as in the troubleshooting table
@@ -392,3 +397,4 @@ of those findings has a case in `tests/regression.sh`.
 [#128]: https://github.com/moudlajs/star-traders-sync/issues/128
 [#129]: https://github.com/moudlajs/star-traders-sync/issues/129
 [#132]: https://github.com/moudlajs/star-traders-sync/issues/132
+[#151]: https://github.com/moudlajs/star-traders-sync/issues/151
