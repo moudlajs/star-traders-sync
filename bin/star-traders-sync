@@ -11,7 +11,7 @@
 
 set -Eeuo pipefail
 
-readonly STS_VERSION="1.5.2"
+readonly STS_VERSION="1.5.3"
 readonly PROG="star-traders-sync"
 
 # --------------------------------------------------------------------------

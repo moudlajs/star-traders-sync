@@ -10,6 +10,10 @@ final class DashboardModel: ObservableObject {
     @Published var status: SyncStatus?
     @Published var problem: SyncProblem?
     @Published var loading = false
+    /// The check now running was asked for (the refresh button, Try
+    /// again). Only then does the toolbar show a spinner: the checks the
+    /// app starts itself, on coming forward and every minute, are silent.
+    @Published private(set) var manualCheck = false
     @Published var checkedAt: Date?
 
     let doctor = DoctorRun()
@@ -122,7 +126,7 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    func refresh() {
+    func refresh(manual: Bool = false) {
         // While sts runs it holds this Mac's lock, and status would only
         // report "a sync is already running". The run's own card says more.
         // Nor while a confirmation is open: the dialog describes the status
@@ -131,6 +135,7 @@ final class DashboardModel: ObservableObject {
         // finishing then must not check a config setup is rewriting.
         guard active, !loading, !busy, pending == nil else { return }
         loading = true
+        manualCheck = manual
         let script = self.script
         let layout = self.layout
         // Taken here, called in the detached task: calling the stored
@@ -143,6 +148,7 @@ final class DashboardModel: ObservableObject {
             let r = fetch(script)
             await MainActor.run {
                 self.loading = false
+                self.manualCheck = false
                 self.checkedAt = Date()
                 switch r {
                 case .success(let s):
@@ -350,9 +356,21 @@ struct DashboardView: View {
             ToolbarItem(placement: .primaryAction) {
                 UpdateButton(updates: updates)
             }
+            ToolbarItem(placement: .primaryAction) {
+                // One control for automatic sync, always in view, state
+                // readable at a glance, like Tailscale's switch (#119).
+                HStack(spacing: 6) {
+                    Text("Auto sync").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Toggle("Auto sync", isOn: $d.autoSync)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                }
+                .help(d.autoSync ? "Syncing automatically whenever it is safe" : "Automatic sync is off")
+            }
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { d.refresh() } label: {
-                    if d.loading {
+                Button { d.refresh(manual: true) } label: {
+                    if d.loading && d.manualCheck {
                         ProgressView().controlSize(.small)
                     } else {
                         Label("Check again", systemImage: "arrow.clockwise")
@@ -369,10 +387,6 @@ struct DashboardView: View {
                         d.runDoctor()
                     }
                     Button("Open logs") { d.openLogs() }
-                    Divider()
-                    // Not the first item: it was switched off by accident
-                    // twice, from right under the pointer (#117).
-                    Toggle("Sync automatically", isOn: $d.autoSync)
                     Divider()
                     Button("Run setup again…") { app.showSetup() }
                         .disabled(d.busy)
@@ -458,7 +472,7 @@ struct ProblemCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Button("Try again") { d.refresh() }
+                Button("Try again") { d.refresh(manual: true) }
                 if setupFixes { Button("Run setup again") { app.showSetup() } }
             }
         }
