@@ -1236,6 +1236,53 @@ acquire_local_lock() {
 
 hub_lock_path() { printf '%s/%s' "$(dirname "$CFG_HUB_PATH")" "$LOCK_DIRNAME"; }
 
+# Clear a stale hub lock without ever removing a lock that is not the one we
+# judged stale. Checking the owner and then removing is two steps: two runs
+# can both judge the same lock stale, one clears it and takes a fresh one,
+# and the other's rm would then delete that fresh lock (#132). So move it
+# aside first - rename is atomic, only one run can win it - and judge what
+# was actually moved. $2 is the owner nonce that was read, or "-" for a
+# lock that had no owner file.
+clear_stale_hub_lock() {
+    local lock="$1" want="$2" what="$3" out
+    out="$(hub_exec_args '
+        lock="$1"; want="$2"; aside="$1.stale-$3"
+        mv "$lock" "$aside" 2>/dev/null || { echo STS_CLEAR_GONE; exit 0; }
+        if [ "$want" = "-" ]; then
+            [ -f "$aside/owner" ] && same=0 || same=1
+        else
+            [ "$(sed -n 5p "$aside/owner" 2>/dev/null)" = "$want" ] && same=1 || same=0
+        fi
+        if [ "$same" = 1 ]; then
+            rm -rf "$aside"
+            echo STS_CLEAR_OK
+            exit 0
+        fi
+        # Not the lock we judged: someone took a fresh one in between. Put
+        # it back, unless yet another lock appeared meanwhile, in which case
+        # mv would nest it inside that one.
+        if [ ! -e "$lock" ] && mv "$aside" "$lock" 2>/dev/null && \
+           [ ! -e "$lock/${aside##*/}" ]; then
+            echo STS_CLEAR_RESTORED
+            exit 0
+        fi
+        echo STS_CLEAR_CONFLICT
+    ' "$lock" "$want" "$HUB_LOCK_NONCE" 2>&1)" || die $EX_LOCK_CREATE lock \
+        "failed to clear the $what hub lock at $lock ($out)"
+    case "$out" in
+        *STS_CLEAR_OK*)
+            log WARN lock "cleared the $what hub lock at $lock" ;;
+        *STS_CLEAR_GONE*)
+            log INFO lock "the $what hub lock at $lock was already cleared by another run" ;;
+        *STS_CLEAR_RESTORED*)
+            log WARN lock "the hub lock at $lock changed hands while clearing it; put it back" ;;
+        *)
+            log ERROR lock "the hub lock at $lock changed hands twice while clearing it: $out"
+            die $EX_LOCK_REMOTE lock \
+                "the hub lock changed hands while this run was clearing a $what one. Nothing was synced. Check $lock and $lock.stale-* on $CFG_HUB_HOST, then run again" ;;
+    esac
+}
+
 # mkdir is atomic on both HFS+ and APFS, and over ssh it stays atomic because
 # it is a single syscall on the far side.
 acquire_hub_lock() {
@@ -1305,8 +1352,7 @@ acquire_hub_lock() {
             if [ "$lock_age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
                 log WARN lock "CLEARING ownerless hub lock at $lock, age ${lock_age}s"
                 warn "clearing an ownerless hub lock (a run died while taking it), ${lock_age}s old"
-                hub_exec_args 'rm -rf "$1"' "$lock" || die $EX_LOCK_CREATE lock \
-                    "failed to clear the ownerless hub lock at $lock"
+                clear_stale_hub_lock "$lock" - ownerless
                 acquire_hub_lock
                 return 0
             fi
@@ -1354,12 +1400,7 @@ acquire_hub_lock() {
     if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
         log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
         warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
-        # Only if it is still the lock we just read: another run may have
-        # cleared it and taken a fresh one in between.
-        hub_exec_args '
-            if [ "$(sed -n 5p "$1/owner" 2>/dev/null)" = "$2" ]; then rm -rf "$1"; fi
-        ' "$lock" "$owner_nonce" || die $EX_LOCK_CREATE lock \
-            "failed to clear our stale hub lock at $lock"
+        clear_stale_hub_lock "$lock" "$owner_nonce" stale
         acquire_hub_lock
         return 0
     fi

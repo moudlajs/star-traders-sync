@@ -807,6 +807,55 @@ check "own fresh lock, owner pid dead: still refused"   50 "$STS" pull
 check "  and not cleared"                                0 test -d "$CASE/.sts-lock"
 rm -rf "$CASE/.sts-lock"
 
+# Two runs judging the same stale lock (#132). A stub mv plays the other
+# run: just before this run moves the lock aside, it swaps in a fresh lock
+# of its own. The clear must notice it moved the wrong lock and put it back,
+# never delete it.
+racemv() {   # $1: what the "other run" does to the lock first
+    cat > "$CASE/racestub/mv" <<STUB
+#!/bin/sh
+case "\$1:\$2" in
+    */.sts-lock:*/.sts-lock.stale-*)
+        if [ ! -f "$CASE/racestub/fired" ]; then
+            touch "$CASE/racestub/fired"
+            $1
+        fi ;;
+esac
+exec /bin/mv "\$@"
+STUB
+    chmod +x "$CASE/racestub/mv"
+    rm -f "$CASE/racestub/fired"
+}
+mkdir -p "$CASE/racestub"
+FRESH='printf "%s\\n%s\\n2026-01-01T00:00:00Z\\n%s\\nother-run\\n%s\\n" "$(hostname -s)" "$$" "$(date -u +%s)" "'"$MYID"'" > "'"$CASE"'/.sts-lock/owner"'
+printf 'LOCK_TTL_SECONDS=60\n' >> "$CASE/cfg/star-traders-sync/config"
+
+mkdir -p "$CASE/.sts-lock"
+printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\nold-run\n%s\n' "$(hostname -s)" "$MYID" \
+    > "$CASE/.sts-lock/owner"
+racemv "$FRESH"
+check "stale lock replaced mid-clear: refused, not stolen" 50 env PATH="$CASE/racestub:$PATH" "$STS" pull
+check "  the other run's lock is back in place"          0 test "$(sed -n 5p "$CASE/.sts-lock/owner")" = other-run
+check "  and nothing is left aside"                      1 sh -c 'ls -d "$1"/.sts-lock.stale-* >/dev/null 2>&1' _ "$CASE"
+rm -rf "$CASE/.sts-lock"
+
+# The same for an ownerless lock: the other run cleared it and wrote its
+# owner file in between.
+mkdir -p "$CASE/.sts-lock"
+touch -t 202001010000 "$CASE/.sts-lock"
+racemv "$FRESH"
+check "ownerless lock replaced mid-clear: refused"      50 env PATH="$CASE/racestub:$PATH" "$STS" pull
+check "  the other run's lock is back in place"          0 test "$(sed -n 5p "$CASE/.sts-lock/owner")" = other-run
+rm -rf "$CASE/.sts-lock"
+
+# And the plain stale clear still works through the new path.
+mkdir -p "$CASE/.sts-lock"
+printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\nold-run\n%s\n' "$(hostname -s)" "$MYID" \
+    > "$CASE/.sts-lock/owner"
+check "stale lock, no race: cleared"                     0 "$STS" pull
+check "  and nothing is left aside"                      1 sh -c 'ls -d "$1"/.sts-lock.stale-* >/dev/null 2>&1' _ "$CASE"
+sed -i '' '/^LOCK_TTL_SECONDS=60$/d' "$CASE/cfg/star-traders-sync/config"
+
 # A reader that goes away mid-run (`sts play | head -1`). The lock must be
 # gone the moment sts exits, not merely cleared by the next run.
 printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"

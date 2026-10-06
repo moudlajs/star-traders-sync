@@ -13,6 +13,13 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Fixed
+
+- Two runs clearing the same stale hub lock at the same moment can no
+  longer delete the fresh lock one of them just took. The stale lock is
+  moved aside first, and only removed if it is still the one judged
+  stale ([#132])
+
 ## [1.5.5] - 2026-10-06
 
 ### Fixed
@@ -316,3 +323,4 @@ of those findings has a case in `tests/regression.sh`.
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
 [#129]: https://github.com/moudlajs/star-traders-sync/issues/129
+[#132]: https://github.com/moudlajs/star-traders-sync/issues/132
