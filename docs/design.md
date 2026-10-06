@@ -115,7 +115,9 @@ flowchart TB
     CNT -->|yes| STAGE["rsync into .sts-incoming-PID<br/>beside the target"]
     STAGE -->|"rsync exit non-zero"| X33(["refuse - 33, or 34 if out of space<br/>target untouched"])
     STAGE -->|"exit 0"| CARRY["carry SYNC_EXCLUDE files<br/>into the staged copy"]
+    CARRY -->|"a file cannot be copied"| X63P(["refuse - 63<br/>the swap would delete it"])
     CARRY --> SWAP["two renames<br/>target to .sts-old-PID<br/>staged to target"]
+    SWAP -->|"a rename fails"| X33S(["refuse - 33<br/>original moved back"])
     SWAP -.->|"interrupted between them"| X13(["every later run refuses - 13<br/>until .sts-old-PID is restored"])
     SWAP --> REC["record both fingerprints<br/>release the hub lock"]
     REC --> OK2(["pull complete - 0"])
@@ -129,9 +131,10 @@ confirmed is compared against what is actually about to happen. `sts status`
 reports the same decision through the same function, so it cannot show one
 thing while a sync does another.
 
-A clock difference beyond `CLOCK_SKEW_TOLERANCE` warns and continues: the
-timestamps shown to you become unreliable, but nothing in this flow depends
-on them.
+On a client, a clock difference beyond `CLOCK_SKEW_TOLERANCE` warns and
+continues: the timestamps shown to you become unreliable, but nothing in
+this flow depends on them. The Hub host skips the check, since it has no
+other clock to compare against.
 
 ## Data safety
 
