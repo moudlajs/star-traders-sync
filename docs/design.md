@@ -104,7 +104,7 @@ flowchart TB
     ST -->|"both sides changed"| F60{"--force=hub?"}
     ST -->|"neither changed, yet they differ"| X60D(["refuse - 60<br/>never overridable"])
     PLAY -->|"yes, --force=hub"| SNAP
-    PLAY -->|"yes, no --force"| OK3(["nothing to fetch - 0<br/>play pushes after the game"])
+    PLAY -->|"yes, no --force"| OK3(["nothing to fetch - 0<br/>play pushes after the game<br/>also taken when this machine was emptied: #126"])
     PLAY -->|no| F60
     F61 -->|no| X61(["refuse - 61"])
     F61 -->|yes| SNAP
