@@ -1669,7 +1669,10 @@ snapshot_hub() {
 
     case "$out" in
         *STS_SNAP_OK*)
-            log INFO snapshot "hub snapshot ok on $CFG_HUB_HOST: $(printf '%s' "$out" | tr '\n' ' ')" ;;
+            log INFO snapshot "hub snapshot ok on $CFG_HUB_HOST: $(printf '%s' "$out" | tr '\n' ' ')"
+            # The far side picked the name (a -2 suffix in a busy second)
+            # and resolved the path: report that one, not our guess.
+            snapdir="$(printf '%s\n' "$out" | sed -n 's/^STS_SNAP_OK [0-9]* //p' | tail -1)" ;;
         *STS_SNAP_SHORT*)
             die $EX_SNAPSHOT snapshot \
                 "hub snapshot is INCOMPLETE ($out) - refusing to overwrite the hub. Check permissions under $CFG_HUB_PATH on $CFG_HUB_HOST." ;;

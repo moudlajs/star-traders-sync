@@ -1207,8 +1207,11 @@ check "a hub snapshot that copied nothing: push refuses (63)" 63 env PATH="$CASE
 check "  the hub is unchanged"                           0 test "$(cat "$CASE/hub/game_1.db")" = "v1-game_1.db"
 check "  the partial snapshot is not listed"             0 test "$(ls "$HS" | grep -c .)" -eq "$BEFORE"
 check "  it is kept aside, hidden"                       0 sh -c 'ls -d "$1"/.partial-* >/dev/null 2>&1' _ "$HS"
+printf 'changed again\n' > "$CASE/local/game_1.db"
 check "the next push snapshots and goes"                 0 "$STS" push
-check "  with one more listed snapshot"                  0 test "$(ls "$HS" | grep -c .)" -eq $((BEFORE + 1))
+printf 'and again\n' > "$CASE/local/game_1.db"
+check "  and says where the snapshot really is"          0 sh -c 'p="$("$1" push 2>&1 | sed -n "s/^snapshot: \(.*\) (on .*)$/\1/p")"; [ -d "$p" ]' _ "$STS"
+check "  with two more listed snapshots"                 0 test "$(ls "$HS" | grep -c .)" -eq $((BEFORE + 2))
 
 # --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
