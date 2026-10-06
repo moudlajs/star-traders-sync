@@ -131,6 +131,8 @@ public struct SyncProblem: Error, Equatable {
             (title, advice) = ("The saves changed while you were choosing", "Another Mac synced in the meantime, so nothing was done. Here is the situation now: choose again.")
         case 63:
             (title, advice) = ("Safety copy failed", "The safety copy taken before overwriting failed, so nothing was overwritten.")
+        case 65:
+            (title, advice) = ("That safety copy isn't there", "It may have been removed, or it is empty. Nothing was changed. Choose another one.")
         default:
             (title, advice) = ("Something went wrong", detail.isEmpty ? "The sync tool stopped with code \(code)." : detail)
         }
