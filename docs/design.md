@@ -191,6 +191,25 @@ created on top of a pending recovery.
 That is the guarantee the [README](../README.md) opens with.
 
 
+## How the app updates itself
+
+The app checks this repository's latest release every six hours. It
+installs an update only when every check passes, and a failure leaves the
+running app exactly as it was:
+
+1. The download URLs are this repository's own HTTPS release downloads,
+   and nothing else is followed.
+2. The dmg's SHA-256 matches GitHub's digest for the asset.
+3. `Star-Traders-Sync.dmg.sig` verifies against the Ed25519 public key
+   built into the app (#108). Checks 1 and 2 rest on the GitHub account
+   and TLS. This one rests on a key that only the release workflow holds,
+   so someone who controls just the account or the download cannot pass it.
+4. The app inside is ours (bundle id), it is the advertised version, and
+   `codesign --verify --deep --strict` passes, before and after it is
+   copied beside the running app and swapped in.
+
+A release without a signature is not offered at all.
+
 ## Logging
 
 ```

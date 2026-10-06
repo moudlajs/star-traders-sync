@@ -200,3 +200,21 @@ file went missing for six releases because it was nobody's step. A bump, a
 CI change or a docs-only change needs no entry unless it changed something
 observable. Releasing means moving `Unreleased` into a
 `## [X.Y.Z] - <date>` section and adding its compare link at the bottom.
+
+### Release signing
+
+The app installs an update only when `Star-Traders-Sync.dmg.sig`
+verifies against the Ed25519 public key built into it
+(`ReleaseSignature.publicKeyBase64` in
+`macos/Sources/STSSetupCore/Updater.swift`). The release workflow signs
+with the `STS_RELEASE_SIGNING_KEY` secret and checks the result against
+that built-in key before publishing, so a wrong secret fails the release
+instead of shipping one no app accepts. The private key exists only as
+that secret and as a backup in the maintainer's login keychain (service
+`star-traders-sync release signing key`). It never goes into the
+repository or a log.
+
+To rotate it, ship one release that is still signed with the old key but
+already carries the new public key. Then switch the secret. Apps that
+skip that release cannot update past it by themselves and need a manual
+download, so rotate only when the key may have leaked.

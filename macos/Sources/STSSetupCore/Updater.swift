@@ -9,6 +9,8 @@ public struct Release: Equatable {
     public let size: Int
     /// Hex SHA-256 of the dmg, from GitHub's own asset digest.
     public let sha256: String
+    /// The dmg's Ed25519 signature, a separate release asset (#108).
+    public let signatureURL: URL
 }
 
 public enum UpdateError: Error, Equatable, CustomStringConvertible {
@@ -18,6 +20,7 @@ public enum UpdateError: Error, Equatable, CustomStringConvertible {
     case appNotFound
     case wrongApp(String)
     case signatureInvalid(String)
+    case releaseSignatureInvalid
     case notWritable(String)
     case io(String)
 
@@ -29,6 +32,7 @@ public enum UpdateError: Error, Equatable, CustomStringConvertible {
         case .appNotFound:             return "The update does not contain Star Traders Sync."
         case .wrongApp(let s):         return "The update is not the expected app: \(s). Nothing was changed."
         case .signatureInvalid(let s): return "The update failed its signature check, so it was not installed: \(s)"
+        case .releaseSignatureInvalid: return "The download is not signed by this project's release key, so it was not installed. Nothing was changed."
         case .notWritable(let s):      return "This copy of the app cannot update itself here (\(s)). Drag the new version to Applications instead."
         case .io(let s):               return s
         }
@@ -38,6 +42,7 @@ public enum UpdateError: Error, Equatable, CustomStringConvertible {
 public enum UpdateFeed {
     public static let defaultURL = URL(string: "https://api.github.com/repos/moudlajs/star-traders-sync/releases/latest")!
     public static let dmgName = "Star-Traders-Sync.dmg"
+    public static let signatureName = "Star-Traders-Sync.dmg.sig"
 
     /// The feed to use: STS_UPDATE_FEED if set (tests, or trying an update
     /// against a local feed), else GitHub.
@@ -64,11 +69,18 @@ public enum UpdateFeed {
               digest.count == "sha256:".count + 64 else {
             throw UpdateError.badFeed("no sha256 digest for \(dmgName)")
         }
+        // Unsigned releases (everything before #108) are not offered: the
+        // signature is the check that does not rest on the GitHub account.
+        guard let sig = assets.first(where: { $0["name"] as? String == signatureName }),
+              let sigString = sig["browser_download_url"] as? String, let sigURL = URL(string: sigString) else {
+            throw UpdateError.badFeed("no \(signatureName) in release \(tag)")
+        }
         return Release(version: tag.hasPrefix("v") ? String(tag.dropFirst()) : tag,
                        notes: root["body"] as? String ?? "",
                        dmgURL: url,
                        size: dmg["size"] as? Int ?? 0,
-                       sha256: String(digest.dropFirst("sha256:".count)).lowercased())
+                       sha256: String(digest.dropFirst("sha256:".count)).lowercased(),
+                       signatureURL: sigURL)
     }
 
     /// The only place a real update may come from: this repository's own
@@ -94,6 +106,26 @@ public enum UpdateFeed {
             if x != y { return x > y }
         }
         return false
+    }
+}
+
+/// Ed25519 release signatures (#108). release.yml signs the dmg with a key
+/// held only as a CI secret; the app checks it against this public key.
+/// Unlike the sha256 digest, which comes from the same API as the file, a
+/// valid signature cannot be made by someone who only controls the GitHub
+/// account or the download. Signed with macos/scripts/release-sign.swift.
+public enum ReleaseSignature {
+    public static let publicKeyBase64 = "poTNTzOoOIh0yTrGPkkn3BjRWAmCbK6nnWjmO41Xw0M="
+
+    public static func verify(_ file: URL, signatureBase64: String,
+                              publicKeyBase64: String = ReleaseSignature.publicKeyBase64) throws {
+        guard let keyData = Data(base64Encoded: publicKeyBase64),
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData),
+              let signature = Data(base64Encoded: signatureBase64.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let data = try? Data(contentsOf: file, options: .mappedIfSafe),
+              key.isValidSignature(signature, for: data) else {
+            throw UpdateError.releaseSignatureInvalid
+        }
     }
 }
 

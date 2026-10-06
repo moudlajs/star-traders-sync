@@ -41,6 +41,18 @@ jobs:
           swift test --package-path macos
           macos/build-app.sh
 
+      - name: Sign the dmg (#108)
+        env:
+          STS_RELEASE_SIGNING_KEY: ${{ secrets.STS_RELEASE_SIGNING_KEY }}
+        run: |
+          dmg=macos/build/Star-Traders-Sync.dmg
+          swift macos/scripts/release-sign.swift sign "$dmg" > "$dmg.sig"
+          # Verify against the key the app has built in, not the secret: a
+          # secret that does not match would ship a release no app accepts.
+          pub="$(grep -oE 'publicKeyBase64 = "[^"]+"' macos/Sources/STSSetupCore/Updater.swift | cut -d'"' -f2)"
+          [ -n "$pub" ] || { echo "no public key found in Updater.swift"; exit 1; }
+          swift macos/scripts/release-sign.swift verify "$dmg" "$dmg.sig" "$pub"
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,4 +63,5 @@ jobs:
             bin/star-traders-sync \
             install.sh \
             config.example \
-            macos/build/Star-Traders-Sync.dmg
+            macos/build/Star-Traders-Sync.dmg \
+            macos/build/Star-Traders-Sync.dmg.sig
