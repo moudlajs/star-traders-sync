@@ -359,6 +359,15 @@ sed -i '' 's|^HUB_USER=.*|HUB_USER=youruser|' "$CASE/cfg/star-traders-sync/confi
 check "placeholder config: reported as a problem"        1 "$STS" doctor
 check "  names the key still on its placeholder"         0 sh -c '"$1" doctor 2>&1 | grep -q "placeholders.*HUB_USER"' _ "$STS"
 
+# The shipped defaults must stay ones doctor recognises (#47): a default
+# that reads like a real hostname would pass as configured.
+newcase doctor_shipped_defaults
+for src in "$REPO/config.example" "$REPO/install.sh"; do
+    host="$(grep -m1 '^HUB_HOST=' "$src" | cut -d= -f2)"
+    sed -i '' "s|^HUB_HOST=.*|HUB_HOST=$host|" "$CASE/cfg/star-traders-sync/config"
+    check "default HUB_HOST in ${src##*/} is flagged"     0 sh -c '"$1" doctor 2>&1 | grep -q "placeholders.*HUB_HOST"' _ "$STS"
+done
+
 # doctor without --fix must change nothing at all.
 newcase doctor_readonly
 rm -rf "$CASE/state"

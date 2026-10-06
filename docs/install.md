@@ -86,7 +86,7 @@ What it checks, and what `--fix` will and will not do, is in
 | **Tailscale tailnet** | **yes** | the machines have to see each other |
 | Steam account | practically | you need the game installed on both |
 | **Apple ID** | **no** | nothing here touches iCloud |
-| macOS version | no | tested on 15.x |
+| macOS version | no | the script runs on the bash 3.2 macOS ships; the app needs macOS 13 or later. Developed and tested on 15 |
 | Username | no | `HUB_USER` is the hub's account; `~/` expands per machine |
 
 Which config keys must match is listed per key in
