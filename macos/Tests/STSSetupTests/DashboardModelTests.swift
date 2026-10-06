@@ -150,6 +150,24 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertEqual(calls.all.count, 1, "and it resumes afterwards")
     }
 
+    /// #119: the checks the app starts itself show no spinner; only a
+    /// check the user asked for does.
+    func testOnlyARequestedCheckShowsTheSpinner() async throws {
+        let gate = DispatchSemaphore(value: 0)
+        d.autoSync = false
+        d.fetchStatus = { _ in gate.wait(); return .success(try! Self.status("INSYNC")) }
+        d.refresh()
+        XCTAssertTrue(d.loading)
+        XCTAssertFalse(d.manualCheck, "a background check is silent")
+        gate.signal()
+        await settle { !self.d.loading }
+        d.refresh(manual: true)
+        XCTAssertTrue(d.manualCheck, "the refresh button's check shows the spinner")
+        gate.signal()
+        await settle { !self.d.loading }
+        XCTAssertFalse(d.manualCheck, "and it clears when the check ends")
+    }
+
     func testAPressDuringACheckRunsAfterItIfStillOffered() async throws {
         fake([try Self.status("HUB_ONLY")])
         d.autoSync = false

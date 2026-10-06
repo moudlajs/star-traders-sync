@@ -38,18 +38,6 @@ struct MainHero: View {
             slot
                 .frame(height: 48)
                 .padding(.top, 8)
-            if case .status = screen, !d.autoSync {
-                // Never silently off (#117).
-                HStack(spacing: 6) {
-                    Image(systemName: "pause.circle")
-                    Text("Automatic sync is off")
-                    Button("Turn on") { d.autoSync = true }
-                        .buttonStyle(.link)
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(.top, 6)
-            }
             if let note = d.notice {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
