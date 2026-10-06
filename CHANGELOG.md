@@ -13,8 +13,17 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-07
+
 ### Fixed
 
+- A save rewritten at the same size within the same second as the copy on
+  the other side is now sent. rsync's quick check (size and whole-second
+  mtime) treated it as unchanged: a push reported "complete" while the hub
+  kept the old save, the other Mac carried on with the old save, and the
+  next sync here was refused as diverged. Transfers now compare by
+  content (`rsync -c`), and a transfer that leaves the two sides different
+  fails (33) instead of reporting success ([#158])
 - A hub snapshot that fails part way (incomplete, or interrupted) no
   longer looks like a good one. It used to stay under a normal name and
   count toward `SNAPSHOT_KEEP`, so later pushes pruned a good older
@@ -352,7 +361,8 @@ that was never transferred was simply absent from the replacement - taking
 from the live directory into the staging directory before the swap. Every one
 of those findings has a case in `tests/regression.sh`.
 
-[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.6...v1.6.0
 [1.5.6]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.4...v1.5.5
@@ -404,3 +414,4 @@ of those findings has a case in `tests/regression.sh`.
 [#132]: https://github.com/moudlajs/star-traders-sync/issues/132
 [#151]: https://github.com/moudlajs/star-traders-sync/issues/151
 [#156]: https://github.com/moudlajs/star-traders-sync/issues/156
+[#158]: https://github.com/moudlajs/star-traders-sync/issues/158

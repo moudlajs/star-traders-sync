@@ -11,7 +11,7 @@
 
 set -Eeuo pipefail
 
-readonly STS_VERSION="1.6.0"
+readonly STS_VERSION="1.6.1"
 readonly PROG="star-traders-sync"
 
 # Character classes spelled out, never as ranges. A bracket range in a case
@@ -1689,7 +1689,11 @@ snapshot_hub() {
 # moved into place only after it exits 0, so a dropped connection leaves the
 # target exactly as it was.
 #
-# Flags are deliberately just -a --delete plus excludes. No -E: it means
+# Flags are deliberately just -a -c --delete plus excludes. -c compares
+# files of equal size by content: rsync's default quick check (size and
+# whole-second mtime) took a save rewritten at the same size in the same
+# second for unchanged and hard-linked the old copy in (#158) - core.db is
+# always 12288 bytes. No -E: it means
 # --extended-attributes in openrsync but --executability in GNU rsync, and
 # the only xattr these files carry is com.apple.provenance, which is local
 # bookkeeping that should not cross machines.
@@ -1836,6 +1840,20 @@ preserve_excluded_hub() {
         "could not check the hub's excluded files before the swap - refusing to swap, because it could delete them ($out)"
 }
 
+# verify_transfer DIRECTION LOCAL_FP HUB_FP - after a transfer both sides
+# must hold the same saves. If they do not, the sync did not happen, and
+# saying "complete" would let the other Mac carry on with the old saves
+# (#158). The state is already recorded as the two sides really are, so the
+# next decision is DIVERGED_STATE, which every path refuses: nothing syncs
+# on its own until someone looks.
+verify_transfer() {
+    local direction="$1" lfp="$2" hfp="$3"
+    [ "$lfp" = "$hfp" ] && return 0
+    log ERROR "$direction" "after the transfer the two sides differ: local=$lfp hub=$hfp"
+    die $EX_RSYNC "$direction" \
+        "the transfer finished but this machine and the hub still hold different saves, so the $direction did not really happen. The side being overwritten was snapshotted first. Nothing will sync on its own until this is resolved - see 'transfer finished but ... different saves' in docs/troubleshooting.md."
+}
+
 # pull_hub_to_local - hub becomes local. Snapshot first, temp dir, then swap.
 pull_hub_to_local() {
     local target="$1" tmp src
@@ -1856,12 +1874,12 @@ pull_hub_to_local() {
 
     if [ "$IS_HUB" -eq 1 ]; then
         set -f
-        run_rsync pull -a --delete $(rsync_excludes) \
+        run_rsync pull -a -c --delete $(rsync_excludes) \
             --link-dest="$target" "$src" "$tmp/" >/dev/null
         set +f
     else
         set -f
-        run_rsync pull -a --delete $(rsync_excludes) \
+        run_rsync pull -a -c --delete $(rsync_excludes) \
             --link-dest="$target" -e "ssh $(ssh_opts)" "$src" "$tmp/" >/dev/null
         set +f
     fi
@@ -1898,7 +1916,7 @@ push_local_to_hub() {
 
     if [ "$IS_HUB" -eq 1 ]; then
         set -f
-        run_rsync push -a --delete $(rsync_excludes) \
+        run_rsync push -a -c --delete $(rsync_excludes) \
             --link-dest="$CFG_HUB_PATH" "$src/" "$tmp/" >/dev/null
         set +f
         preserve_excluded "$CFG_HUB_PATH" "$tmp"
@@ -1906,7 +1924,7 @@ push_local_to_hub() {
     else
         dst="$(ssh_target):$tmp/"
         set -f
-        run_rsync push -a --delete $(rsync_excludes) \
+        run_rsync push -a -c --delete $(rsync_excludes) \
             --link-dest="$CFG_HUB_PATH" -e "ssh $(ssh_opts)" "$src/" "$dst" >/dev/null
         set +f
         preserve_excluded_hub "$tmp"
@@ -2919,24 +2937,24 @@ cmd_dry_run_plan() {
     say "  HUB -> LOCAL  (what 'sts pull' would do)"
     if [ "$IS_HUB" -eq 1 ]; then
         src="$CFG_HUB_PATH/"; dst="$CFG_LOCAL_SAVE_PATH/"
-        say "    rsync -a --delete $e $src $dst"
-        rsync -a -n -i --delete $e "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+        say "    rsync -a -c --delete $e $src $dst"
+        rsync -a -c -n -i --delete $e "$src" "$dst" 2>&1 | sed 's/^/      /' || true
     else
         src="$(ssh_target):$CFG_HUB_PATH/"; dst="$CFG_LOCAL_SAVE_PATH/"
-        say "    rsync -a --delete $e -e 'ssh $(ssh_opts)' $src $dst"
-        rsync -a -n -i --delete $e -e "ssh $(ssh_opts)" "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+        say "    rsync -a -c --delete $e -e 'ssh $(ssh_opts)' $src $dst"
+        rsync -a -c -n -i --delete $e -e "ssh $(ssh_opts)" "$src" "$dst" 2>&1 | sed 's/^/      /' || true
     fi
     say ""
 
     say "  LOCAL -> HUB  (what 'sts push' would do)"
     if [ "$IS_HUB" -eq 1 ]; then
         src="$CFG_LOCAL_SAVE_PATH/"; dst="$CFG_HUB_PATH/"
-        say "    rsync -a --delete $e $src $dst"
-        rsync -a -n -i --delete $e "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+        say "    rsync -a -c --delete $e $src $dst"
+        rsync -a -c -n -i --delete $e "$src" "$dst" 2>&1 | sed 's/^/      /' || true
     else
         src="$CFG_LOCAL_SAVE_PATH/"; dst="$(ssh_target):$CFG_HUB_PATH/"
-        say "    rsync -a --delete $e -e 'ssh $(ssh_opts)' $src $dst"
-        rsync -a -n -i --delete $e -e "ssh $(ssh_opts)" "$src" "$dst" 2>&1 | sed 's/^/      /' || true
+        say "    rsync -a -c --delete $e -e 'ssh $(ssh_opts)' $src $dst"
+        rsync -a -c -n -i --delete $e -e "ssh $(ssh_opts)" "$src" "$dst" 2>&1 | sed 's/^/      /' || true
     fi
     say ""
     say "  In a real run each of these goes into a temp directory on the"
@@ -3051,6 +3069,7 @@ cmd_pull() {
     hfp="$(fingerprint_of_manifest "$hman")"
     state_write pull "$lfp" "$hfp"
     release_hub_lock
+    verify_transfer pull "$lfp" "$hfp"
     say "pull complete - $(printf '%s' "$lman" | grep -c . || echo 0) files"
 }
 
@@ -3161,6 +3180,7 @@ cmd_push() {
     hfp="$(fingerprint_of_manifest "$hman")"
     state_write push "$lfp" "$hfp"
     release_hub_lock
+    verify_transfer push "$lfp" "$hfp"
     say "push complete - $(printf '%s' "$hman" | grep -c . || echo 0) files on the hub"
 }
 
@@ -3510,7 +3530,7 @@ cmd_backup() {
 
     if [ "$OPT_DRY_RUN" -eq 1 ]; then
         say "dry run - would back up $CFG_HUB_PATH ($src_n files) into $CFG_BACKUP_DEST"
-        rsync -a -n -i "$CFG_HUB_PATH/" "$CFG_BACKUP_DEST/pending/" 2>&1 | sed 's/^/  /' || true
+        rsync -a -c -n -i "$CFG_HUB_PATH/" "$CFG_BACKUP_DEST/pending/" 2>&1 | sed 's/^/  /' || true
         release_hub_lock
         return 0
     fi
@@ -3570,7 +3590,9 @@ cmd_backup() {
     say "backing up $CFG_HUB_PATH ($src_n files) -> $dest"
     BACKUP_PENDING="$dest"
     if [ -n "$prev" ] && [ "$can_link" -eq 1 ]; then
-        run_rsync backup -a --link-dest="$CFG_BACKUP_DEST/$prev" \
+        # -c: without it a same-size save rewritten in the same second as
+        # the previous backup's copy was hard-linked from it (#158).
+        run_rsync backup -a -c --link-dest="$CFG_BACKUP_DEST/$prev" \
             "$CFG_HUB_PATH/" "$dest/" >/dev/null
         log INFO backup "hardlinked unchanged files against $prev"
     else
