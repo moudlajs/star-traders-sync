@@ -33,6 +33,11 @@ final class DashboardModel: ObservableObject {
     @Published var showingHealth = false
     /// The Restore previous saves sheet (#90).
     @Published var showingRestore = false
+    /// Set by a restore: the restored saves differ from the Hub (usually
+    /// LOCAL_ONLY), and automatic sync would send them straight over it.
+    /// The user restored on purpose and decides what happens next, so
+    /// nothing automatic runs until they do something themselves.
+    @Published private(set) var autoHeldAfterRestore = false
 
     /// Something worth knowing about a run that otherwise succeeded, such
     /// as the game crashing (the saves were still sent). Shown under the
@@ -204,7 +209,7 @@ final class DashboardModel: ObservableObject {
     func considerAutoSync(_ s: SyncStatus) {
         // !loading: a check in flight holds this Mac's lock, and a sync
         // started now would fail on it and be remembered as a failure.
-        guard active, !updating, autoSync, !loading, !busy, pending == nil, run == nil,
+        guard active, !updating, autoSync, !autoHeldAfterRestore, !loading, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
         if key == autoFailedKey, let at = autoFailedAt, now().timeIntervalSince(at) < Self.autoRetryAfter {
@@ -234,6 +239,8 @@ final class DashboardModel: ObservableObject {
         // sync, a confirmation answered late).
         guard active, !updating, !busy else { return }
         pending = nil
+        // Anything the user starts themselves ends the hold a restore set.
+        if !automatic { autoHeldAfterRestore = false }
         let r = ActionRun(action: action, automatic: automatic)
         run = r
         notice = nil
@@ -294,6 +301,10 @@ final class DashboardModel: ObservableObject {
                     self.autoFailedAt = status == 0 ? nil : self.now()
                 }
                 if status == 0 {
+                    if action == .restore {
+                        self.autoHeldAfterRestore = true
+                        self.notice = "Automatic sync is waiting for you: the restored saves go to the Hub when you Send or Play."
+                    }
                     if r.progress.gameCrashed {
                         self.notice = "The game crashed during your last session. Your saves were still sent to the Hub."
                     }

@@ -136,6 +136,29 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertEqual(d.run?.problem?.code, 2)
     }
 
+    /// #143 review: after a restore the saves differ from the Hub
+    /// (LOCAL_ONLY), and automatic sync must not send them on its own.
+    /// It waits until the user does something themselves.
+    func testAutomaticSyncWaitsForTheUserAfterARestore() async throws {
+        fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")])
+        d.start()
+        await settle { !self.d.loading && self.d.status != nil }
+        let copy = try XCTUnwrap(SafetyCopy.list(from: Data(#"{"snapshots":[{"name":"2026-10-06T12:00:00Z","files":5,"campaign_saves":1,"newest":1790000000}]}"#.utf8)).first)
+        d.perform(SyncActions.restore(copy))
+        await settle { self.d.status?.decision == .localOnly && !self.d.loading && !self.d.busy }
+        d.refresh()
+        await settle(1) { false }
+        XCTAssertEqual(calls.all, [["restore", "2026-10-06T12:00:00Z"]], "no automatic push of the restored saves")
+        XCTAssertTrue(d.autoHeldAfterRestore)
+        XCTAssertNotNil(d.notice)
+
+        let send = try XCTUnwrap(SyncActions.plan(for: try Self.status("LOCAL_ONLY")).buttons.first { $0.action == .push })
+        d.perform(send)
+        await settle { self.calls.all.count == 2 }
+        XCTAssertEqual(calls.all.last?.first, "push", "the user's own Send runs")
+        XCTAssertFalse(d.autoHeldAfterRestore, "and ends the hold")
+    }
+
     /// Restore is only ever started from the sheet: never planned, never
     /// automatic, whatever the situation.
     func testRestoreIsNeverOfferedOrAutomatic() throws {

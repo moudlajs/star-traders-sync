@@ -105,7 +105,7 @@ public enum SyncActions {
             action: .restore, label: "Restore", prominent: true,
             confirmation: .init(
                 title: "Put back the saves from \(copy.displayDate)?",
-                message: "This Mac's saves are replaced by this safety copy (\(copy.summary)). The saves here now are kept as a new safety copy first, so this can be undone. Nothing on the Hub changes until the next sync.",
+                message: "This Mac's saves are replaced by this safety copy (\(copy.summary)). The saves here now are kept as a new safety copy first, so this can be undone. Nothing on the Hub changes until you Send or Play: automatic sync waits for you.",
                 button: "Restore"))
         b.restoreName = copy.name
         return b
