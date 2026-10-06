@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
             DashboardModel.refreshAppScript(layout: layout, when: "launch")
         }
         showingSetup = !configured || !FileManager.default.isExecutableFile(atPath: layout.installedScript.path)
+        AppDelegate.app = self
     }
 
     func showSetup() {
@@ -42,6 +43,16 @@ final class AppModel: ObservableObject {
 /// would silently never reach the hub.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static weak var dashboard: DashboardModel?
+    @MainActor static weak var app: AppModel?
+
+    /// With the menu bar icon showing, closing the window keeps the app,
+    /// and automatic sync, running (#91). Without it - turned off, or
+    /// hidden because setup is showing - closing the window quits, through
+    /// the guard below. Never a process left with nothing to click.
+    @MainActor
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !(MenuBarPreference.shown && Self.app?.showingSetup == false)
+    }
 
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -58,10 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+enum MenuBarPreference {
+    static let key = "showInMenuBar"
+    static var shown: Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+}
+
 @main
 struct StarTradersSyncApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var app = AppModel()
+    @AppStorage(MenuBarPreference.key) private var showInMenuBar = true
 
     init() {
         // A bare executable (swift run) starts as a background process.
@@ -69,7 +86,9 @@ struct StarTradersSyncApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Star Traders Sync") {
+        // One window, not a group: the menu bar's Open brings this one back
+        // instead of making another.
+        Window("Star Traders Sync", id: "main") {
             RootView()
                 .environmentObject(app)
                 .environmentObject(app.dashboard)
@@ -77,6 +96,16 @@ struct StarTradersSyncApp: App {
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .windowResizability(.contentSize)
+
+        MenuBarExtra(isInserted: Binding(get: { showInMenuBar && !app.showingSetup },
+                                         set: { showInMenuBar = $0 })) {
+            MenuBarView()
+                .environmentObject(app)
+                .environmentObject(app.dashboard)
+        } label: {
+            MenuBarIcon().environmentObject(app.dashboard)
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 

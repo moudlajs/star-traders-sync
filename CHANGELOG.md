@@ -13,6 +13,14 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Added
+
+- A menu bar icon showing how things stand (up to date, syncing, saves to
+  sync, needs you). Its popover has Play, both sides, the automatic-sync
+  and Open-at-login switches, Health check and Quit. With the icon on,
+  closing the window no longer stops automatic sync. It can be turned off
+  in the gear menu ([#91])
+
 ### Fixed
 
 - The updater waits up to about 30 seconds, not 7, for a busy disk image
@@ -349,6 +357,7 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#91]: https://github.com/moudlajs/star-traders-sync/issues/91
 [#108]: https://github.com/moudlajs/star-traders-sync/issues/108
 [#124]: https://github.com/moudlajs/star-traders-sync/issues/124
 [#128]: https://github.com/moudlajs/star-traders-sync/issues/128
