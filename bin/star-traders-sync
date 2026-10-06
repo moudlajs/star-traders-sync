@@ -1642,21 +1642,49 @@ preserve_excluded_hub() {
     set -f
     for name in $CFG_SYNC_EXCLUDE; do set -- "$@" "$name"; done
     set +f
-    hub_exec_args '
+    # The far side reports the first path it could not carry and stops: the
+    # swap would delete it, so the push has to refuse, exactly as
+    # preserve_excluded does when the hub host pushes (#128).
+    local out rc
+    set +e
+    out="$(hub_exec_args '
         hub="$1"; staged="$2"; shift 2
-        cd "$hub" 2>/dev/null || exit 0
+        [ -d "$hub" ] || exit 0           # no hub yet: nothing to carry
+        cd "$hub" || exit 3                # there but unreadable: refuse, never skip
+        n_carried=0
         for n in "$@"; do
-            set -f
-            for f in $n; do
-                set +f
+            for f in $n; do               # a glob entry expands here, like the local side
                 [ -e "$f" ] || continue
                 [ -e "$staged/$f" ] && continue
-                cp -Rp "$f" "$staged"/ 2>/dev/null || true
+                if ! cp -Rp "$f" "$staged"/ 2>/dev/null; then
+                    echo "STS_CARRY_FAIL $f"
+                    exit 3
+                fi
+                n_carried=$((n_carried + 1))
             done
-            set +f
         done
-    ' "$CFG_HUB_PATH" "$staged" "$@" >/dev/null 2>&1 || true
-    return 0
+        echo "STS_CARRY_OK $n_carried"
+    ' "$CFG_HUB_PATH" "$staged" "$@" 2>&1)"
+    rc=$?
+    set -e
+    case "$out" in
+        *STS_CARRY_OK*)
+            local n
+            n="$(printf '%s\n' "$out" | sed -n 's/^STS_CARRY_OK //p' | tail -1)"
+            [ "${n:-0}" -gt 0 ] 2>/dev/null && \
+                log INFO preserve "carried $n excluded file(s) across the swap into $staged on the hub"
+            return 0 ;;
+        *STS_CARRY_FAIL*)
+            local f
+            f="$(printf '%s\n' "$out" | sed -n 's/^STS_CARRY_FAIL //p' | tail -1)"
+            log ERROR preserve "could not carry excluded path $CFG_HUB_PATH/$f into $staged on the hub"
+            die $EX_SNAPSHOT preserve \
+                "failed to preserve the excluded path $CFG_HUB_PATH/$f on the hub - refusing to swap, because the swap would delete it" ;;
+    esac
+    [ "$rc" -eq 0 ] && return 0   # no hub directory yet, nothing to carry
+    log ERROR preserve "excluded-file carry on the hub failed (rc=$rc): $out"
+    die $EX_SNAPSHOT preserve \
+        "could not check the hub's excluded files before the swap - refusing to swap, because it could delete them ($out)"
 }
 
 # pull_hub_to_local - hub becomes local. Snapshot first, temp dir, then swap.

@@ -863,6 +863,102 @@ check "  no hub lock left"                               1 test -d "$CASE/.sts-l
 check "  the next pull refuses until they are restored" 13 "$STS" pull
 
 # --------------------------------------------------------------------------
+section "a client of a remote hub, over a loopback ssh"
+# This machine plays a client of "remotehub". The ssh stub does what ssh
+# does - joins the remote command and hands it to a shell - only on this
+# machine, so the whole client path (hub_exec_args over bash -s, rsync -e
+# ssh) runs for real against the sandbox hub. Use client_on / client_off.
+client_on() {
+    sed -i '' "s/^HUB_HOST=.*/HUB_HOST=remotehub/" "$CASE/cfg/star-traders-sync/config"
+    mkdir -p "$CASE/clientstub"
+    cat > "$CASE/clientstub/tailscale" <<'STUB'
+#!/bin/bash
+case "$*" in
+    *"status --json"*)
+        printf '{"BackendState":"Running","Self":{"HostName":"thisclient","DNSName":"thisclient.test.ts.net.","TailscaleIPs":["100.64.0.9"],"Online":true},"Peer":{"p":{"HostName":"remotehub","DNSName":"remotehub.test.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":true}}}\n' ;;
+    *ping*) printf 'pong from remotehub\n' ;;
+esac
+exit 0
+STUB
+    cat > "$CASE/clientstub/ssh-keygen" <<'STUB'
+#!/bin/bash
+case "$*" in *-F*) printf 'remotehub ssh-ed25519 AAAA\n' ;; esac
+exit 0
+STUB
+    cat > "$CASE/clientstub/ssh" <<'STUB'
+#!/bin/bash
+# Skip options, then the destination; the rest is the remote command.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o|-p|-l|-i|-F) shift 2 ;;
+        -*) shift ;;
+        *) shift; break ;;
+    esac
+done
+# drop-carry: the connection dies under the excluded-file carry alone.
+if [ -f "${0%/*}/drop-carry" ] && [ "${1%% *}" = bash ]; then   # a bash -s script on stdin; never rsync's stream
+    script="$(cat)"
+    case "$script" in
+        *STS_CARRY_OK*) echo "client_loop: send disconnect" >&2; exit 255 ;;
+    esac
+    printf '%s\n' "$script" | exec /bin/sh -c "$*"
+fi
+exec /bin/sh -c "$*"
+STUB
+    chmod +x "$CASE/clientstub/"*
+    CLIENT_PATH_SAVED="$PATH"
+    PATH="$CASE/clientstub:$PATH"
+    export STS_TS_APP_PATH=/nonexistent/Tailscale
+}
+client_off() {
+    PATH="$CLIENT_PATH_SAVED"
+    unset STS_TS_APP_PATH
+}
+
+newcase client
+client_on
+check "client: seed the remote hub"                      0 "$STS" push --force=local
+printf 'hub-local\n' > "$CASE/hub/data.db"      # machine-local, never synced
+printf 'client change\n' > "$CASE/local/game_1.db"
+check "client: status sees the remote hub"               0 test "$(jget decision)" = LOCAL_ONLY
+check "client: push over ssh"                            0 "$STS" push
+check "  the hub has the change"                         0 test "$(cat "$CASE/hub/game_1.db")" = "client change"
+check "  the hub's excluded file was carried across"     0 test "$(cat "$CASE/hub/data.db")" = hub-local
+
+# #128: an excluded file the hub-side carry cannot copy. The swap would
+# delete it, so the push must refuse - as it already did from the hub host.
+# A cp that fails for data.db alone: the snapshot (cpio) still succeeds,
+# so only the carry can stop this push.
+printf '#!/bin/sh\nfor a; do case "$a" in *data.db) echo "cp: $a: I/O error" >&2; exit 1 ;; esac; done\nexec /bin/cp "$@"\n' \
+    > "$CASE/clientstub/cp"
+chmod +x "$CASE/clientstub/cp"
+printf 'second change\n' > "$CASE/local/game_1.db"
+check "client push, uncopyable excluded file: refuses (63)" 63 "$STS" push
+check "  and says why"                                   0 sh -c '"$1" push 2>&1 | grep -q "failed to preserve the excluded path"' _ "$STS"
+rm -f "$CASE/clientstub/cp"
+check "  the hub is unchanged"                           0 test "$(cat "$CASE/hub/game_1.db")" = "client change"
+check "  and still has the excluded file"                0 test "$(cat "$CASE/hub/data.db")" = hub-local
+check "  once it can be copied again, the push goes"       0 "$STS" push
+check "  and carries it"                                 0 test "$(cat "$CASE/hub/data.db")" = hub-local
+
+# The connection drops under the carry itself: no verdict, so no swap.
+touch "$CASE/clientstub/drop-carry"
+printf 'third change\n' > "$CASE/local/game_1.db"
+check "client push, carry check lost: refuses (63)"     63 "$STS" push
+check "  and says it could not check"                    0 sh -c '"$1" push 2>&1 | grep -q "could not check the hub.s excluded files"' _ "$STS"
+check "  the hub is unchanged"                           0 test "$(cat "$CASE/hub/game_1.db")" = "second change"
+check "  and still has the excluded file"                0 test "$(cat "$CASE/hub/data.db")" = hub-local
+rm -f "$CASE/clientstub/drop-carry"
+
+# A glob entry matches on the hub side too; it never did before #128.
+sed -i '' 's/^SYNC_EXCLUDE=.*/SYNC_EXCLUDE=data.db steam_autocloud.vdf *.local/' "$CASE/cfg/star-traders-sync/config"
+printf 'a\n' > "$CASE/hub/a.local"; printf 'b\n' > "$CASE/hub/b.local"
+check "client push with a glob exclude"                  0 "$STS" push
+check "  carries every match"                            0 test "$(cat "$CASE/hub/a.local" "$CASE/hub/b.local")" = "a
+b"
+client_off
+
+# --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
 newcase playemptied
 "$STS" push --force=local >/dev/null 2>&1

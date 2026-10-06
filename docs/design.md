@@ -79,8 +79,8 @@ is a seed, which `--force=local` allows (62 without it). When a client
 pushes, the receiving side is the Hub host over ssh, and three exits differ.
 A failed hub-side swap exits 32 instead of 33. An interrupted hub swap is
 caught by the next run on any machine as 14 instead of 13. A `SYNC_EXCLUDE`
-file that cannot be carried into the hub's staged copy is currently *not*
-refused, and the swap deletes it, leaving it only in the hub snapshot (#128).
+file that cannot be carried into the staged copy is refused with 63 on both
+sides (the hub-side carry used to fail silently, #128).
 
 Every refusal carries its exit code, so this reads alongside
 [troubleshooting.md](troubleshooting.md#exit-codes). **The order is the
@@ -101,7 +101,9 @@ flowchart TB
     EMPTY -->|yes| X62(["refuse - 62<br/>no --force overrides this"])
     EMPTY -->|no| EQ{"local and hub<br/>fingerprints equal?"}
     EQ -->|yes| OK1(["already in sync - 0"])
-    EQ -->|no| ST{"what changed since<br/>the recorded state?"}
+    EQ -->|no| GONE{"this machine emptied<br/>after a sync?"}
+    GONE -->|yes| X61E(["refuse - 61<br/>restore with pull --force=hub"])
+    GONE -->|no| ST{"what changed since<br/>the recorded state?"}
     ST -->|"only the hub changed"| SNAP
     ST -->|"first run, this machine empty"| SNAP
     ST -->|"first run, both sides have saves"| F61{"--force=hub?"}
@@ -109,7 +111,7 @@ flowchart TB
     ST -->|"both sides changed"| F60{"--force=hub?"}
     ST -->|"neither changed, yet they differ"| X60D(["refuse - 60<br/>never overridable"])
     PLAY -->|"yes, --force=hub"| SNAP
-    PLAY -->|"yes, no --force"| OK3(["nothing to fetch - 0<br/>play pushes after the game<br/>also taken when this machine was emptied: #126"])
+    PLAY -->|"yes, no --force"| OK3(["nothing to fetch - 0<br/>play pushes after the game"])
     PLAY -->|no| F60
     F61 -->|no| X61(["refuse - 61"])
     F61 -->|yes| SNAP
