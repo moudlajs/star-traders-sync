@@ -148,4 +148,5 @@ you which later checks it skipped as a result.
 | 53 | `the hub lock from ... is stale but its owner record is incomplete` | 50 | The lock is past the TTL, but its owner file has no nonce, so it cannot be told apart from a lock that is being taken right now. Make sure no `sts` is running on either Mac, then run the `rm -rf` command printed. |
 | 54 | `there is no safety copy named ...` or `... is not the name of a safety copy` | 65 | `sts restore` takes a name exactly as `sts restore` (with no name) lists it. A path, or anything outside this machine's snapshot directory, is refused. Nothing was changed. |
 | 55 | `the safety copy ... is empty` | 65 | That snapshot has no files, so restoring it would empty this machine. Nothing was changed. Choose another from `sts restore`. |
+| 56 | `another star-traders-sync is starting on this machine` | 52 | A lock taken in the last few seconds, by a run that has not yet recorded itself. Wait a moment and try again. If it keeps saying this and no `sts` is running, a run was killed in that instant: run again after 10 seconds and the leftover lock is cleared. |
 
