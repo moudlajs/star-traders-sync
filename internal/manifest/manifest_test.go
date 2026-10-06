@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +97,50 @@ func TestUnhashableFilesAreReportedInPlace(t *testing.T) {
 	}
 	if want := bashManifest(t, dir, nil); got.Text() != want {
 		t.Fatalf("differs from the script\n--- bash\n%s\n--- go\n%s", want, got.Text())
+	}
+}
+
+// fnmatch's * matches a newline; without (?s) Go's . would not, and a file
+// named "x\n.bak" would slip past an exclude of *.bak.
+func TestAStarMatchesANewlineToo(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "x\n.bak", "excluded")
+	write(t, dir, "keep.db", "kept")
+	got, _ := Build(dir, []string{"*.bak"})
+	if got.Count() != 1 || len(got.Lines) != 1 || !strings.HasSuffix(got.Lines[0], "./keep.db") {
+		t.Fatalf("manifest = %q", got.Text())
+	}
+}
+
+// Deliberately stricter than the script: nothing unreadable vanishes.
+func TestNothingUnreadableIsSkippedSilently(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	dir := t.TempDir()
+	write(t, dir, "game_1.db", "g")
+	write(t, dir, "sub/keep.db", "under an unreadable dir")
+	sub := filepath.Join(dir, "sub")
+	if err := os.Chmod(sub, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(sub, 0o755)
+	got, err := Build(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Unhashable) != 1 || got.Unhashable[0] != "./sub/" {
+		t.Fatalf("an unreadable subdirectory must be unhashable, got %q", got.Text())
+	}
+
+	root := t.TempDir()
+	write(t, root, "game_1.db", "g")
+	if err := os.Chmod(root, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(root, 0o755)
+	if m, err := Build(root, nil); err == nil {
+		t.Fatalf("an unreadable dir must be an error, not %q (%s)", m.Text(), m.Fingerprint())
 	}
 }
 

@@ -74,15 +74,23 @@ type matcher struct{ name, path *regexp.Regexp }
 
 func newMatcher(n string) matcher {
 	glob := strings.ReplaceAll(regexp.QuoteMeta(n), `\*`, ".*")
+	// (?s): fnmatch's * matches a newline too; Go's . does not without it.
 	return matcher{
-		name: regexp.MustCompile("^" + glob + "$"),       // ! -name N
-		path: regexp.MustCompile(`^\./` + glob + `/.*$`), // ! -path ./N/*
+		name: regexp.MustCompile("(?s)^" + glob + "$"),       // ! -name N
+		path: regexp.MustCompile(`(?s)^\./` + glob + `/.*$`), // ! -path ./N/*
 	}
 }
 
 // Build lists dir. A missing dir is an empty manifest (the script's
-// "cd || exit 0"). An unreadable subdirectory is skipped silently, as
-// find does with its errors sent to /dev/null.
+// "cd || exit 0").
+//
+// Unlike the script, nothing unreadable is skipped silently. find's errors
+// go to /dev/null there, so an unreadable subdirectory just shrinks the
+// manifest and the script refuses only later, at the snapshot or the
+// transfer. Here an unreadable subdirectory is listed as unhashable
+// ("./sub/"), which refuses (13) before anything is decided, and an
+// unreadable dir itself is an error: never an "empty" manifest that would
+// read as FIRST_SEED or LOCAL_EMPTIED.
 func Build(dir string, exclude []string) (Manifest, error) {
 	names := append([]string{SnapDirName, LockDirName}, exclude...)
 	var ms []matcher
@@ -95,9 +103,15 @@ func Build(dir string, exclude []string) (Manifest, error) {
 	if err != nil || !st.IsDir() {
 		return m, nil
 	}
-	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	var unreadable []string
+	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if d != nil && d.IsDir() && p != dir {
+			if p == dir {
+				return err
+			}
+			rel, _ := filepath.Rel(dir, p)
+			unreadable = append(unreadable, "./"+filepath.ToSlash(rel)+"/")
+			if d != nil && d.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
@@ -115,6 +129,10 @@ func Build(dir string, exclude []string) (Manifest, error) {
 		files = append(files, dot)
 		return nil
 	})
+	if walkErr != nil {
+		return m, fmt.Errorf("cannot read %s: %w", dir, walkErr)
+	}
+	m.Unhashable = append(m.Unhashable, unreadable...)
 	sort.Strings(files)
 	for _, f := range files {
 		h, size, err := hashFile(filepath.Join(dir, filepath.FromSlash(f[2:])))
