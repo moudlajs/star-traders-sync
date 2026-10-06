@@ -465,7 +465,18 @@ func (t *T) PreserveExcludedHub(staged string) *fail.Failure {
 // between the two renames (see Guard).
 func (t *T) SwapIntoPlace(tmp, target string) *fail.Failure {
 	old := fmt.Sprintf("%s.sts-old-%d", target, t.Pid)
-	_ = os.RemoveAll(old)
+	// A leftover with this name - an earlier run's, with the same pid - may
+	// be the only place some saves are. The script deletes it; here it is
+	// moved aside instead, still named .sts-old-* so recover_orphans keeps
+	// reporting it, and never deleted.
+	if _, err := os.Lstat(old); err == nil {
+		aside := fmt.Sprintf("%s.%d", old, t.Now().UnixNano())
+		if rename(old, aside) != nil {
+			return fail.New(exitcode.Rsync, "swap",
+				"%s is left from an earlier interrupted swap and could not be moved aside - nothing was changed. Check it, then remove it by hand.", old)
+		}
+		t.Log.Log("WARN", "swap", "moved a leftover %s aside to %s", old, aside)
+	}
 	var f *fail.Failure
 	err := t.Guard.Swapping(func() error {
 		if rename(target, old) != nil {

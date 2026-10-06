@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/moudlajs/star-traders-sync/internal/logx"
 )
 
 func TestSnippetsMatchTheScript(t *testing.T) {
@@ -101,5 +105,31 @@ func TestAFailedRestoreSaysWhereTheSavesAre(t *testing.T) {
 	}
 	if _, err := os.Stat(target + ".sts-old-42"); err != nil {
 		t.Fatal("the saves are not where the message says")
+	}
+}
+
+// A leftover parked generation with this run's pid is moved aside, never
+// deleted.
+func TestALeftoverParkedGenerationIsKept(t *testing.T) {
+	dir := t.TempDir()
+	target, tmp, old := dir+"/local", dir+"/staged", dir+"/local.sts-old-42"
+	for _, d := range []string{target, tmp, old} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(old+"/game_1.db", []byte("only copy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tr := &T{Pid: 42, Guard: &Guard{}, Now: time.Now, Log: &logx.Logger{File: dir + "/log"}}
+	if f := tr.SwapIntoPlace(tmp, target); f != nil {
+		t.Fatal(f)
+	}
+	kept, _ := filepath.Glob(old + ".*/game_1.db")
+	if len(kept) != 1 {
+		t.Fatalf("the leftover's save is gone (found %v)", kept)
+	}
+	if b, _ := os.ReadFile(kept[0]); string(b) != "only copy" {
+		t.Fatal("the leftover's save changed")
 	}
 }
