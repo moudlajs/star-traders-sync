@@ -134,6 +134,17 @@ func TestNothingUnreadableIsSkippedSilently(t *testing.T) {
 		t.Fatalf("an unreadable subdirectory must be unhashable, got %q", got.Text())
 	}
 
+	// ... unless nothing under it would be listed anyway.
+	write(t, dir, "x.bak/inner.db", "excluded")
+	xb := filepath.Join(dir, "x.bak")
+	if err := os.Chmod(xb, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(xb, 0o755)
+	if got, _ := Build(dir, []string{"*.bak"}); len(got.Unhashable) != 1 {
+		t.Fatalf("an unreadable excluded dir is no reason to refuse: %q", got.Unhashable)
+	}
+
 	root := t.TempDir()
 	write(t, root, "game_1.db", "g")
 	if err := os.Chmod(root, 0); err != nil {

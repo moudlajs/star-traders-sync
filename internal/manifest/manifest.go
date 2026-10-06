@@ -134,7 +134,18 @@ func Build(dir string, exclude []string) (Manifest, error) {
 				return err
 			}
 			rel, _ := filepath.Rel(dir, p)
-			unreadable = append(unreadable, "./"+filepath.ToSlash(rel)+"/")
+			under := "./" + filepath.ToSlash(rel) + "/"
+			// Nothing under an excluded directory is listed anyway, so
+			// one we cannot read is no reason to refuse.
+			excluded := false
+			for _, x := range ms {
+				if x.path.MatchString(under) {
+					excluded = true
+				}
+			}
+			if !excluded {
+				unreadable = append(unreadable, under)
+			}
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
 			}
