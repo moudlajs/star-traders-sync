@@ -3371,6 +3371,20 @@ cmd_restore() {
         aside="$(CFG_SNAPSHOT_KEEP=0 snapshot_local "$CFG_LOCAL_SAVE_PATH")"
     fi
 
+    # The snapshot holds its own, older copy of every machine-local
+    # (SYNC_EXCLUDE) file, and preserve_excluded only fills in what the
+    # staged copy lacks. Drop the snapshot's copy of each one this machine
+    # still has, so the live one is what gets carried across.
+    local name f
+    set -f
+    for name in $CFG_SYNC_EXCLUDE; do
+        set +f
+        for f in "$CFG_LOCAL_SAVE_PATH"/$name; do
+            [ -e "$f" ] && rm -rf "${tmp:?}/$(basename "$f")"
+        done
+        set -f
+    done
+    set +f
     preserve_excluded "$CFG_LOCAL_SAVE_PATH" "$tmp"
     swap_into_place "$tmp" "$CFG_LOCAL_SAVE_PATH"
     log INFO restore "restored $RESTORE_FROM ($n files) into $CFG_LOCAL_SAVE_PATH; previous saves kept as ${aside:-nothing, it was empty}"

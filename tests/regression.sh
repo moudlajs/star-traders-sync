@@ -1093,6 +1093,7 @@ assert s[0][\"files\"]>=4 and s[0][\"campaign_saves\"]==1 and s[0][\"newest\"]>0
 " "$2"' _ "$STS" "$FIRST"
 
 HUB_BEFORE="$(cat "$CASE/hub/game_1.db")"
+printf 'machine-local, changed since\n' > "$CASE/local/data.db"
 check "restore NAME"                                     0 "$STS" restore "$FIRST"
 check "  this Mac has the old saves back"                0 test "$(cat "$CASE/local/game_1.db")" = "v1-game_1.db"
 check "  the hub is untouched"                           0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
@@ -1100,7 +1101,7 @@ check "  the copy restored from is still there"          0 test -d "$SNAPS/$FIRS
 check "  what was here is a new safety copy"             0 test "$(ls "$SNAPS" | grep -c .)" -eq 2
 SECOND="$(ls "$SNAPS" | LC_ALL=C sort | tail -1)"
 check "  holding the saves it replaced"                  0 test "$(cat "$SNAPS/$SECOND/game_1.db")" = "from the other mac"
-check "  the machine-local data.db survived"             0 test -f "$CASE/local/data.db"
+check "  the live machine-local data.db was kept, not the copy's" 0 test "$(cat "$CASE/local/data.db")" = "machine-local, changed since"
 check "  status now sees this Mac changed"               0 test "$(jget decision)" = LOCAL_ONLY
 check "undo: restore the copy it made"                   0 "$STS" restore "$SECOND"
 check "  back to the saves before the restore"           0 test "$(cat "$CASE/local/game_1.db")" = "from the other mac"
