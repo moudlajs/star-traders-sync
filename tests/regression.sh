@@ -1214,6 +1214,41 @@ check "  and says where the snapshot really is"          0 sh -c 'p="$("$1" push
 check "  with two more listed snapshots"                 0 test "$(ls "$HS" | grep -c .)" -eq $((BEFORE + 2))
 
 # --------------------------------------------------------------------------
+section "a same-size change in the same second is still sent (#158)"
+# rsync's quick check (size and whole-second mtime) took these for
+# unchanged and hard-linked the old copy in: the push "completed", the hub
+# kept the old save, and the next sync was DIVERGED_STATE.
+newcase samesecond
+"$STS" push --force=local >/dev/null 2>&1
+printf 'v2-game_1.db\n' > "$CASE/local/game_1.db"          # the same size as v1-game_1.db
+touch -r "$CASE/hub/game_1.db" "$CASE/local/game_1.db"     # and the same mtime
+check "push sends it"                                    0 "$STS" push
+check "  the hub has it"                                 0 test "$(cat "$CASE/hub/game_1.db")" = "v2-game_1.db"
+check "  in sync afterwards"                             0 test "$(jget decision)" = INSYNC
+printf 'v3-game_1.db\n' > "$CASE/hub/game_1.db"            # the other Mac, same size again
+touch -r "$CASE/local/game_1.db" "$CASE/hub/game_1.db"
+check "pull fetches it"                                  0 "$STS" pull
+check "  this Mac has it"                                0 test "$(cat "$CASE/local/game_1.db")" = "v3-game_1.db"
+
+# Whatever a transfer did, both sides must match afterwards, or it did not
+# happen: an rsync that "succeeds" but leaves one file different.
+mkdir -p "$CASE/badrsync"
+cat > "$CASE/badrsync/rsync" <<'STUB'
+#!/bin/sh
+/usr/bin/rsync "$@" || exit $?
+for last; do :; done
+f="$(find "${last%/}" -name 'game_1.db' 2>/dev/null | head -1)"
+[ -n "$f" ] && printf 'corrupted\n' >> "$f"
+exit 0
+STUB
+chmod +x "$CASE/badrsync/rsync"
+printf 'v4-game_1.db\n' > "$CASE/local/game_1.db"
+PATH="$CASE/badrsync:$PATH" "$STS" push > "$CASE/bad.out" 2>&1; BADRC=$?
+check "a transfer that leaves the sides different: push fails (33)" 0 test "$BADRC" -eq 33
+check "  and says it did not really happen"              0 grep -q "did not really happen" "$CASE/bad.out"
+check "  nothing syncs on its own: DIVERGED_STATE"       0 test "$(jget decision)" = DIVERGED_STATE
+
+# --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
 newcase playemptied
 "$STS" push --force=local >/dev/null 2>&1

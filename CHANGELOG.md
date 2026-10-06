@@ -15,6 +15,13 @@ upgrade now rather than later.
 
 ### Fixed
 
+- A save rewritten at the same size within the same second as the copy on
+  the other side is now sent. rsync's quick check (size and whole-second
+  mtime) treated it as unchanged: a push reported "complete" while the hub
+  kept the old save, the other Mac carried on with the old save, and the
+  next sync here was refused as diverged. Transfers now compare by
+  content (`rsync -c`), and a transfer that leaves the two sides different
+  fails (33) instead of reporting success ([#158])
 - A hub snapshot that fails part way (incomplete, or interrupted) no
   longer looks like a good one. It used to stay under a normal name and
   count toward `SNAPSHOT_KEEP`, so later pushes pruned a good older
@@ -404,3 +411,4 @@ of those findings has a case in `tests/regression.sh`.
 [#132]: https://github.com/moudlajs/star-traders-sync/issues/132
 [#151]: https://github.com/moudlajs/star-traders-sync/issues/151
 [#156]: https://github.com/moudlajs/star-traders-sync/issues/156
+[#158]: https://github.com/moudlajs/star-traders-sync/issues/158
