@@ -8,6 +8,7 @@ package transfer
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -33,15 +34,24 @@ import (
 type Guard struct {
 	mu      sync.Mutex
 	inSwap  bool
+	closed  bool   // an interrupt is exiting: no swap may start any more
 	pending func() // an interrupt that arrived mid-swap, run once it ends
 	cleanup []string
 }
+
+// ErrClosed: an interrupt is already taking the process down, so the swap
+// was not started (its staging may already be gone).
+var ErrClosed = errors.New("interrupted before the swap")
 
 // Swapping runs fn as the swap: an interrupt meanwhile is held until it
 // returns. InSwap reports whether one is in flight (the remote swap, which
 // an interrupt can still cut, by killing ssh).
 func (g *Guard) Swapping(fn func() error) error {
 	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		return ErrClosed
+	}
 	g.inSwap = true
 	g.mu.Unlock()
 	err := fn()
@@ -64,6 +74,9 @@ func (g *Guard) Interrupt(onExit func()) {
 		g.mu.Unlock()
 		return
 	}
+	// From here no swap starts: onExit removes the staging a swap would
+	// move into place.
+	g.closed = true
 	g.mu.Unlock()
 	onExit()
 }
@@ -454,17 +467,26 @@ func (t *T) SwapIntoPlace(tmp, target string) *fail.Failure {
 	old := fmt.Sprintf("%s.sts-old-%d", target, t.Pid)
 	_ = os.RemoveAll(old)
 	var f *fail.Failure
-	_ = t.Guard.Swapping(func() error {
-		if os.Rename(target, old) != nil {
+	err := t.Guard.Swapping(func() error {
+		if rename(target, old) != nil {
 			f = fail.New(exitcode.Rsync, "swap", "could not move %s aside - nothing was changed", target)
 			return nil
 		}
-		if os.Rename(tmp, target) != nil {
-			_ = os.Rename(old, target)
-			f = fail.New(exitcode.Rsync, "swap", "could not move the staged copy into place - the original was restored")
+		if rename(tmp, target) != nil {
+			if rename(old, target) != nil {
+				// Say where the saves really are: telling the user they were
+				// restored would be the opposite of the truth.
+				f = fail.New(exitcode.Rsync, "swap",
+					"could not move the staged copy into place, nor put the original back - your saves are intact at %s. Move them back by hand: mv %s %s", old, old, target)
+			} else {
+				f = fail.New(exitcode.Rsync, "swap", "could not move the staged copy into place - the original was restored")
+			}
 		}
 		return nil
 	})
+	if errors.Is(err, ErrClosed) {
+		return fail.New(exitcode.Rsync, "swap", "interrupted before the swap - nothing was changed")
+	}
 	if f != nil {
 		return f
 	}
@@ -472,6 +494,9 @@ func (t *T) SwapIntoPlace(tmp, target string) *fail.Failure {
 	t.Log.Log("DEBUG", "swap", "%s -> %s", tmp, target)
 	return nil
 }
+
+// rename is os.Rename, a seam for the tests of the swap's failure paths.
+var rename = os.Rename
 
 // ---------------------------------------------------------------------------
 // The two directions
@@ -545,10 +570,12 @@ func (t *T) PushLocalToHub(src string) *fail.Failure {
 			return f
 		}
 		var swapErr error
-		_ = t.Guard.Swapping(func() error {
+		if errors.Is(t.Guard.Swapping(func() error {
 			_, swapErr = t.Hub.Exec.Run(swapHubScript, t.Hub.Path, tmp, strconv.Itoa(t.Pid))
 			return nil
-		})
+		}), ErrClosed) {
+			return fail.New(exitcode.Rsync, "swap", "interrupted before the swap - nothing was changed")
+		}
 		if swapErr != nil {
 			return fail.New(exitcode.HubPerms, "push",
 				"transfer succeeded but moving it into place on %s failed - the previous hub content was restored, or is at %s.sts-old-%d", t.HubHost, t.Hub.Path, t.Pid)
