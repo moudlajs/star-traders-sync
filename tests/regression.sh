@@ -653,6 +653,10 @@ check "  even though the timestamps say local newer"     0 test "$(jget verdict)
 check "  and pull really refuses it"                    61 "$STS" pull
 rm -f "$CASE/local"/*.db "$CASE/local"/*.json
 check "never synced, this machine empty: FIRST_SEED"     0 test "$(jget decision)" = FIRST_SEED
+HUB_BEFORE="$(cat "$CASE/hub/game_1.db")"
+check "  and push really refuses it"                    61 "$STS" push
+check "  even with --force=local"                       61 "$STS" push --force=local
+check "  and the hub kept its saves"                     0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
 
 # Emptied after a sync: pull and push refuse in their guards before
 # decide() runs, so status must not report decide()'s HUB_ONLY/LOCAL_ONLY.
