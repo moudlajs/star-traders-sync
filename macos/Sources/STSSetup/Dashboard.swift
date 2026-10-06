@@ -31,6 +31,18 @@ final class DashboardModel: ObservableObject {
 
     /// The health check opens inside the main window, not as a sheet.
     @Published var showingHealth = false
+    /// The Restore previous saves sheet (#90).
+    @Published var showingRestore = false
+    /// Set by a restore: the restored saves differ from the Hub (usually
+    /// LOCAL_ONLY), and automatic sync would send them straight over it.
+    /// The user restored on purpose and decides what happens next, so
+    /// nothing automatic runs until they do something themselves. Kept
+    /// across launches: a relaunch, or a launch at login, must not lift it.
+    @Published private(set) var autoHeldAfterRestore: Bool = UserDefaults.standard.bool(forKey: DashboardModel.holdKey) {
+        didSet { UserDefaults.standard.set(autoHeldAfterRestore, forKey: Self.holdKey) }
+    }
+    nonisolated static let holdKey = "autoHeldAfterRestore"
+    static let holdNotice = "Automatic sync is waiting for you: the restored saves go to the Hub when you Send or Play."
 
     /// Something worth knowing about a run that otherwise succeeded, such
     /// as the game crashing (the saves were still sent). Shown under the
@@ -57,6 +69,13 @@ final class DashboardModel: ObservableObject {
     // Seams for tests: the script calls and the clock. The app uses the
     // defaults; DashboardModelTests swap in fakes.
     var fetchStatus: (String) -> Result<SyncStatus, SyncProblem> = { StatusClient.fetch(script: $0) }
+    /// sts restore --json: this Mac's safety copies, newest first (#90).
+    var fetchSafetyCopies: (String) -> Result<[SafetyCopy], SyncProblem> = { script in
+        let r = Shell.run("/bin/bash", [script, "restore", "--json"])
+        guard r.ok else { return .failure(SyncProblem.from(code: r.status, stderr: r.stderr)) }
+        do { return .success(try SafetyCopy.list(from: Data(r.stdout.utf8))) }
+        catch { return .failure(SyncProblem.from(code: 1, stderr: "error: could not read the list of safety copies")) }
+    }
     var runScript: (String, [String], @escaping (String) -> Void) -> Int32 = { script, args, onLine in
         Shell.stream("/bin/bash", [script] + args, onLine: onLine)
     }
@@ -78,6 +97,7 @@ final class DashboardModel: ObservableObject {
 
     func start() {
         active = true
+        if autoHeldAfterRestore && notice == nil { notice = Self.holdNotice }
         refresh()
         // Coming back to the app is when the user wants to see, and have,
         // the latest; do not wait for the next minute tick.
@@ -195,7 +215,7 @@ final class DashboardModel: ObservableObject {
     func considerAutoSync(_ s: SyncStatus) {
         // !loading: a check in flight holds this Mac's lock, and a sync
         // started now would fail on it and be remembered as a failure.
-        guard active, !updating, autoSync, !loading, !busy, pending == nil, run == nil,
+        guard active, !updating, autoSync, !autoHeldAfterRestore, !loading, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
         if key == autoFailedKey, let at = autoFailedAt, now().timeIntervalSince(at) < Self.autoRetryAfter {
@@ -225,13 +245,19 @@ final class DashboardModel: ObservableObject {
         // sync, a confirmation answered late).
         guard active, !updating, !busy else { return }
         pending = nil
+        // A restore holds automatic sync from the moment it starts, not
+        // only once it succeeds: one that fails or is cut short may still
+        // have changed the saves here. Anything else the user starts
+        // themselves ends the hold.
+        if action == .restore { autoHeldAfterRestore = true }
+        else if !automatic { autoHeldAfterRestore = false }
         let r = ActionRun(action: action, automatic: automatic)
         run = r
         notice = nil
         justSynced = nil
         let script = self.script
 
-        guard let args = action.arguments(expecting: button.expected) else {
+        if action == .resetRecord {
             // resetRecord: the documented manual fix for a diverged state,
             // under the same local lock the script takes.
             do {
@@ -259,6 +285,10 @@ final class DashboardModel: ObservableObject {
             refresh()
             return
         }
+        guard let args = button.scriptArguments else {
+            r.finish(status: 2, output: "error: no safety copy was chosen")
+            return
+        }
 
         SetupLog.write("action: \(action.rawValue) (\(args.joined(separator: " ")))")
         let run = self.runScript
@@ -281,6 +311,7 @@ final class DashboardModel: ObservableObject {
                     self.autoFailedAt = status == 0 ? nil : self.now()
                 }
                 if status == 0 {
+                    if action == .restore { self.notice = Self.holdNotice }
                     if r.progress.gameCrashed {
                         self.notice = "The game crashed during your last session. Your saves were still sent to the Hub."
                     }
@@ -388,6 +419,8 @@ struct DashboardView: View {
                         withAnimation(.easeOut(duration: 0.2)) { d.showingHealth = true }
                         d.runDoctor()
                     }
+                    Button("Restore previous saves…") { d.showingRestore = true }
+                        .disabled(d.busy)
                     Button("Open logs") { d.openLogs() }
                     Divider()
                     Toggle("Show in menu bar", isOn: $showInMenuBar)
@@ -415,6 +448,7 @@ struct DashboardView: View {
         } message: { b in
             Text(b.confirmation?.message ?? "")
         }
+        .sheet(isPresented: $d.showingRestore) { RestoreSheet() }
         .alert("Disconnect this Mac?", isPresented: $confirmingDisconnect) {
             Button("Disconnect", role: .destructive) { app.disconnect() }
             Button("Cancel", role: .cancel) {}

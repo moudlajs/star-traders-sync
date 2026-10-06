@@ -25,6 +25,9 @@ upgrade now rather than later.
   every overwrite), and `sts restore NAME` puts one back. The saves it
   replaces become a new safety copy first, so a restore can be undone,
   and nothing is pruned. `--json` lists them for the app ([#90])
+- The app's gear menu has **Restore previous saves…**: this Mac's safety
+  copies with their date and campaigns. Restoring one runs `sts restore`,
+  so it is undoable the same way ([#90])
 - A menu bar icon showing how things stand (up to date, syncing, saves to
   sync, needs you). Its popover has Play, both sides, the automatic-sync
   and Open-at-login switches, Health check and Quit. With the icon on,

@@ -41,6 +41,7 @@ final class DashboardModelTests: XCTestCase {
 
     override func tearDown() async throws {
         d.stop()
+        UserDefaults.standard.removeObject(forKey: DashboardModel.holdKey)
         SetupLog.enabled = true
     }
 
@@ -115,6 +116,102 @@ final class DashboardModelTests: XCTestCase {
 
     /// The #95 review sequence: a press queued during a check, then setup
     /// opens (stop) before the check returns. Nothing may start.
+    /// #90: a restore runs exactly `sts restore NAME`, and a restore with
+    /// no copy chosen runs nothing - never the reset-record path.
+    func testARestoreRunsTheScriptWithTheChosenCopy() async throws {
+        fake([try Self.status("INSYNC")])
+        d.start()
+        await settle { !self.d.loading && self.d.status != nil }
+        let copy = try XCTUnwrap(SafetyCopy.list(from: Data(#"{"snapshots":[{"name":"2026-10-06T12:00:00Z","files":5,"campaign_saves":1,"newest":1790000000}]}"#.utf8)).first)
+        d.perform(SyncActions.restore(copy))
+        await settle { self.d.run?.ended == true || self.d.justSynced != nil }
+        XCTAssertEqual(calls.all.last, ["restore", "2026-10-06T12:00:00Z"])
+
+        let before = calls.all.count
+        var nameless = SyncActions.restore(copy)
+        nameless.restoreName = nil
+        await settle { !self.d.busy }
+        d.perform(nameless)
+        await settle { self.d.run?.ended == true }
+        XCTAssertEqual(calls.all.count, before, "no script call without a chosen copy")
+        XCTAssertEqual(d.run?.problem?.code, 2)
+    }
+
+    /// #143 review: after a restore the saves differ from the Hub
+    /// (LOCAL_ONLY), and automatic sync must not send them on its own.
+    /// It waits until the user does something themselves.
+    func testAutomaticSyncWaitsForTheUserAfterARestore() async throws {
+        fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")])
+        d.start()
+        await settle { !self.d.loading && self.d.status != nil }
+        let copy = try XCTUnwrap(SafetyCopy.list(from: Data(#"{"snapshots":[{"name":"2026-10-06T12:00:00Z","files":5,"campaign_saves":1,"newest":1790000000}]}"#.utf8)).first)
+        d.perform(SyncActions.restore(copy))
+        await settle { self.d.status?.decision == .localOnly && !self.d.loading && !self.d.busy }
+        d.refresh()
+        await settle(1) { false }
+        XCTAssertEqual(calls.all, [["restore", "2026-10-06T12:00:00Z"]], "no automatic push of the restored saves")
+        XCTAssertTrue(d.autoHeldAfterRestore)
+        XCTAssertNotNil(d.notice)
+
+        let send = try XCTUnwrap(SyncActions.plan(for: try Self.status("LOCAL_ONLY")).buttons.first { $0.action == .push })
+        d.perform(send)
+        await settle { self.calls.all.count == 2 }
+        XCTAssertEqual(calls.all.last?.first, "push", "the user's own Send runs")
+        XCTAssertFalse(d.autoHeldAfterRestore, "and ends the hold")
+    }
+
+    /// #143 review: a restore that fails still holds automatic sync; it
+    /// may have changed the saves before it stopped.
+    func testAFailedRestoreStillHoldsAutomaticSync() async throws {
+        fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")], exit: 63)
+        d.start()
+        await settle { !self.d.loading && self.d.status != nil }
+        let copy = try XCTUnwrap(SafetyCopy.list(from: Data(#"{"snapshots":[{"name":"2026-10-06T12:00:00Z","files":5,"campaign_saves":1,"newest":1790000000}]}"#.utf8)).first)
+        d.perform(SyncActions.restore(copy))
+        await settle { self.d.run?.ended == true && !self.d.loading }
+        d.refresh()
+        await settle(1) { false }
+        XCTAssertTrue(d.autoHeldAfterRestore)
+        XCTAssertEqual(calls.all, [["restore", "2026-10-06T12:00:00Z"]], "nothing automatic after the failure")
+    }
+
+    /// #143 review: the hold survives a relaunch (or a launch at login).
+    func testTheHoldAfterARestoreSurvivesARelaunch() async throws {
+        UserDefaults.standard.removeObject(forKey: DashboardModel.holdKey)
+        fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")])
+        d.start()
+        await settle { !self.d.loading && self.d.status != nil }
+        let copy = try XCTUnwrap(SafetyCopy.list(from: Data(#"{"snapshots":[{"name":"2026-10-06T12:00:00Z","files":5,"campaign_saves":1,"newest":1790000000}]}"#.utf8)).first)
+        d.perform(SyncActions.restore(copy))
+        await settle { self.d.autoHeldAfterRestore }
+        d.stop()
+
+        // A fresh app: same defaults, a LOCAL_ONLY status, auto sync on.
+        let fresh = DashboardModel()
+        fresh.autoSync = true
+        fresh.refreshScript = { _ in }
+        let after = Calls()
+        fresh.fetchStatus = { _ in .success(try! Self.status("LOCAL_ONLY")) }
+        fresh.runScript = { _, args, _ in after.add(args); return 0 }
+        fresh.start()
+        await settle(1) { false }
+        XCTAssertTrue(after.all.isEmpty, "no automatic push after the relaunch")
+        XCTAssertTrue(fresh.autoHeldAfterRestore)
+        XCTAssertNotNil(fresh.notice, "and it says why")
+        fresh.stop()
+    }
+
+    /// Restore is only ever started from the sheet: never planned, never
+    /// automatic, whatever the situation.
+    func testRestoreIsNeverOfferedOrAutomatic() throws {
+        for decision in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
+                         "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE", "LOCAL_EMPTIED"] {
+            let s = try Self.status(decision)
+            XCTAssertFalse(SyncActions.plan(for: s).buttons.contains { $0.action == .restore }, decision)
+            XCTAssertNotEqual(SyncActions.automatic(for: s)?.action, .restore, decision)
+        }
+    }
+
     func testStopDropsAQueuedPressAndBlocksEveryAction() async throws {
         fake([try Self.status("HUB_ONLY")])
         let play = try XCTUnwrap(SyncActions.plan(for: try Self.status("HUB_ONLY")).buttons.first { $0.action == .play })

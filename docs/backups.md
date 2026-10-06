@@ -81,7 +81,9 @@ the current time, so restoring twice never moves one into the other.
 
 Snapshots of this machine's saves are in
 `~/Library/star-traders-sync-snapshots/`, one directory per overwrite,
-named by UTC time. `sts restore` lists them and puts one back:
+named by UTC time. In the app, **Restore previous saves…** in the gear
+menu lists them and puts one back. From the command line, `sts restore`
+does the same:
 
 ```bash
 sts restore                          # list them, newest first
