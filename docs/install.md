@@ -14,6 +14,13 @@ the ssh key and the config, and finishes by running `sts doctor --fix`.
 After that it opens to a window showing whether this Mac is in sync with
 the hub. You never touch a save file.
 
+It also puts an icon in the menu bar, showing up to date, syncing, saves to
+sync, or needs you. From there you can Play, switch automatic sync, set it
+to open at login, or open the window. With the icon showing, closing the
+window keeps the app checking and syncing in the background. Turn the icon
+off in the window's gear menu (**Show in menu bar**); closing the window
+then quits the app.
+
 The app is not notarized yet (#61), so macOS blocks the first launch.
 Open it once, then go to **System Settings > Privacy & Security** and
 click **Open Anyway** next to "Star Traders Sync". After that it opens
