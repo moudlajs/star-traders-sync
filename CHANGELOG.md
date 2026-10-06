@@ -15,6 +15,9 @@ upgrade now rather than later.
 
 ### Fixed
 
+- The hub lock is also released when a run on a client Mac (not the Hub
+  host) is cut short by a closed pipe. 1.5.5 fixed this on the Hub host
+  only ([#129])
 - The app's updater retries a disk image that macOS reports as busy
   ("Resource temporarily unavailable") a few times before giving up. It
   used to fail the update at once with a misleading "could not be opened"

@@ -807,12 +807,16 @@ detect_self_is_hub() {
     fi
 }
 
-ssh_opts() {
-    # BatchMode, timeout and StrictHostKeyChecking are fixed on purpose.
-    # An unknown or changed host key must fail loudly, never auto-accept.
-    printf '%s' "-o BatchMode=yes -o ConnectTimeout=$CFG_SSH_CONNECT_TIMEOUT \
+# BatchMode, timeout and StrictHostKeyChecking are fixed on purpose. An
+# unknown or changed host key must fail loudly, never auto-accept.
+# ssh_opts_set fills SSH_OPTS without forking, for hub_exec_args; ssh_opts
+# prints the same string for everything else.
+SSH_OPTS=""
+ssh_opts_set() {
+    SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=$CFG_SSH_CONNECT_TIMEOUT \
 -o StrictHostKeyChecking=yes -p $CFG_SSH_PORT $CFG_SSH_EXTRA_OPTS"
 }
+ssh_opts() { ssh_opts_set; printf '%s' "$SSH_OPTS"; }
 
 ssh_target() { printf '%s@%s' "$CFG_HUB_USER" "$HUB_ENDPOINT"; }
 
@@ -854,21 +858,44 @@ hub_exec() {
 # Values now arrive as positional parameters, which survive both bash -c
 # and a remote shell without ever being parsed as syntax. The script itself
 # is a fixed literal; only the data varies.
+# shq_into VAR VALUE: VALUE single-quoted for a remote shell, into VAR. The
+# same result as $(shq VALUE), without the fork - see hub_exec_args.
+shq_into() {
+    local rest="$2" out=""
+    while :; do
+        case "$rest" in
+            *\'*) out="$out${rest%%\'*}'\\''"; rest="${rest#*\'}" ;;
+            *)    out="$out$rest"; break ;;
+        esac
+    done
+    printf -v "$1" "'%s'" "$out"
+}
+
+# Nothing here forks for its output: on_exit releases the hub lock through
+# this after a closed pipe, when bash 3.2 can flush stale output into any
+# $(...) (see exit_quietly). A polluted ssh target or argument would leave
+# the lock held (#129, client side).
 hub_exec_args() {
     local script="$1"; shift
     if [ "$IS_HUB" -eq 1 ]; then
         /bin/bash -c "$script" sts "$@"
     else
-        local quoted="" a
+        local quoted="" a q rc=0 had_f=0
         for a in "$@"; do
-            quoted="$quoted $(shq "$a")"
+            shq_into q "$a"
+            quoted="$quoted $q"
         done
+        ssh_opts_set
+        case "$-" in *f*) had_f=1 ;; esac
+        set -f
         # bash -s reads the script from stdin, so the script text never
         # passes through the remote shell's parser as a command line.
         # shellcheck disable=SC2086
-        ssh $(ssh_opts) "$(ssh_target)" "bash -s --$quoted" <<SCRIPT
+        ssh $SSH_OPTS "$CFG_HUB_USER@$HUB_ENDPOINT" "bash -s --$quoted" <<SCRIPT || rc=$?
 $script
 SCRIPT
+        [ "$had_f" -eq 1 ] || set +f
+        return $rc
     fi
 }
 
