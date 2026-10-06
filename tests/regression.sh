@@ -980,6 +980,8 @@ STUB
 case "$*" in *-F*) printf 'remotehub ssh-ed25519 AAAA\n' ;; esac
 exit 0
 STUB
+    # MagicDNS "resolves", as on a real client: no fallback note printed.
+    printf '#!/bin/sh\nexit 0\n' > "$CASE/clientstub/ping"
     cat > "$CASE/clientstub/ssh" <<'STUB'
 #!/bin/bash
 # Skip options, then the destination; the rest is the remote command.
@@ -1035,6 +1037,19 @@ check "  the hub is unchanged"                           0 test "$(cat "$CASE/hu
 check "  and still has the excluded file"                0 test "$(cat "$CASE/hub/data.db")" = hub-local
 check "  once it can be copied again, the push goes"       0 "$STS" push
 check "  and carries it"                                 0 test "$(cat "$CASE/hub/data.db")" = hub-local
+
+# A refusal read through a pipe that closes early, with SIGPIPE ignored the
+# way CI's runner starts us. The failed write leaves bash 3.2's stdout
+# buffer dirty, and the release used to build its ssh command from $(...)
+# calls that came back polluted, leaving the hub lock held (#129, client
+# side). Only stdout goes to the pipe, and its reader is gone before sts
+# starts, so the first failed write is the one made under the lock.
+LEFT=0
+for i in 1 2 3; do
+    bash -c 'trap "" PIPE; "$1" push 2>/dev/null | true' _ "$STS"
+    [ -d "$CASE/.sts-lock" ] && LEFT=$((LEFT + 1)) && rm -rf "$CASE/.sts-lock"
+done
+check "client refusal into a closed pipe: never leaves the lock" 0 test "$LEFT" -eq 0
 
 # The connection drops under the carry itself: no verdict, so no swap.
 touch "$CASE/clientstub/drop-carry"
