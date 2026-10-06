@@ -35,6 +35,31 @@ final class AppModel: ObservableObject {
     func finishSetup() {
         showingSetup = false
     }
+
+    /// Disconnect this Mac (#75): the ~/bin links and the config go (the
+    /// config as a dated backup), then setup shows, as on a new Mac.
+    /// Saves, safety copies and the Hub are never touched.
+    func disconnect() {
+        guard !dashboard.busy else { return }
+        dashboard.stop()
+        let layout = InstallLayout()
+        Task.detached {
+            do {
+                let report = try Installer.disconnect(layout: layout)
+                await MainActor.run {
+                    report.forEach { SetupLog.write("disconnect: \($0)") }
+                    self.showSetup()
+                }
+            } catch {
+                let message = (error as? InstallError)?.description ?? error.localizedDescription
+                await MainActor.run {
+                    SetupLog.write("disconnect failed: \(message)")
+                    self.dashboard.start()
+                    self.dashboard.notice = "Not disconnected: \(message)"
+                }
+            }
+        }
+    }
 }
 
 /// Guards quitting while an action runs. The script is a child of this

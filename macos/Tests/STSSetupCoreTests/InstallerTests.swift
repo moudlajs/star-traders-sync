@@ -34,6 +34,57 @@ final class InstallerTests: XCTestCase {
         try Installer.installScript(bundledScript: script, bundledExample: example, layout: layout)
     }
 
+    // MARK: - disconnect (#75)
+
+    /// The app's links go, the config becomes a dated backup with the same
+    /// contents, and nothing that holds saves is touched.
+    func testDisconnectUndoesSetupAndNothingElse() throws {
+        _ = try install()
+        try fm.createDirectory(at: layout.configDir, withIntermediateDirectories: true)
+        try "HUB_HOST=hub\n".write(to: layout.configFile, atomically: true, encoding: .utf8)
+        let saves = home.appendingPathComponent("Library/StarTradersFrontiers")
+        let snaps = home.appendingPathComponent("Library/star-traders-sync-snapshots/2026-10-06T12:00:00Z")
+        try fm.createDirectory(at: saves, withIntermediateDirectories: true)
+        try fm.createDirectory(at: snaps, withIntermediateDirectories: true)
+        try "save".write(to: saves.appendingPathComponent("game_1.db"), atomically: true, encoding: .utf8)
+        try "old".write(to: snaps.appendingPathComponent("game_1.db"), atomically: true, encoding: .utf8)
+
+        let at = Date(timeIntervalSince1970: 1_790_000_000)
+        let report = try Installer.disconnect(layout: layout, now: at, isRunning: { false })
+
+        for name in layout.linkNames {
+            XCTAssertNil(try? fm.destinationOfSymbolicLink(atPath: layout.binDir.appendingPathComponent(name).path), name)
+        }
+        XCTAssertFalse(fm.fileExists(atPath: layout.configFile.path))
+        let backups = try fm.contentsOfDirectory(atPath: layout.configDir.path).filter { $0.hasPrefix("config.disconnected-") }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(try String(contentsOf: layout.configDir.appendingPathComponent(backups[0]), encoding: .utf8), "HUB_HOST=hub\n")
+        XCTAssertEqual(try String(contentsOf: saves.appendingPathComponent("game_1.db"), encoding: .utf8), "save")
+        XCTAssertEqual(try String(contentsOf: snaps.appendingPathComponent("game_1.db"), encoding: .utf8), "old")
+        XCTAssertTrue(fm.isExecutableFile(atPath: layout.installedScript.path), "the app's own copy stays for a later setup")
+        XCTAssertTrue(report.contains { $0.contains("were not touched") })
+    }
+
+    func testDisconnectLeavesARepoLinkAndARealFileAlone() throws {
+        try fm.createDirectory(at: layout.binDir, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: layout.binDir.appendingPathComponent("sts"), withDestinationURL: script)
+        try "#!/bin/sh\n".write(to: layout.binDir.appendingPathComponent("star-traders-sync"), atomically: true, encoding: .utf8)
+        let report = try Installer.disconnect(layout: layout, isRunning: { false })
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: layout.binDir.appendingPathComponent("sts").path), script.path)
+        XCTAssertTrue(fm.fileExists(atPath: layout.binDir.appendingPathComponent("star-traders-sync").path))
+        XCTAssertTrue(report.contains { $0.contains("your own copy") })
+        XCTAssertTrue(report.contains { $0.contains("real file") })
+    }
+
+    func testDisconnectRefusesWhileTheScriptRuns() throws {
+        _ = try install()
+        try fm.createDirectory(at: layout.configDir, withIntermediateDirectories: true)
+        try "HUB_HOST=hub\n".write(to: layout.configFile, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try Installer.disconnect(layout: layout, isRunning: { true }))
+        XCTAssertTrue(fm.fileExists(atPath: layout.configFile.path), "nothing changed")
+        XCTAssertNotNil(try? fm.destinationOfSymbolicLink(atPath: layout.binDir.appendingPathComponent("sts").path))
+    }
+
     func testFreshInstallCopiesAndLinks() throws {
         _ = try install()
         XCTAssertTrue(fm.isExecutableFile(atPath: layout.installedScript.path))
