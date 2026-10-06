@@ -331,6 +331,7 @@ struct DashboardView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var updates: UpdateModel
     @EnvironmentObject var d: DashboardModel
+    @AppStorage(MenuBarPreference.key) private var showInMenuBar = true
 
     var body: some View {
         // A fixed-size window. The centre holds the status, or while an
@@ -388,6 +389,7 @@ struct DashboardView: View {
                     }
                     Button("Open logs") { d.openLogs() }
                     Divider()
+                    Toggle("Show in menu bar", isOn: $showInMenuBar)
                     Button("Run setup again…") { app.showSetup() }
                         .disabled(d.busy)
                 } label: {
@@ -397,8 +399,10 @@ struct DashboardView: View {
                 .help("Settings")
             }
         }
+        // Started here, and not stopped when the window closes: with the
+        // menu bar icon the app keeps checking and syncing without it
+        // (#91). Setup stops it (AppModel.showSetup).
         .onAppear { d.start() }
-        .onDisappear { d.stop() }
         .alert(d.pending?.confirmation?.title ?? "",
                isPresented: Binding(get: { d.pending != nil }, set: { if !$0 { d.pending = nil } }),
                presenting: d.pending) { b in
