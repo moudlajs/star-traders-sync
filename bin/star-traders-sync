@@ -89,6 +89,7 @@ TS_BIN=""
 
 LOCAL_LOCK_FILE=""
 HELD_HUB_LOCK=0
+HUB_LOCK_DIR=""      # saved on acquire, so the release needs no $(...); see exit_quietly
 HUB_LOCK_NONCE=""
 HUB_LOCK_TRIES=0     # bounds the clear-then-retry path in acquire_hub_lock
 IN_SWAP=0            # 1 while a directory swap is half-done - see on_exit
@@ -217,10 +218,16 @@ on_exit() {
         log WARN backup "removing incomplete backup $BACKUP_PENDING"
         rm -rf "$BACKUP_PENDING" 2>/dev/null || true
     fi
-    local p
-    printf '%s\n' "$CLEANUP_PATHS" | while IFS= read -r p; do
+    # A for loop over the variable, not printf piped into while: after a
+    # closed pipe that printf can emit stale output too (see exit_quietly),
+    # and every line it emits here is handed to rm -rf.
+    local p IFS='
+'
+    set -f
+    for p in $CLEANUP_PATHS; do
         [ -n "$p" ] && rm -rf "$p" 2>/dev/null || true
     done
+    set +f
     [ -n "$LOCAL_LOCK_FILE" ] && rm -f "$LOCAL_LOCK_FILE" 2>/dev/null || true
     log DEBUG trap "exit status $code"
     return $code
@@ -238,12 +245,14 @@ trap 'exit 143' TERM
 # on_exit with the vanished output pointed at /dev/null first, so the
 # cleanup's own messages cannot fail under set -e and cut it short.
 #
-# The echo after the exec matters. bash 3.2 keeps the text of the write
-# that hit the closed pipe in its stdout buffer, and every $(...) forked
-# afterwards inherits that buffer and flushes it into its own output - so
-# on_exit's "$(hub_lock_path)" came back as that text plus the path, and
-# the lock was never removed. A real write flushes it into /dev/null; an
-# empty printf '' writes nothing and does not.
+# bash 3.2 keeps the text of the write that hit the closed pipe in its
+# stdout buffer, and every $(...) or pipe forked afterwards inherits that
+# buffer and flushes it into its own output - so on_exit's
+# "$(hub_lock_path)" came back as that text plus the path, and the lock was
+# never removed. The echo flushes it into /dev/null on the bash this was
+# found on, but not on every build, so on_exit's cleanup must not depend on
+# it: the lock path is saved at acquire time and nothing there forks for
+# its output.
 exit_quietly() {
     exec >/dev/null 2>&1
     echo
@@ -1254,6 +1263,7 @@ acquire_hub_lock() {
     case "$out" in
         *STS_LOCK_ACQUIRED*)
             HELD_HUB_LOCK=1
+            HUB_LOCK_DIR="$lock"
             HUB_LOCK_TRIES=0
             log DEBUG lock "hub lock acquired at $lock"
             return 0 ;;
@@ -1367,9 +1377,9 @@ acquire_hub_lock() {
 release_hub_lock() {
     [ "$HELD_HUB_LOCK" -eq 1 ] || return 0
     HELD_HUB_LOCK=0
-    local lock info
-    lock="$(hub_lock_path)"
-    info="$lock/owner"
+    # The path saved at acquire time, not "$(hub_lock_path)": on the way out
+    # after a closed pipe a $(...) can come back polluted (see exit_quietly).
+    local lock="$HUB_LOCK_DIR"
     # Only remove it if it is still OURS. Deleting someone else's lock is
     # worse than leaking our own.
     hub_exec_args '
