@@ -70,7 +70,13 @@ struct RestoreSheet: View {
             Button(b.confirmation?.button ?? "Restore") {
                 confirming = nil
                 dismiss()
-                d.perform(b)
+                // A sync that started meanwhile would make perform drop it
+                // without a word.
+                if d.busy {
+                    d.notice = "Restore not started: a sync was running. Try again when it is done."
+                } else {
+                    d.perform(b)
+                }
             }
             Button("Cancel", role: .cancel) { confirming = nil }
         } message: { b in

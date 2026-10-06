@@ -36,8 +36,13 @@ final class DashboardModel: ObservableObject {
     /// Set by a restore: the restored saves differ from the Hub (usually
     /// LOCAL_ONLY), and automatic sync would send them straight over it.
     /// The user restored on purpose and decides what happens next, so
-    /// nothing automatic runs until they do something themselves.
-    @Published private(set) var autoHeldAfterRestore = false
+    /// nothing automatic runs until they do something themselves. Kept
+    /// across launches: a relaunch, or a launch at login, must not lift it.
+    @Published private(set) var autoHeldAfterRestore: Bool = UserDefaults.standard.bool(forKey: DashboardModel.holdKey) {
+        didSet { UserDefaults.standard.set(autoHeldAfterRestore, forKey: Self.holdKey) }
+    }
+    nonisolated static let holdKey = "autoHeldAfterRestore"
+    static let holdNotice = "Automatic sync is waiting for you: the restored saves go to the Hub when you Send or Play."
 
     /// Something worth knowing about a run that otherwise succeeded, such
     /// as the game crashing (the saves were still sent). Shown under the
@@ -92,6 +97,7 @@ final class DashboardModel: ObservableObject {
 
     func start() {
         active = true
+        if autoHeldAfterRestore && notice == nil { notice = Self.holdNotice }
         refresh()
         // Coming back to the app is when the user wants to see, and have,
         // the latest; do not wait for the next minute tick.
@@ -303,7 +309,7 @@ final class DashboardModel: ObservableObject {
                 if status == 0 {
                     if action == .restore {
                         self.autoHeldAfterRestore = true
-                        self.notice = "Automatic sync is waiting for you: the restored saves go to the Hub when you Send or Play."
+                        self.notice = Self.holdNotice
                     }
                     if r.progress.gameCrashed {
                         self.notice = "The game crashed during your last session. Your saves were still sent to the Hub."
