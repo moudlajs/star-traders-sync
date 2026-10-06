@@ -1260,11 +1260,10 @@ clear_stale_hub_lock() {
             [ $(( $(date -u +%s) - t )) -ge "$2" ]
         }
         if ! mkdir "$m" 2>/dev/null; then
-            # Held for milliseconds by a live clearer; a minute means its
-            # run died inside the clear. Remove that one, and let the next
-            # run do the clearing.
-            older_than "$m" 60 && rmdir "$m" 2>/dev/null
-            echo STS_CLEAR_BUSY
+            # Held for milliseconds by a live clearer. One a minute old was
+            # left by a run that died inside the clear; removing it here
+            # would be check-then-act again, so it is reported instead.
+            if older_than "$m" 60; then echo STS_CLEAR_DEAD; else echo STS_CLEAR_BUSY; fi
             exit 0
         fi
         trap "rmdir \"$m\" 2>/dev/null" EXIT
@@ -1293,7 +1292,11 @@ clear_stale_hub_lock() {
         *STS_CLEAR_BUSY*)
             log ERROR lock "another run is clearing the hub lock at $lock"
             die $EX_LOCK_REMOTE lock \
-                "another run is clearing a $what hub lock at this moment. Nothing was synced. Run again" ;;
+                "another run is clearing the $what hub lock at this moment. Nothing was synced. Run again" ;;
+        *STS_CLEAR_DEAD*)
+            log ERROR lock "a run died while clearing the hub lock at $lock: $lock.clearing is left"
+            die $EX_LOCK_REMOTE lock \
+                "a run died while clearing the $what hub lock, and left $lock.clearing behind. Nothing was synced. Make sure no sts is running on either Mac, then on $CFG_HUB_HOST: rmdir $lock.clearing" ;;
         *)
             die $EX_LOCK_CREATE lock "unexpected answer while clearing the hub lock at $lock: $out" ;;
     esac
@@ -1417,6 +1420,13 @@ acquire_hub_lock() {
     if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
         log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
         warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
+        # Without a nonce the clear cannot tell this lock from a fresh one
+        # whose owner file is not written yet, so it is never automatic.
+        if [ -z "$owner_nonce" ]; then
+            log ERROR lock "stale hub lock at $lock has no nonce; not clearing it automatically"
+            die $EX_LOCK_REMOTE lock \
+                "the hub lock from $owner_iso is stale but its owner record is incomplete, so it is not cleared automatically. Make sure no sts is running on either Mac, then on $CFG_HUB_HOST: rm -rf $lock"
+        fi
         clear_stale_hub_lock "$lock" "$owner_nonce" stale
         acquire_hub_lock
         return 0

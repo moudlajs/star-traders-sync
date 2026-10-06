@@ -859,12 +859,23 @@ stale_owned; mkdir "$L.clearing"
 check "another run is clearing: refused"                50 "$STS" pull
 check "  and says so"                                    0 sh -c '"$1" pull 2>&1 | grep -q "another run is clearing"' _ "$STS"
 check "  the stale lock is left for that run"            0 test "$(sed -n 5p "$L/owner")" = old-run
-# ... unless that clearer died: a mutex a minute old is removed, and the
-# run after that clears.
+# A clearer that died inside the clear left its mutex. Removing it
+# automatically would be check-then-act again, so it is reported.
 touch -t 202001010000 "$L.clearing"
-check "dead clearer's mutex: this run still refuses"    50 "$STS" pull
-check "  but removed the mutex"                          1 test -d "$L.clearing"
-check "  and the next run clears the stale lock"         0 "$STS" pull
+check "dead clearer's mutex: refused"                   50 "$STS" pull
+check "  and says how to remove it"                      0 sh -c '"$1" pull 2>&1 | grep -q "rmdir .*\.sts-lock\.clearing"' _ "$STS"
+check "  the mutex is left alone"                        0 test -d "$L.clearing"
+rmdir "$L.clearing"
+check "  once removed, the next run clears the stale lock" 0 "$STS" pull
+rm -rf "$L"
+
+# A stale lock whose owner record has no nonce cannot be told apart from a
+# fresh lock whose owner file is not written yet. Never cleared by itself.
+mkdir -p "$L"
+printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\n' "$(hostname -s)" > "$L/owner"
+check "stale lock with no nonce: refused"               50 "$STS" pull
+check "  and says how to remove it"                      0 sh -c '"$1" pull 2>&1 | grep -q "rm -rf .*\.sts-lock"' _ "$STS"
+check "  and not cleared"                                0 test -f "$L/owner"
 rm -rf "$L"
 
 # An mtime that cannot be read is never "old": a stat that fails must not
@@ -876,8 +887,7 @@ check "unreadable mtime: ownerless lock not cleared"    50 env PATH="$CASE/nosta
 check "  and still there"                                0 test -d "$L"
 rm -rf "$L"
 stale_owned; mkdir "$L.clearing"; touch -t 202001010000 "$L.clearing"
-check "unreadable mtime: the mutex is not removed"      50 env PATH="$CASE/nostat:$PATH" "$STS" pull
-check "  and still there"                                0 test -d "$L.clearing"
+check "unreadable mtime: the mutex counts as live"       0 sh -c 'PATH="$2:$PATH" "$1" pull 2>&1 | grep -q "another run is clearing"' _ "$STS" "$CASE/nostat"
 rmdir "$L.clearing"; rm -rf "$L"
 
 # And the plain stale clears still work.
