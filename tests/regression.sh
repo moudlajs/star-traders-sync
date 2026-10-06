@@ -666,7 +666,8 @@ check "  and plain push really refuses it"              62 "$STS" push
 rm -f "$CASE/local"/*.db "$CASE/local"/*.json
 check "local emptied after a sync: LOCAL_EMPTIED"        0 test "$(jget decision)" = LOCAL_EMPTIED
 check "  and push really refuses it"                    61 "$STS" push
-check "  and plain pull really refuses it"              60 "$STS" pull
+check "  and plain pull really refuses it"              61 "$STS" pull
+check "  saying the saves are gone, not 'only this machine changed'" 0 sh -c '"$1" pull 2>&1 | grep -q "saves are gone"' _ "$STS"
 check "  text says how to restore"                       0 sh -c '"$1" status 2>/dev/null | grep -q "restore them with"' _ "$STS"
 check "  and pull --force=hub really restores"           0 "$STS" pull --force=hub
 check "  after which: INSYNC"                            0 test "$(jget decision)" = INSYNC
@@ -785,6 +786,25 @@ rm -f "$CASE/stub/up-ran"
 check "  and still says it is bringing tailscale up"     0 sh -c '"$1" pull 2>&1 | grep -q "bringing it up"' _ "$STS"
 PATH="$PATH_UP_SAVED"
 unset STS_TS_APP_PATH
+
+# --------------------------------------------------------------------------
+section "play never runs on an emptied save folder (#126)"
+newcase playemptied
+"$STS" push --force=local >/dev/null 2>&1
+printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"
+mkdir -p "$CASE/nosteam"
+# A stub 'open' that records it was asked to launch the game.
+printf '#!/bin/sh\ntouch "%s/launched"\nexit 0\n' "$CASE" > "$CASE/nosteam/open"
+chmod +x "$CASE/nosteam/open"
+HUB_BEFORE="$(cat "$CASE/hub/game_1.db")"
+rm -f "$CASE/local"/*.db "$CASE/local"/*.json
+check "emptied after a sync: decision is LOCAL_EMPTIED"  0 test "$(jget decision)" = LOCAL_EMPTIED
+check "play refuses (61), not 'ahead of the hub'"       61 env PATH="$CASE/nosteam:$PATH" "$STS" play
+check "  and never launched the game"                    1 test -f "$CASE/launched"
+check "  and left the Hub alone"                         0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
+check "  and says how to restore"                        0 sh -c 'PATH="$2:$PATH" "$1" play 2>&1 | grep -q "pull --force=hub"' _ "$STS" "$CASE/nosteam"
+check "pull --force=hub restores"                        0 "$STS" pull --force=hub
+check "  after which: INSYNC"                            0 test "$(jget decision)" = INSYNC
 
 # --------------------------------------------------------------------------
 section "play when only this machine changed (#99)"
