@@ -1153,6 +1153,29 @@ else
 fi
 
 # --------------------------------------------------------------------------
+section "checks do not depend on the locale"
+# A bracket range in a case pattern follows the locale's collation: under
+# en_US.UTF-8, the locale of an ordinary Terminal, [A-Z] matched lower case
+# and [A-Za-z] matched e-acute. Found by the Go parity check on CI.
+newcase locale
+U=en_US.UTF-8
+check "UTF-8: --expect-decision in lower case is refused"  2 env LC_ALL=$U "$STS" pull --expect-decision=hub_only
+check "C: the same"                                        2 env LC_ALL=C "$STS" pull --expect-decision=hub_only
+# printf builds the byte pair, so the test does not rest on sed's \x.
+P="$CASE/sav$(printf '\303\251')s"
+check "  (the test really writes the e-acute bytes)"        0 test "$(printf '%s' "$P" | od -An -tx1 | tr -d ' \n' | grep -c c3a9)" -eq 1
+sed -i '' "s|^LOCAL_SAVE_PATH=.*|LOCAL_SAVE_PATH=$P|" "$CASE/cfg/star-traders-sync/config"
+check "UTF-8: a non-ASCII letter in a path is refused (11)" 11 env LC_ALL=$U "$STS" status
+check "C: the same"                                        11 env LC_ALL=C "$STS" status
+# Positive control: the same config with a plain ASCII path gets past
+# validation, so it is the e-acute that triggers 11.
+sed -i '' "s|^LOCAL_SAVE_PATH=.*|LOCAL_SAVE_PATH=$CASE/saves|" "$CASE/cfg/star-traders-sync/config"
+check "UTF-8: the ASCII path passes validation (13, missing)" 13 env LC_ALL=$U "$STS" status
+sed -i '' "s|^LOCAL_SAVE_PATH=.*|LOCAL_SAVE_PATH=$CASE/local|; s|^SSH_PORT=.*||" "$CASE/cfg/star-traders-sync/config"
+printf 'SSH_PORT=\xc2\xb2\n' >> "$CASE/cfg/star-traders-sync/config"
+check "UTF-8: a superscript digit is not a number (11)"    11 env LC_ALL=$U "$STS" status
+
+# --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"
 newcase playemptied
 "$STS" push --force=local >/dev/null 2>&1

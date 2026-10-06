@@ -14,6 +14,15 @@ set -Eeuo pipefail
 readonly STS_VERSION="1.6.0"
 readonly PROG="star-traders-sync"
 
+# Character classes spelled out, never as ranges. A bracket range in a case
+# pattern ([A-Z], [0-9]) follows the locale's collation: under the
+# en_US.UTF-8 of an ordinary Terminal, [A-Z] also matched lower case and
+# [A-Za-z] matched letters such as e-acute, so a check accepted what it was
+# written to refuse. These expand to the same set in every locale.
+readonly CH_DIGITS="0123456789"
+readonly CH_UPPER="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+readonly CH_LOWER="abcdefghijklmnopqrstuvwxyz"
+
 # --------------------------------------------------------------------------
 # Exit codes. Every one of these is documented in --help and in the
 # docs/troubleshooting.md table. Nothing exits non-zero without one of these.
@@ -389,7 +398,7 @@ validate_config() {
              BACKUP_MOUNT_WAIT LOG_MAX_BYTES LOG_KEEP; do
         eval "v=\${CFG_$k}"
         case "$v" in
-            ''|*[!0-9]*) die $EX_CONFIG_MALFORMED config \
+            ''|*[!${CH_DIGITS}]*) die $EX_CONFIG_MALFORMED config \
                 "$k must be a non-negative integer, got '$v'" ;;
         esac
     done
@@ -415,7 +424,7 @@ validate_config() {
     for k in HUB_PATH LOCAL_SAVE_PATH BACKUP_VOLUME BACKUP_DEST; do
         eval "v=\${CFG_$k}"
         case "$v" in
-            *[!A-Za-z0-9._/@+-]*)
+            *[!${CH_UPPER}${CH_LOWER}${CH_DIGITS}._/@+-]*)
                 die $EX_CONFIG_MALFORMED config \
                     "$k contains a character that cannot survive being passed to a remote shell: '$v'. Allowed: letters, digits, and . _ / @ + - (no spaces, quotes or shell metacharacters)." ;;
         esac
@@ -423,7 +432,7 @@ validate_config() {
 
     for name in $CFG_SYNC_EXCLUDE; do
         case "$name" in
-            *[!A-Za-z0-9._*@+-]*)
+            *[!${CH_UPPER}${CH_LOWER}${CH_DIGITS}._*@+-]*)
                 die $EX_CONFIG_MALFORMED config \
                     "SYNC_EXCLUDE entry '$name' contains an unsafe character" ;;
         esac
@@ -1243,7 +1252,7 @@ acquire_local_lock() {
     if ! mkdir "$lockdir" 2>/dev/null; then
         holder="$(cat "$LOCAL_LOCK_FILE" 2>/dev/null || echo '')"
         case "$holder" in
-            ''|*[!0-9]*) holder="" ;;
+            ''|*[!${CH_DIGITS}]*) holder="" ;;
         esac
         if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
             LOCAL_LOCK_FILE=""   # not ours, the EXIT trap must not remove it
@@ -1288,7 +1297,8 @@ clear_stale_hub_lock() {
         # mutex or a young lock.
         older_than() {
             t=$(stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null)
-            case "$t" in ""|*[!0-9]*) return 1 ;; esac
+            # Spelled out: this runs on the hub, where CH_DIGITS is not set.
+            case "$t" in ""|*[!0123456789]*) return 1 ;; esac
             [ $(( $(date -u +%s) - t )) -ge "$2" ]
         }
         if ! mkdir "$m" 2>/dev/null; then
@@ -1398,7 +1408,7 @@ acquire_hub_lock() {
             local lock_mtime lock_age
             lock_mtime="$(printf '%s' "$out" | sed -n '3p')"
             # Unreadable means unknown, and unknown is never old enough to clear.
-            case "$lock_mtime" in ''|*[!0-9]*|0) lock_mtime="$now" ;; esac
+            case "$lock_mtime" in ''|*[!${CH_DIGITS}]*|0) lock_mtime="$now" ;; esac
             lock_age=$((now - lock_mtime))
             [ "$lock_age" -lt 0 ] && lock_age=0
             if [ "$lock_age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
@@ -1424,7 +1434,7 @@ acquire_hub_lock() {
     owner_epoch="$(printf '%s' "$out" | sed -n '6p')"
     owner_nonce="$(printf '%s' "$out" | sed -n '7p')"
     owner_id="$(printf    '%s' "$out" | sed -n '8p')"
-    case "$owner_epoch" in ''|*[!0-9]*) owner_epoch=0 ;; esac
+    case "$owner_epoch" in ''|*[!${CH_DIGITS}]*) owner_epoch=0 ;; esac
 
     age=$((now - owner_epoch))
     [ "$age" -lt 0 ] && age=0
@@ -1976,7 +1986,7 @@ check_clock_skew() {
     [ "$IS_HUB" -eq 1 ] && return 0
     local hub_epoch now diff
     hub_epoch="$(hub_clock_epoch 2>/dev/null || echo 0)"
-    case "$hub_epoch" in ''|*[!0-9]*) return 0 ;; esac
+    case "$hub_epoch" in ''|*[!${CH_DIGITS}]*) return 0 ;; esac
     now="$(date -u +%s)"
     diff=$((hub_epoch - now))
     [ "$diff" -lt 0 ] && diff=$((-diff))
@@ -2279,7 +2289,7 @@ doc_state_dirs() {
     local lockdir="$STATE_DIR/local.lock.d" holder
     if [ -d "$lockdir" ]; then
         holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
-        case "$holder" in ''|*[!0-9]*) holder="" ;; esac
+        case "$holder" in ''|*[!${CH_DIGITS}]*) holder="" ;; esac
         if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
             doc_note "another sts is running right now (pid $holder)"
         else
@@ -3301,7 +3311,7 @@ list_complete_backups() {
     ls -1 "$CFG_BACKUP_DEST" 2>/dev/null | LC_ALL=C sort | while IFS= read -r cand
     do
         case "$cand" in
-            20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) ;;
+            20[${CH_DIGITS}][${CH_DIGITS}]-[${CH_DIGITS}][${CH_DIGITS}]-[${CH_DIGITS}][${CH_DIGITS}]T*) ;;
             *) continue ;;
         esac
         if [ -f "$CFG_BACKUP_DEST/$cand/.sts-complete" ]; then
@@ -3703,7 +3713,7 @@ parse_args() {
             --expect-decision=*)
                 OPT_EXPECT="${1#--expect-decision=}"
                 case "$OPT_EXPECT" in
-                    ''|*[!A-Z_]*)
+                    ''|*[!${CH_UPPER}_]*)
                         printf 'error: --expect-decision takes a decision name such as HUB_ONLY, got "%s"\n' "$OPT_EXPECT" >&2
                         exit $EX_USAGE ;;
                 esac ;;

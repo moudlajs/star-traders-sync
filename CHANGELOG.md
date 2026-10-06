@@ -18,6 +18,11 @@ upgrade now rather than later.
 - `--help` lists exit code 65 (`restore`: no such safety copy), which 1.6.0
   added without documenting it there. CI now checks every code is in
   `--help` as well as in the troubleshooting table
+- Checks that limit which characters are allowed (config paths,
+  `SYNC_EXCLUDE`, numbers, `--expect-decision`) now mean the same in every
+  locale. Under the UTF-8 locale of an ordinary Terminal, `[A-Z]` also
+  matched lower case and `[A-Za-z]` matched accented letters, so for
+  example a path containing "é" was accepted
 
 ## [1.6.0] - 2026-10-06
 
