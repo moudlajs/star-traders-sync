@@ -15,6 +15,10 @@ upgrade now rather than later.
 
 ### Fixed
 
+- The app's updater retries a disk image that macOS reports as busy
+  ("Resource temporarily unavailable") a few times before giving up. It
+  used to fail the update at once with a misleading "could not be opened"
+  ([#124])
 - Two runs clearing the same stale hub lock at the same moment can no
   longer delete the fresh lock one of them just took. Only one run clears
   at a time, and it checks again that the lock is still the stale one
@@ -326,6 +330,7 @@ of those findings has a case in `tests/regression.sh`.
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
+[#124]: https://github.com/moudlajs/star-traders-sync/issues/124
 [#128]: https://github.com/moudlajs/star-traders-sync/issues/128
 [#129]: https://github.com/moudlajs/star-traders-sync/issues/129
 [#132]: https://github.com/moudlajs/star-traders-sync/issues/132
