@@ -1236,6 +1236,75 @@ acquire_local_lock() {
 
 hub_lock_path() { printf '%s/%s' "$(dirname "$CFG_HUB_PATH")" "$LOCK_DIRNAME"; }
 
+# Clear a stale hub lock without removing a lock that is not the one we
+# judged stale. Reading the owner and removing the lock used to be separate
+# steps, so two runs could judge the same lock stale; one cleared it and
+# took a fresh lock, and the other's rm then deleted that fresh lock (#132).
+#
+# Clearers now take a short mutex beside the lock, so only one clears at a
+# time, and re-judge the lock inside it: still the owner nonce that was
+# read, or - for $2 = "-" - still without an owner file AND still older
+# than the TTL (a just-created lock has no owner file for a moment either).
+# Nothing is moved aside, so there is no window in which the lock is
+# missing and a third run could take it. The mutex serialises clearers only:
+# a lock released by its owner and retaken between the re-judgment and the
+# rm, a few syscalls apart, would still be removed - but that needs an owner
+# alive past the TTL, which the TTL already assumes away.
+clear_stale_hub_lock() {
+    local lock="$1" want="$2" what="$3" out
+    out="$(hub_exec_args '
+        lock="$1"; want="$2"; ttl="$3"; m="$1.clearing"
+        # older_than PATH SECONDS: true only for an mtime actually read. An
+        # unreadable one must never count as old: that would clear a live
+        # mutex or a young lock.
+        older_than() {
+            t=$(stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null)
+            case "$t" in ""|*[!0-9]*) return 1 ;; esac
+            [ $(( $(date -u +%s) - t )) -ge "$2" ]
+        }
+        if ! mkdir "$m" 2>/dev/null; then
+            # Held for milliseconds by a live clearer. One a minute old was
+            # left by a run that died inside the clear; removing it here
+            # would be check-then-act again, so it is reported instead.
+            if older_than "$m" 60; then echo STS_CLEAR_DEAD; else echo STS_CLEAR_BUSY; fi
+            exit 0
+        fi
+        trap "rmdir \"$m\" 2>/dev/null" EXIT
+        [ -d "$lock" ] || { echo STS_CLEAR_GONE; exit 0; }
+        if [ "$want" = "-" ]; then
+            same=0
+            if [ ! -e "$lock/owner" ] && older_than "$lock" "$ttl"; then same=1; fi
+        else
+            [ "$(sed -n 5p "$lock/owner" 2>/dev/null)" = "$want" ] && same=1 || same=0
+        fi
+        if [ "$same" = 1 ]; then
+            rm -rf "$lock"
+            echo STS_CLEAR_OK
+        else
+            echo STS_CLEAR_CHANGED
+        fi
+    ' "$lock" "$want" "$CFG_LOCK_TTL_SECONDS" 2>&1)" || die $EX_LOCK_CREATE lock \
+        "failed to clear the $what hub lock at $lock ($out)"
+    case "$out" in
+        *STS_CLEAR_OK*)
+            log WARN lock "cleared the $what hub lock at $lock" ;;
+        *STS_CLEAR_GONE*)
+            log INFO lock "the $what hub lock at $lock was already cleared by another run" ;;
+        *STS_CLEAR_CHANGED*)
+            log WARN lock "the hub lock at $lock changed hands before it could be cleared; left alone" ;;
+        *STS_CLEAR_BUSY*)
+            log ERROR lock "another run is clearing the hub lock at $lock"
+            die $EX_LOCK_REMOTE lock \
+                "another run is clearing the $what hub lock at this moment. Nothing was synced. Run again" ;;
+        *STS_CLEAR_DEAD*)
+            log ERROR lock "a run died while clearing the hub lock at $lock: $lock.clearing is left"
+            die $EX_LOCK_REMOTE lock \
+                "a run died while clearing the $what hub lock, and left $lock.clearing behind. Nothing was synced. Make sure no sts is running on either Mac, then on $CFG_HUB_HOST: rmdir $lock.clearing" ;;
+        *)
+            die $EX_LOCK_CREATE lock "unexpected answer while clearing the hub lock at $lock: $out" ;;
+    esac
+}
+
 # mkdir is atomic on both HFS+ and APFS, and over ssh it stays atomic because
 # it is a single syscall on the far side.
 acquire_hub_lock() {
@@ -1299,14 +1368,14 @@ acquire_hub_lock() {
         *STS_NO_OWNER*)
             local lock_mtime lock_age
             lock_mtime="$(printf '%s' "$out" | sed -n '3p')"
-            case "$lock_mtime" in ''|*[!0-9]*) lock_mtime=0 ;; esac
+            # Unreadable means unknown, and unknown is never old enough to clear.
+            case "$lock_mtime" in ''|*[!0-9]*|0) lock_mtime="$now" ;; esac
             lock_age=$((now - lock_mtime))
             [ "$lock_age" -lt 0 ] && lock_age=0
             if [ "$lock_age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
                 log WARN lock "CLEARING ownerless hub lock at $lock, age ${lock_age}s"
                 warn "clearing an ownerless hub lock (a run died while taking it), ${lock_age}s old"
-                hub_exec_args 'rm -rf "$1"' "$lock" || die $EX_LOCK_CREATE lock \
-                    "failed to clear the ownerless hub lock at $lock"
+                clear_stale_hub_lock "$lock" - ownerless
                 acquire_hub_lock
                 return 0
             fi
@@ -1354,12 +1423,14 @@ acquire_hub_lock() {
     if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
         log WARN lock "CLEARING our own stale hub lock from $owner_iso, age ${age}s >= TTL ${CFG_LOCK_TTL_SECONDS}s (pid $owner_pid)"
         warn "clearing a stale hub lock left by this machine on $owner_iso (${age}s old, pid $owner_pid)"
-        # Only if it is still the lock we just read: another run may have
-        # cleared it and taken a fresh one in between.
-        hub_exec_args '
-            if [ "$(sed -n 5p "$1/owner" 2>/dev/null)" = "$2" ]; then rm -rf "$1"; fi
-        ' "$lock" "$owner_nonce" || die $EX_LOCK_CREATE lock \
-            "failed to clear our stale hub lock at $lock"
+        # Without a nonce the clear cannot tell this lock from a fresh one
+        # whose owner file is not written yet, so it is never automatic.
+        if [ -z "$owner_nonce" ]; then
+            log ERROR lock "stale hub lock at $lock has no nonce; not clearing it automatically"
+            die $EX_LOCK_REMOTE lock \
+                "the hub lock from $owner_iso is stale but its owner record is incomplete, so it is not cleared automatically. Make sure no sts is running on either Mac, then on $CFG_HUB_HOST: rm -rf $lock"
+        fi
+        clear_stale_hub_lock "$lock" "$owner_nonce" stale
         acquire_hub_lock
         return 0
     fi

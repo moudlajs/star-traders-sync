@@ -807,6 +807,97 @@ check "own fresh lock, owner pid dead: still refused"   50 "$STS" pull
 check "  and not cleared"                                0 test -d "$CASE/.sts-lock"
 rm -rf "$CASE/.sts-lock"
 
+# Two runs judging the same stale lock (#132). A stub mkdir plays the other
+# run: just as this run takes the clearing mutex, the other one has already
+# cleared the stale lock and taken a fresh one. The clear must re-judge and
+# leave that fresh lock alone.
+racestub() {   # $1: what the "other run" does first
+    cat > "$CASE/racestub/mkdir" <<STUB
+#!/bin/sh
+case "\$1" in
+    */.sts-lock.clearing)
+        if [ ! -f "$CASE/racestub/fired" ]; then
+            touch "$CASE/racestub/fired"
+            $1
+        fi ;;
+esac
+exec /bin/mkdir "\$@"
+STUB
+    chmod +x "$CASE/racestub/mkdir"
+    rm -f "$CASE/racestub/fired"
+}
+mkdir -p "$CASE/racestub"
+printf 'LOCK_TTL_SECONDS=60\n' >> "$CASE/cfg/star-traders-sync/config"
+L="$CASE/.sts-lock"
+OWNED='rm -rf "'"$L"'"; /bin/mkdir "'"$L"'"; printf "%s\\n%s\\n2026-01-01T00:00:00Z\\n%s\\nother-run\\n%s\\n" "$(hostname -s)" "$$" "$(date -u +%s)" "'"$MYID"'" > "'"$L"'/owner"'
+BARE='rm -rf "'"$L"'"; /bin/mkdir "'"$L"'"'
+stale_owned() {
+    mkdir -p "$L"
+    printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\nold-run\n%s\n' "$(hostname -s)" "$MYID" > "$L/owner"
+}
+stale_bare() { mkdir -p "$L"; touch -t 202001010000 "$L"; }
+
+stale_owned; racestub "$OWNED"
+check "stale lock retaken mid-clear: refused, not stolen" 50 env PATH="$CASE/racestub:$PATH" "$STS" pull
+check "  the other run's lock is untouched"              0 test "$(sed -n 5p "$L/owner")" = other-run
+rm -rf "$L"
+
+stale_bare; racestub "$OWNED"
+check "ownerless lock retaken mid-clear: refused"       50 env PATH="$CASE/racestub:$PATH" "$STS" pull
+check "  the other run's lock is untouched"              0 test "$(sed -n 5p "$L/owner")" = other-run
+rm -rf "$L"
+
+# The other run has only just done its mkdir, and has not written its owner
+# file yet. It looks ownerless, but it is young, so it is not stale.
+stale_bare; racestub "$BARE"
+check "ownerless lock retaken, owner not yet written: refused" 50 env PATH="$CASE/racestub:$PATH" "$STS" pull
+check "  that fresh lock is untouched"                   0 test -d "$L"
+rm -rf "$L"
+
+# Another run is clearing right now.
+stale_owned; mkdir "$L.clearing"
+check "another run is clearing: refused"                50 "$STS" pull
+check "  and says so"                                    0 sh -c '"$1" pull 2>&1 | grep -q "another run is clearing"' _ "$STS"
+check "  the stale lock is left for that run"            0 test "$(sed -n 5p "$L/owner")" = old-run
+# A clearer that died inside the clear left its mutex. Removing it
+# automatically would be check-then-act again, so it is reported.
+touch -t 202001010000 "$L.clearing"
+check "dead clearer's mutex: refused"                   50 "$STS" pull
+check "  and says how to remove it"                      0 sh -c '"$1" pull 2>&1 | grep -q "rmdir .*\.sts-lock\.clearing"' _ "$STS"
+check "  the mutex is left alone"                        0 test -d "$L.clearing"
+rmdir "$L.clearing"
+check "  once removed, the next run clears the stale lock" 0 "$STS" pull
+rm -rf "$L"
+
+# A stale lock whose owner record has no nonce cannot be told apart from a
+# fresh lock whose owner file is not written yet. Never cleared by itself.
+mkdir -p "$L"
+printf '%s\n1234\n2020-01-01T00:00:00Z\n1577836800\n' "$(hostname -s)" > "$L/owner"
+check "stale lock with no nonce: refused"               50 "$STS" pull
+check "  and says how to remove it"                      0 sh -c '"$1" pull 2>&1 | grep -q "rm -rf .*\.sts-lock"' _ "$STS"
+check "  and not cleared"                                0 test -f "$L/owner"
+rm -rf "$L"
+
+# An mtime that cannot be read is never "old": a stat that fails must not
+# clear a young lock or a live clearer's mutex.
+mkdir -p "$CASE/nostat"
+printf '#!/bin/sh\nexit 1\n' > "$CASE/nostat/stat"; chmod +x "$CASE/nostat/stat"
+stale_bare
+check "unreadable mtime: ownerless lock not cleared"    50 env PATH="$CASE/nostat:$PATH" "$STS" pull
+check "  and still there"                                0 test -d "$L"
+rm -rf "$L"
+stale_owned; mkdir "$L.clearing"; touch -t 202001010000 "$L.clearing"
+check "unreadable mtime: the mutex counts as live"       0 sh -c 'PATH="$2:$PATH" "$1" pull 2>&1 | grep -q "another run is clearing"' _ "$STS" "$CASE/nostat"
+rmdir "$L.clearing"; rm -rf "$L"
+
+# And the plain stale clears still work.
+stale_owned
+check "stale lock, no race: cleared"                     0 "$STS" pull
+check "  and no mutex left behind"                       1 test -d "$L.clearing"
+stale_bare
+check "ownerless stale lock, no race: cleared"           0 "$STS" pull
+sed -i '' '/^LOCK_TTL_SECONDS=60$/d' "$CASE/cfg/star-traders-sync/config"
+
 # A reader that goes away mid-run (`sts play | head -1`). The lock must be
 # gone the moment sts exits, not merely cleared by the next run.
 printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"
