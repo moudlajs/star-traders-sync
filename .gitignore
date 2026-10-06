@@ -1,5 +1,6 @@
 # Never commit a real config - it carries hostnames, users and paths.
-config
+# Anchored: a bare "config" also ignored internal/config, the Go package.
+/config
 *.local
 
 # macOS
