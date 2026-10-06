@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/config"
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
+	"github.com/moudlajs/star-traders-sync/internal/fail"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
 )
 
@@ -51,7 +53,7 @@ type Options struct {
 	RestoreFrom string
 }
 
-type paths struct{ configFile, stateFile, logFile string }
+type paths struct{ configFile, stateDir, stateFile, logFile string }
 
 func pathsFrom(env Env) paths {
 	home := env.Getenv("HOME")
@@ -65,6 +67,7 @@ func pathsFrom(env Env) paths {
 	}
 	return paths{
 		configFile: filepath.Join(cfg, prog, "config"),
+		stateDir:   filepath.Join(state, prog),
 		stateFile:  filepath.Join(state, prog, "last-sync.json"),
 		logFile:    filepath.Join(home, "Library/Logs", prog, prog+".log"),
 	}
@@ -220,7 +223,45 @@ func Main(args []string, env Env) int {
 	log.Log("INFO", "start", "command=%s dry_run=%d force='%s' offline_ok=%d version=%s",
 		o.Command, b2i(o.DryRun), o.Force, b2i(o.OfflineOK), Version)
 
-	return notYet(env, o.Command)
+	if o.Command != "status" {
+		return notYet(env, o.Command)
+	}
+	r := &run{env: env, opt: o, cfg: cfg, p: p, log: log, out: env.Stdout, json: io.Discard,
+		pid: os.Getpid(), host: hostnameShort()}
+	if o.JSON {
+		// stdout carries the JSON object and nothing else; every other
+		// message goes to stderr, so a caller can parse stdout on exit 0.
+		r.out, r.json = env.Stderr, env.Stdout
+	}
+	// A closure: r.lockLoc is set later, in prepare, and a plain
+	// "defer r.lockLoc.Release()" would bind the nil it holds now.
+	defer func() { r.lockLoc.Release() }() // status takes no hub lock
+	f = r.prepare(time.Now())
+	if f == nil {
+		f = r.status()
+	}
+	if f != nil {
+		return report(env, log, p, f)
+	}
+	return 0
+}
+
+// report prints a refusal the way the script does: die's two lines, or the
+// refusal's own lines verbatim.
+func report(env Env, log *logx.Logger, p paths, f *fail.Failure) int {
+	if f.Lines != nil {
+		for _, l := range f.Lines {
+			fmt.Fprintln(env.Stderr, l)
+		}
+		if f.Msg != "" {
+			log.Log("ERROR", f.Step, "%s", f.Msg)
+		}
+		return int(f.Code)
+	}
+	log.Log("ERROR", f.Step, "exit=%d %s", f.Code, f.Msg)
+	fmt.Fprintf(env.Stderr, "error: %s\n", f.Msg)
+	fmt.Fprintf(env.Stderr, "exit code %d - see %s\n", f.Code, p.logFile)
+	return int(f.Code)
 }
 
 // notYet: the Go build is not the shipped tool until #26. Everything past

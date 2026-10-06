@@ -193,3 +193,19 @@ func hashFile(p string) (string, int64, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
+
+// Parse reads a manifest in the script's text form - what MANIFEST_SCRIPT
+// prints on a remote hub.
+func Parse(text string) Manifest {
+	var m Manifest
+	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		switch {
+		case line == "":
+		case strings.HasPrefix(line, "STS_UNHASHABLE  "):
+			m.Unhashable = append(m.Unhashable, strings.TrimPrefix(line, "STS_UNHASHABLE  "))
+		default:
+			m.Lines = append(m.Lines, line)
+		}
+	}
+	return m
+}
