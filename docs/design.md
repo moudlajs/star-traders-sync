@@ -5,19 +5,19 @@ if you want to know why it refuses things other sync tools guess at.
 
 ## Architecture
 
-```
-   a playing Mac (client)                   the Hub host
-   ~/Library/StarTradersFrontiers        ~/Library/StarTradersFrontiers
-            |                                       |
-            |  rsync over ssh                       |  local path copy
-            |  to the tailnet address               |  (same code path)
-            v                                       v
-                  ~/star-traders-sync-hub
-                   single source of truth
-                            |
-                            |  sts backup  (hub host only, daily)
-                            v
-              /Volumes/<your disk>/Backups/star-traders-sync/<ISO>/
+```mermaid
+flowchart TB
+    subgraph C["a client - any other Mac"]
+        CS["LOCAL_SAVE_PATH<br/>the game's save directory"]
+    end
+    subgraph H["the Hub host - HUB_HOST"]
+        HS["LOCAL_SAVE_PATH<br/>the game's save directory"]
+        HUB["HUB_PATH<br/><b>single source of truth</b><br/>never a game save directory"]
+    end
+    BK["BACKUP_DEST/&lt;ISO timestamp&gt;<br/>on BACKUP_VOLUME"]
+    CS <-->|"rsync over ssh<br/>to the tailnet address"| HUB
+    HS <-->|"local path copy<br/>same code path"| HUB
+    HUB -->|"sts backup - Hub host only, daily"| BK
 ```
 
 The hub is a plain directory on the Hub host, the Mac that is on most of
@@ -68,6 +68,67 @@ recognisable header. They can never be inspected, diffed or merged — only
 moved whole. That is why a two-sided change is always a conflict you
 resolve by hand, and never something this tool tries to be clever about.
 
+
+## How a transfer runs
+
+`sts pull` in full. `sts push` is the mirror image: the same order with the
+two sides swapped, `--force=local` in place of `--force=hub`, and the
+emptied-side guard pointing the other way (this machine empty, hub not:
+refuse 61, never overridable).
+
+Every refusal carries its exit code, so this reads alongside
+[troubleshooting.md](troubleshooting.md#exit-codes). **The order is the
+design**: what gates what is the whole argument, and the paragraphs under
+[Data safety](#data-safety) say why each guard is there.
+
+```mermaid
+flowchart TB
+    START(["sts pull"]) --> GAME{"game running<br/>on this machine?"}
+    GAME -->|yes| X40(["refuse - 40"])
+    GAME -->|no| LOCK{"hub lock"}
+    LOCK -->|"held by another machine"| X50(["refuse - 50"])
+    LOCK -->|acquired| MAN["SHA-256 manifest of each side<br/>not sizes, not mtimes"]
+    MAN -->|"a file cannot be hashed"| X13H(["refuse - 13"])
+    MAN --> EXP{"--expect-decision given<br/>and no longer true?"}
+    EXP -->|yes| X64(["refuse - 64<br/>nothing was done"])
+    EXP -->|no| EMPTY{"hub empty, and this<br/>machine is not?"}
+    EMPTY -->|yes| X62(["refuse - 62<br/>no --force overrides this"])
+    EMPTY -->|no| ST{"fingerprints against<br/>the recorded state"}
+    ST -->|"equal"| OK1(["already in sync - 0"])
+    ST -->|"only the hub changed"| SNAP
+    ST -->|"first run, this machine empty"| SNAP
+    ST -->|"first run, both sides have saves"| F61{"--force=hub?"}
+    ST -->|"only this machine changed"| PLAY{"inside sts play?"}
+    ST -->|"both sides changed"| F60{"--force=hub?"}
+    ST -->|"neither changed, yet they differ"| X60D(["refuse - 60<br/>never overridable"])
+    PLAY -->|"yes, no --force"| OK3(["nothing to fetch - 0<br/>play pushes after the game"])
+    PLAY -->|no| F60
+    F61 -->|no| X61(["refuse - 61"])
+    F61 -->|yes| SNAP
+    F60 -->|no| X60(["refuse - 60"])
+    F60 -->|yes| SNAP
+    SNAP["snapshot this machine"] --> CNT{"snapshot complete?<br/>file count == source"}
+    CNT -->|no| X63(["abort - 63<br/>nothing was overwritten"])
+    CNT -->|yes| STAGE["rsync into .sts-incoming-PID<br/>beside the target"]
+    STAGE -->|"rsync exit non-zero"| X33(["refuse - 33<br/>target untouched"])
+    STAGE -->|"exit 0"| CARRY["carry SYNC_EXCLUDE files<br/>into the staged copy"]
+    CARRY --> SWAP["two renames<br/>target to .sts-old-PID<br/>staged to target"]
+    SWAP -.->|"interrupted between them"| X13(["every later run refuses - 13<br/>until .sts-old-PID is restored"])
+    SWAP --> REC["record both fingerprints<br/>release the hub lock"]
+    REC --> OK2(["pull complete - 0"])
+```
+
+The hub lock is taken **before** either side is read, so the verdict cannot be
+computed against a hub another machine is in the middle of changing. For the
+same reason `--expect-decision`, which the app passes when you confirm a
+choice, is checked after the lock and the manifests, not before: what you
+confirmed is compared against what is actually about to happen. `sts status`
+reports the same decision through the same function, so it cannot show one
+thing while a sync does another.
+
+A clock difference beyond `CLOCK_SKEW_TOLERANCE` warns and continues: the
+timestamps shown to you become unreliable, but nothing in this flow depends
+on them.
 
 ## Data safety
 
