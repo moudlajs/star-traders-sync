@@ -11,7 +11,7 @@
 
 set -Eeuo pipefail
 
-readonly STS_VERSION="1.5.3"
+readonly STS_VERSION="1.5.4"
 readonly PROG="star-traders-sync"
 
 # --------------------------------------------------------------------------
@@ -2740,6 +2740,17 @@ cmd_pull() {
     if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then
         die $EX_HUB_EMPTY pull \
             "the hub has 0 files and this machine has $lcount - refusing to empty this machine. If the hub really should be the source of truth, seed it first with '$PROG push --force=local' from the machine that has the saves."
+    fi
+
+    # An emptied save folder after a recorded sync looks to decide() like
+    # "only this machine changed" (LOCAL_ONLY). It is not: the saves are
+    # gone. Without this, play skipped the fetch as "ahead of the hub",
+    # launched the game on nothing, and pushed whatever it made over the
+    # Hub afterwards (#126). status already calls this LOCAL_EMPTIED.
+    if [ "$OPT_FORCE" != "hub" ] && \
+       [ "$(effective_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state")" = "LOCAL_EMPTIED" ]; then
+        die $EX_CONFLICT_FIRSTRUN pull \
+            "this machine's saves are gone (0 files) while the hub has $hcount - not playing or syncing on nothing. Restore them from the hub with: $PROG pull --force=hub"
     fi
 
     case "$verdict" in

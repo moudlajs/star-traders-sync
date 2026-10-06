@@ -13,6 +13,16 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-10-06
+
+### Fixed
+
+- `sts play` no longer starts the game when this Mac's save folder was
+  emptied after a sync. It used to read that as "this machine is ahead of
+  the hub", launch with no saves, and could then send a new game over the
+  Hub's saves. It now refuses (61) and says how to restore them:
+  `sts pull --force=hub` ([#126])
+
 ### Added
 
 - This changelog, backfilled from the git history for every release. The
@@ -253,7 +263,8 @@ that was never transferred was simply absent from the replacement - taking
 from the live directory into the staging directory before the swap. Every one
 of those findings has a case in `tests/regression.sh`.
 
-[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.3...HEAD
+[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.4...HEAD
+[1.5.4]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.3...v1.5.4
 [1.5.3]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.2...v1.5.3
 [1.5.2]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.0...v1.5.1
@@ -290,3 +301,4 @@ of those findings has a case in `tests/regression.sh`.
 [#114]: https://github.com/moudlajs/star-traders-sync/issues/114
 [#118]: https://github.com/moudlajs/star-traders-sync/issues/118
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
+[#126]: https://github.com/moudlajs/star-traders-sync/issues/126
