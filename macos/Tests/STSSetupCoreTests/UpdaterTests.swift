@@ -202,6 +202,7 @@ final class UpdaterTests: XCTestCase {
         XCTAssertFalse(busy.0.ok, "always busy: gives up")
         XCTAssertEqual(busy.calls, UpdateInstaller.attachBackoff.count + 1, "bounded")
         XCTAssertEqual(busy.pauses, UpdateInstaller.attachBackoff)
+        XCTAssertGreaterThanOrEqual(UpdateInstaller.attachBackoff.reduce(0, +), 30, "outlasts the spell CI saw (#124)")
     }
 
     func testChecksumIsVerified() throws {
