@@ -75,7 +75,12 @@ resolve by hand, and never something this tool tries to be clever about.
 swapped and `--force=local` in place of `--force=hub`. The emptied-side
 guards are where it is **not** symmetric: on push, this machine empty with
 the hub not is refused with 61 and nothing overrides it, while an empty hub
-is a seed, which `--force=local` allows (62 without it).
+is a seed, which `--force=local` allows (62 without it). When a client
+pushes, the receiving side is the Hub host over ssh, and three exits differ.
+A failed hub-side swap exits 32 instead of 33. An interrupted hub swap is
+caught by the next run on any machine as 14 instead of 13. A `SYNC_EXCLUDE`
+file that cannot be carried into the hub's staged copy is currently *not*
+refused, and the swap deletes it, leaving it only in the hub snapshot (#128).
 
 Every refusal carries its exit code, so this reads alongside
 [troubleshooting.md](troubleshooting.md#exit-codes). **The order is the
@@ -118,7 +123,7 @@ flowchart TB
     CARRY -->|"a file cannot be copied"| X63P(["refuse - 63<br/>the swap would delete it"])
     CARRY --> SWAP["two renames<br/>target to .sts-old-PID<br/>staged to target"]
     SWAP -->|"a rename fails"| X33S(["refuse - 33<br/>original intact"])
-    SWAP -.->|"interrupted between them"| X13(["every later run refuses - 13<br/>until .sts-old-PID is restored"])
+    SWAP -.->|"interrupted between them"| X13(["every later run refuses - 13<br/>until this machine's<br/>.sts-old-PID is restored"])
     SWAP --> REC["record both fingerprints<br/>release the hub lock"]
     REC --> OK2(["pull complete - 0"])
 ```
