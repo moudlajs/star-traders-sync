@@ -1247,6 +1247,27 @@ PATH="$CASE/badrsync:$PATH" "$STS" push > "$CASE/bad.out" 2>&1; BADRC=$?
 check "a transfer that leaves the sides different: push fails (33)" 0 test "$BADRC" -eq 33
 check "  and says it did not really happen"              0 grep -q "did not really happen" "$CASE/bad.out"
 check "  nothing syncs on its own: DIVERGED_STATE"       0 test "$(jget decision)" = DIVERGED_STATE
+# The documented way out (troubleshooting row 57, as row 46): --force alone
+# is refused; move the record aside, then force the side that is right.
+check "  --force alone is still refused (60)"            60 "$STS" push --force=local
+mv "$(STATEF)" "$(STATEF).aside"
+check "  after the record is moved aside, --force=local goes" 0 "$STS" push --force=local
+check "  and both sides match"                           0 test "$(jget decision)" = INSYNC
+check "  with this Mac's save on the hub"                0 test "$(cat "$CASE/hub/game_1.db")" = "v4-game_1.db"
+
+# The same over ssh, from a client: same size, same second, still sent.
+newcase samesecondclient
+client_on
+"$STS" push --force=local >/dev/null 2>&1
+printf 'v2-game_1.db\n' > "$CASE/local/game_1.db"
+touch -r "$CASE/hub/game_1.db" "$CASE/local/game_1.db"
+check "client: push over ssh sends it"                   0 "$STS" push
+check "  the hub has it"                                 0 test "$(cat "$CASE/hub/game_1.db")" = "v2-game_1.db"
+printf 'v3-game_1.db\n' > "$CASE/hub/game_1.db"
+touch -r "$CASE/local/game_1.db" "$CASE/hub/game_1.db"
+check "client: pull over ssh fetches it"                 0 "$STS" pull
+check "  this Mac has it"                                0 test "$(cat "$CASE/local/game_1.db")" = "v3-game_1.db"
+client_off
 
 # --------------------------------------------------------------------------
 section "play never runs on an emptied save folder (#126)"

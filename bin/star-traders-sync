@@ -1851,7 +1851,7 @@ verify_transfer() {
     [ "$lfp" = "$hfp" ] && return 0
     log ERROR "$direction" "after the transfer the two sides differ: local=$lfp hub=$hfp"
     die $EX_RSYNC "$direction" \
-        "the transfer finished but this machine and the hub still hold different saves, so the $direction did not really happen. Both sides were snapshotted first. Nothing will sync on its own until this is resolved: run '$PROG status'."
+        "the transfer finished but this machine and the hub still hold different saves, so the $direction did not really happen. The side being overwritten was snapshotted first. Nothing will sync on its own until this is resolved - see 'transfer finished but ... different saves' in docs/troubleshooting.md."
 }
 
 # pull_hub_to_local - hub becomes local. Snapshot first, temp dir, then swap.
