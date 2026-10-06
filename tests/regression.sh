@@ -867,6 +867,19 @@ check "  but removed the mutex"                          1 test -d "$L.clearing"
 check "  and the next run clears the stale lock"         0 "$STS" pull
 rm -rf "$L"
 
+# An mtime that cannot be read is never "old": a stat that fails must not
+# clear a young lock or a live clearer's mutex.
+mkdir -p "$CASE/nostat"
+printf '#!/bin/sh\nexit 1\n' > "$CASE/nostat/stat"; chmod +x "$CASE/nostat/stat"
+stale_bare
+check "unreadable mtime: ownerless lock not cleared"    50 env PATH="$CASE/nostat:$PATH" "$STS" pull
+check "  and still there"                                0 test -d "$L"
+rm -rf "$L"
+stale_owned; mkdir "$L.clearing"; touch -t 202001010000 "$L.clearing"
+check "unreadable mtime: the mutex is not removed"      50 env PATH="$CASE/nostat:$PATH" "$STS" pull
+check "  and still there"                                0 test -d "$L.clearing"
+rmdir "$L.clearing"; rm -rf "$L"
+
 # And the plain stale clears still work.
 stale_owned
 check "stale lock, no race: cleared"                     0 "$STS" pull

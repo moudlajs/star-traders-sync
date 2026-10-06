@@ -1251,12 +1251,19 @@ clear_stale_hub_lock() {
     local lock="$1" want="$2" what="$3" out
     out="$(hub_exec_args '
         lock="$1"; want="$2"; ttl="$3"; m="$1.clearing"
-        mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+        # older_than PATH SECONDS: true only for an mtime actually read. An
+        # unreadable one must never count as old: that would clear a live
+        # mutex or a young lock.
+        older_than() {
+            t=$(stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null)
+            case "$t" in ""|*[!0-9]*) return 1 ;; esac
+            [ $(( $(date -u +%s) - t )) -ge "$2" ]
+        }
         if ! mkdir "$m" 2>/dev/null; then
             # Held for milliseconds by a live clearer; a minute means its
             # run died inside the clear. Remove that one, and let the next
             # run do the clearing.
-            [ $(( $(date -u +%s) - $(mtime "$m") )) -ge 60 ] && rmdir "$m" 2>/dev/null
+            older_than "$m" 60 && rmdir "$m" 2>/dev/null
             echo STS_CLEAR_BUSY
             exit 0
         fi
@@ -1264,8 +1271,7 @@ clear_stale_hub_lock() {
         [ -d "$lock" ] || { echo STS_CLEAR_GONE; exit 0; }
         if [ "$want" = "-" ]; then
             same=0
-            if [ ! -e "$lock/owner" ] && \
-               [ $(( $(date -u +%s) - $(mtime "$lock") )) -ge "$ttl" ]; then same=1; fi
+            if [ ! -e "$lock/owner" ] && older_than "$lock" "$ttl"; then same=1; fi
         else
             [ "$(sed -n 5p "$lock/owner" 2>/dev/null)" = "$want" ] && same=1 || same=0
         fi
@@ -1356,7 +1362,8 @@ acquire_hub_lock() {
         *STS_NO_OWNER*)
             local lock_mtime lock_age
             lock_mtime="$(printf '%s' "$out" | sed -n '3p')"
-            case "$lock_mtime" in ''|*[!0-9]*) lock_mtime=0 ;; esac
+            # Unreadable means unknown, and unknown is never old enough to clear.
+            case "$lock_mtime" in ''|*[!0-9]*|0) lock_mtime="$now" ;; esac
             lock_age=$((now - lock_mtime))
             [ "$lock_age" -lt 0 ] && lock_age=0
             if [ "$lock_age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
