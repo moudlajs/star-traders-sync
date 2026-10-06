@@ -822,18 +822,13 @@ rm -rf "$CASE/.sts-lock"
 
 # A reader that goes away mid-run (`sts play | head -1`). The lock must be
 # gone the moment sts exits, not merely cleared by the next run.
-printf 'GAME_START_TIMEOUT=2\nLOG_LEVEL=DEBUG\n' >> "$CASE/cfg/star-traders-sync/config"   # TEMP
+printf 'GAME_START_TIMEOUT=2\n' >> "$CASE/cfg/star-traders-sync/config"
 mkdir -p "$CASE/nosteam"
 printf '#!/bin/sh\nexit 0\n' > "$CASE/nosteam/open"
 chmod +x "$CASE/nosteam/open"
 printf 'ahead\n' > "$CASE/local/game_1.db"
 sh -c 'PATH="$2:$PATH" "$1" play 2>&1 | head -c 1 >/dev/null' _ "$STS" "$CASE/nosteam"
 check "play into a closed pipe: no hub lock left"        1 test -d "$CASE/.sts-lock"
-if [ -d "$CASE/.sts-lock" ]; then   # TEMP diagnostics for CI
-    echo "DIAG owner:"; cat "$CASE/.sts-lock/owner"
-    echo "DIAG log:"; tail -15 "$CASE/home/Library/Logs/star-traders-sync/star-traders-sync.log"
-    echo "DIAG bash: $(/bin/bash --version | head -1)"
-fi
 rm -rf "$CASE/.sts-lock"
 
 # A hangup (terminal closed) while a transfer runs.
