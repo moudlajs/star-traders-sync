@@ -23,6 +23,13 @@ upgrade now rather than later.
 
 ### Fixed
 
+- The hub lock is also released when a run on a client Mac (not the Hub
+  host) is cut short by a closed pipe. 1.5.5 fixed this on the Hub host
+  only ([#129])
+- The app's updater retries a disk image that macOS reports as busy
+  ("Resource temporarily unavailable") a few times before giving up. It
+  used to fail the update at once with a misleading "could not be opened"
+  ([#124])
 - Two runs clearing the same stale hub lock at the same moment can no
   longer delete the fresh lock one of them just took. Only one run clears
   at a time, and it checks again that the lock is still the stale one
@@ -335,6 +342,7 @@ of those findings has a case in `tests/regression.sh`.
 [#120]: https://github.com/moudlajs/star-traders-sync/issues/120
 [#126]: https://github.com/moudlajs/star-traders-sync/issues/126
 [#108]: https://github.com/moudlajs/star-traders-sync/issues/108
+[#124]: https://github.com/moudlajs/star-traders-sync/issues/124
 [#128]: https://github.com/moudlajs/star-traders-sync/issues/128
 [#129]: https://github.com/moudlajs/star-traders-sync/issues/129
 [#132]: https://github.com/moudlajs/star-traders-sync/issues/132

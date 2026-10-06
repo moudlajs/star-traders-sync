@@ -170,6 +170,40 @@ final class UpdaterTests: XCTestCase {
         XCTAssertTrue(Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", target.path]).ok)
     }
 
+    // #124: a busy diskarbitrationd makes attach fail with EAGAIN. That is
+    // retried; any other failure is final at once.
+    func testAttachRetriesOnlyTheTransientError() {
+        let eagain = CommandResult(status: 1, stdout: "", stderr: "hdiutil: attach failed - Resource temporarily unavailable")
+        let mounted = CommandResult(status: 0, stdout: "/dev/disk9", stderr: "")
+        let corrupt = CommandResult(status: 1, stdout: "", stderr: "hdiutil: attach failed - image not recognized")
+        let dmg = URL(fileURLWithPath: "/tmp/x.dmg"), mount = URL(fileURLWithPath: "/tmp/m")
+
+        func attach(_ answers: [CommandResult]) -> (CommandResult, calls: Int, pauses: [TimeInterval]) {
+            var queue = answers, calls = 0, pauses: [TimeInterval] = []
+            let r = UpdateInstaller.attachWithRetry(dmg: dmg, at: mount, run: { exe, args in
+                XCTAssertEqual(exe, "/usr/bin/hdiutil"); XCTAssertEqual(args.first, "attach")
+                calls += 1
+                return queue.isEmpty ? eagain : queue.removeFirst()
+            }, sleep: { pauses.append($0) })
+            return (r, calls, pauses)
+        }
+
+        let recovered = attach([eagain, eagain, mounted])
+        XCTAssertTrue(recovered.0.ok, "two transient failures, then mounted")
+        XCTAssertEqual(recovered.calls, 3)
+        XCTAssertEqual(recovered.pauses, [0.5, 1])
+
+        let final = attach([corrupt, mounted])
+        XCTAssertFalse(final.0.ok, "a real failure is not retried")
+        XCTAssertEqual(final.calls, 1)
+        XCTAssertEqual(final.pauses, [])
+
+        let busy = attach([])
+        XCTAssertFalse(busy.0.ok, "always busy: gives up")
+        XCTAssertEqual(busy.calls, UpdateInstaller.attachBackoff.count + 1, "bounded")
+        XCTAssertEqual(busy.pauses, UpdateInstaller.attachBackoff)
+    }
+
     func testChecksumIsVerified() throws {
         let dmg = try makeDMG(version: "1.4.1")
         let good = try UpdateInstaller.sha256(of: dmg)

@@ -160,14 +160,17 @@ public enum UpdateInstaller {
     /// `target` atomically. Nothing at `target` changes unless every check
     /// passes; a failure leaves the current app exactly as it was.
     public static func install(dmg: URL, expectedVersion: String, bundleID: String, over target: URL,
-                               run: (String, [String]) -> CommandResult = { Shell.run($0, $1) }) throws {
+                               run: (String, [String]) -> CommandResult = { Shell.run($0, $1) },
+                               sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) throws {
         if let why = canReplace(target) { throw UpdateError.notWritable(why) }
         let fm = FileManager.default
         let mount = fm.temporaryDirectory.appendingPathComponent("sts-update-\(UUID().uuidString)")
         try fm.createDirectory(at: mount, withIntermediateDirectories: true)
-        let attach = run("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-noautoopen",
-                                              "-mountpoint", mount.path, dmg.path])
-        guard attach.ok else { throw UpdateError.mountFailed(attach.combined) }
+        let attach = attachWithRetry(dmg: dmg, at: mount, run: run, sleep: sleep)
+        guard attach.ok else {
+            try? fm.removeItem(at: mount)   // the defer below is not set up yet
+            throw UpdateError.mountFailed(attach.combined)
+        }
         defer {
             _ = run("/usr/bin/hdiutil", ["detach", mount.path, "-force"])
             try? fm.removeItem(at: mount)
@@ -198,6 +201,24 @@ public enum UpdateInstaller {
             try? fm.removeItem(at: staged)
             throw (error as? UpdateError) ?? UpdateError.io("Could not swap in the update: \(error.localizedDescription)")
         }
+    }
+
+    /// The pauses between attach attempts. `hdiutil attach` can fail with
+    /// EAGAIN ("Resource temporarily unavailable") while diskarbitrationd is
+    /// busy with another image. That is not a bad download, so it is retried
+    /// before it becomes a refusal; any other failure is final at once.
+    static let attachBackoff: [TimeInterval] = [0.5, 1, 2, 4]
+
+    static func attachWithRetry(dmg: URL, at mount: URL, run: (String, [String]) -> CommandResult,
+                                sleep: (TimeInterval) -> Void) -> CommandResult {
+        let args = ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path, dmg.path]
+        var result = run("/usr/bin/hdiutil", args)
+        for pause in attachBackoff {
+            guard !result.ok, result.combined.contains("Resource temporarily unavailable") else { break }
+            sleep(pause)
+            result = run("/usr/bin/hdiutil", args)
+        }
+        return result
     }
 
     static func verifySignature(_ app: URL, run: (String, [String]) -> CommandResult) throws {

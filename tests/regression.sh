@@ -653,6 +653,10 @@ check "  even though the timestamps say local newer"     0 test "$(jget verdict)
 check "  and pull really refuses it"                    61 "$STS" pull
 rm -f "$CASE/local"/*.db "$CASE/local"/*.json
 check "never synced, this machine empty: FIRST_SEED"     0 test "$(jget decision)" = FIRST_SEED
+HUB_BEFORE="$(cat "$CASE/hub/game_1.db")"
+check "  and push really refuses it"                    61 "$STS" push
+check "  even with --force=local"                       61 "$STS" push --force=local
+check "  and the hub kept its saves"                     0 test "$(cat "$CASE/hub/game_1.db")" = "$HUB_BEFORE"
 
 # Emptied after a sync: pull and push refuse in their guards before
 # decide() runs, so status must not report decide()'s HUB_ONLY/LOCAL_ONLY.
@@ -976,6 +980,8 @@ STUB
 case "$*" in *-F*) printf 'remotehub ssh-ed25519 AAAA\n' ;; esac
 exit 0
 STUB
+    # MagicDNS "resolves", as on a real client: no fallback note printed.
+    printf '#!/bin/sh\nexit 0\n' > "$CASE/clientstub/ping"
     cat > "$CASE/clientstub/ssh" <<'STUB'
 #!/bin/bash
 # Skip options, then the destination; the rest is the remote command.
@@ -1031,6 +1037,19 @@ check "  the hub is unchanged"                           0 test "$(cat "$CASE/hu
 check "  and still has the excluded file"                0 test "$(cat "$CASE/hub/data.db")" = hub-local
 check "  once it can be copied again, the push goes"       0 "$STS" push
 check "  and carries it"                                 0 test "$(cat "$CASE/hub/data.db")" = hub-local
+
+# A refusal read through a pipe that closes early, with SIGPIPE ignored the
+# way CI's runner starts us. The failed write leaves bash 3.2's stdout
+# buffer dirty, and the release used to build its ssh command from $(...)
+# calls that came back polluted, leaving the hub lock held (#129, client
+# side). Only stdout goes to the pipe, and its reader is gone before sts
+# starts, so the first failed write is the one made under the lock.
+LEFT=0
+for i in 1 2 3; do
+    bash -c 'trap "" PIPE; "$1" push 2>/dev/null | true' _ "$STS"
+    [ -d "$CASE/.sts-lock" ] && LEFT=$((LEFT + 1)) && rm -rf "$CASE/.sts-lock"
+done
+check "client refusal into a closed pipe: never leaves the lock" 0 test "$LEFT" -eq 0
 
 # The connection drops under the carry itself: no verdict, so no swap.
 touch "$CASE/clientstub/drop-carry"
