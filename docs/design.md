@@ -117,11 +117,16 @@ flowchart TB
     STAGE -->|"exit 0"| CARRY["carry SYNC_EXCLUDE files<br/>into the staged copy"]
     CARRY -->|"a file cannot be copied"| X63P(["refuse - 63<br/>the swap would delete it"])
     CARRY --> SWAP["two renames<br/>target to .sts-old-PID<br/>staged to target"]
-    SWAP -->|"a rename fails"| X33S(["refuse - 33<br/>original moved back"])
+    SWAP -->|"a rename fails"| X33S(["refuse - 33<br/>original intact"])
     SWAP -.->|"interrupted between them"| X13(["every later run refuses - 13<br/>until .sts-old-PID is restored"])
     SWAP --> REC["record both fingerprints<br/>release the hub lock"]
     REC --> OK2(["pull complete - 0"])
 ```
+
+The diagram shows the decisions, not every exit. Two lock failures are
+left out: another `sts` already running on this machine (52) and a hub lock
+that cannot be created (51). The hub lock is released on every exit, not
+only the one drawn.
 
 The hub lock is taken **before** either side is read, so the verdict cannot be
 computed against a hub another machine is in the middle of changing. For the
