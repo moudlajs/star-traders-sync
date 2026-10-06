@@ -15,6 +15,9 @@ upgrade now rather than later.
 
 ### Fixed
 
+- The hub lock is also released when a run on a client Mac (not the Hub
+  host) is cut short by a closed pipe. 1.5.5 fixed this on the Hub host
+  only ([#129])
 - Two runs clearing the same stale hub lock at the same moment can no
   longer delete the fresh lock one of them just took. Only one run clears
   at a time, and it checks again that the lock is still the stale one
