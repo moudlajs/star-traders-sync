@@ -26,8 +26,10 @@ Open it once, then go to **System Settings > Privacy & Security** and
 click **Open Anyway** next to "Star Traders Sync". After that it opens
 normally.
 
-To build it yourself: `macos/build-app.sh` (needs Xcode) writes the `.app`
-and `.dmg` to `macos/build/`.
+To build it yourself: `macos/build-app.sh` writes the `.app` and `.dmg` to
+`macos/build/`. It needs Go, and Xcode for the universal build. With only
+the Command Line Tools, `macos/build-app.sh --native` builds for this Mac's
+chip.
 
 ## Install on each machine
 
