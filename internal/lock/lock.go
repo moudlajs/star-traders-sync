@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,6 +43,9 @@ type Hub struct {
 	held  bool
 	dir   string
 	tries int
+	// mu: Release can come from the signal handler while Acquire runs; it
+	// then waits, and releases the lock Acquire has just taken.
+	mu sync.Mutex
 }
 
 // Path is the lock directory: beside HUB_PATH, its parent computed as
@@ -65,6 +69,12 @@ func (h *Hub) warn(format string, a ...any) {
 // Acquire takes the lock or refuses (50 or 51), clearing a stale or
 // ownerless one of this machine's past the TTL. Idempotent while held.
 func (h *Hub) Acquire() *fail.Failure {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.acquire()
+}
+
+func (h *Hub) acquire() *fail.Failure {
 	if h.held {
 		return nil
 	}
@@ -122,7 +132,7 @@ func (h *Hub) Acquire() *fail.Failure {
 			if f := h.clearStale(lock, "-", "ownerless"); f != nil {
 				return f
 			}
-			return h.Acquire()
+			return h.acquire()
 		}
 		h.Log.Log("ERROR", "lock", "ownerless hub lock at %s, age %ds < TTL", lock, age)
 		return fail.Printed(exitcode.LockRemote, "lock", "",
@@ -173,7 +183,7 @@ func (h *Hub) Acquire() *fail.Failure {
 		if f := h.clearStale(lock, ownerNonce, "stale"); f != nil {
 			return f
 		}
-		return h.Acquire()
+		return h.acquire()
 	}
 
 	h.Log.Log("ERROR", "lock", "hub lock held by this host since %s (%ds < TTL)", ownerISO, age)
@@ -216,6 +226,8 @@ func (h *Hub) clearStale(lock, want, what string) *fail.Failure {
 // deleting someone else's lock is worse than leaking our own. A failure is
 // logged, never fatal - this runs on the way out.
 func (h *Hub) Release() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if !h.held || h.Nonce == "" {
 		return
 	}
