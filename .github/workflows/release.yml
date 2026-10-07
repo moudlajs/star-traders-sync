@@ -33,12 +33,18 @@ jobs:
             echo "six releases. Move Unreleased into a [$tag] section first."
             exit 1; }
 
-      - name: Regression suite must pass before a release exists
-        run: ./tests/regression.sh
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Regression suite must pass before a release exists
+        run: ./tests/regression.sh
+
+      - name: And the Go build it ships must pass it too, and match the script (#175)
+        run: |
+          go build -o "$RUNNER_TEMP/sts-go" ./cmd/sts
+          STS_BIN="$RUNNER_TEMP/sts-go" ./tests/regression.sh
+          STS_GO="$RUNNER_TEMP/sts-go" tests/parity.sh
 
       - name: Build the app
         run: |
