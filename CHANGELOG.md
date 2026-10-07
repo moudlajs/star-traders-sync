@@ -13,6 +13,8 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-10-07
+
 ### Fixed
 
 - `sts backup` that could not write its completion marker (a full or
@@ -22,8 +24,8 @@ upgrade now rather than later.
 - `sts backup` waiting for `BACKUP_MOUNT_WAIT` held the hub lock the whole
   time, so the other Mac's `pull`, `push` and `play` were refused (50)
   while the hub waited for an unplugged disk. It now waits first, then
-  takes the lock and checks the volume again (#169).
-- `sts doctor` called a symlinked save or hub folder empty (#168).
+  takes the lock and checks the volume again ([#169]).
+- `sts doctor` called a symlinked save or hub folder empty ([#168]).
 - `sts doctor --fix` could clear the local lock of a run that had just
   taken it and not yet written its pid, letting two runs in at once. A lock
   under 10 seconds old is now reported as starting and left alone, as the
@@ -379,7 +381,8 @@ that was never transferred was simply absent from the replacement - taking
 from the live directory into the staging directory before the swap. Every one
 of those findings has a case in `tests/regression.sh`.
 
-[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.6...v1.6.0
 [1.5.6]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.5...v1.5.6
@@ -433,3 +436,5 @@ of those findings has a case in `tests/regression.sh`.
 [#151]: https://github.com/moudlajs/star-traders-sync/issues/151
 [#156]: https://github.com/moudlajs/star-traders-sync/issues/156
 [#158]: https://github.com/moudlajs/star-traders-sync/issues/158
+[#168]: https://github.com/moudlajs/star-traders-sync/issues/168
+[#169]: https://github.com/moudlajs/star-traders-sync/issues/169

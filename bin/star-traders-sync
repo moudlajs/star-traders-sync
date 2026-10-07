@@ -11,7 +11,7 @@
 
 set -Eeuo pipefail
 
-readonly STS_VERSION="1.6.1"
+readonly STS_VERSION="1.6.2"
 readonly PROG="star-traders-sync"
 
 # Character classes spelled out, never as ranges. A bracket range in a case
