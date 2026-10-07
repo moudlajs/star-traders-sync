@@ -1378,6 +1378,10 @@ section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1
 check "backup refuses a non-mount-point volume"         70 "$STS" backup
+# The refusal comes after the hub lock is taken: every way out must release
+# it, or the other Mac is locked out until the TTL.
+check "  and releases the hub lock it took"              1 test -e "$CASE/.sts-lock"
+check "  so a push straight after is not refused"        0 "$STS" push
 
 # A same-size change in the same second reaches the next backup too (#158):
 # backup hard-links unchanged files against the previous one, and rsync's
@@ -1399,6 +1403,15 @@ if [ "$ATTACHED" -eq 1 ]; then
     check "  a second backup"                              0 "$STS" backup
     LASTB="$(ls "$CASE/vol/b" | grep -v '^\.' | tail -1)"
     check "  holds the same-size, same-second change"      0 test "$(cat "$CASE/vol/b/$LASTB/game_1.db")" = "v2-game_1.db"
+    # A backup that cannot be marked complete never joins the rotation, and
+    # nothing would ever remove it: refuse, and remove it now. A directory
+    # in the way of the marker is the reproducible way to fail that write.
+    BEFORE_N="$(ls "$CASE/vol/b" | grep -vc '^\.')"
+    mkdir "$CASE/hub/.sts-complete"
+    sleep 1
+    check "  an unmarkable backup is refused"              33 "$STS" backup
+    check "  and removed, not left unmarked"               0 test "$(ls "$CASE/vol/b" | grep -vc '^\.')" = "$BEFORE_N"
+    rmdir "$CASE/hub/.sts-complete"
     hdiutil detach -quiet "$CASE/vol" 2>/dev/null || hdiutil detach -quiet -force "$CASE/vol" 2>/dev/null
 else
     printf '  skip backup to a mounted volume (no disk image could be attached here)\n'

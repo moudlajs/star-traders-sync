@@ -13,6 +13,13 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Fixed
+
+- `sts backup` that could not write its completion marker (a full or
+  read-only backup volume) exited 1 with no explanation. It now exits 33,
+  says why, and removes the unmarked copy, which would otherwise never join
+  the rotation or be pruned.
+
 ## [1.6.1] - 2026-10-07
 
 ### Fixed
