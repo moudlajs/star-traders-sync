@@ -137,7 +137,7 @@ jobs:
       - name: The bundle holds the shim and both engines (#175)
         run: |
           res="macos/build/Star Traders Sync.app/Contents/Resources"
-          lipo -verify_arch arm64 x86_64 "$res/star-traders-sync-go"
+          lipo "$res/star-traders-sync-go" -verify_arch arm64 x86_64
           ver="$(bin/star-traders-sync --version)"
           for e in bash go; do
             got="$(STS_ENGINE=$e "$res/star-traders-sync" --version)"
