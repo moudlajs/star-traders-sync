@@ -1378,6 +1378,10 @@ section "backup"
 newcase backup
 "$STS" push --force=local >/dev/null 2>&1
 check "backup refuses a non-mount-point volume"         70 "$STS" backup
+# The refusal comes after the hub lock is taken: every way out must release
+# it, or the other Mac is locked out until the TTL.
+check "  and releases the hub lock it took"              1 test -e "$CASE/.sts-lock"
+check "  so a push straight after is not refused"        0 "$STS" push
 
 # A same-size change in the same second reaches the next backup too (#158):
 # backup hard-links unchanged files against the previous one, and rsync's
