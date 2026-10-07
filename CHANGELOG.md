@@ -13,6 +13,8 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-07
+
 ### Added
 
 - The Go build ships inside the app, beside the script, and is opt-in:
@@ -391,7 +393,8 @@ that was never transferred was simply absent from the replacement - taking
 from the live directory into the staging directory before the swap. Every one
 of those findings has a case in `tests/regression.sh`.
 
-[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/moudlajs/star-traders-sync/compare/v1.5.6...v1.6.0
