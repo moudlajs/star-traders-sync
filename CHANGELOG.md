@@ -13,6 +13,14 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Fixed
+
+- Setup: when the Hub Mac's account name differs from this Mac's, the
+  pre-filled account made every password attempt fail with only "the hub
+  refused the password". The password step now says when the account is
+  still this Mac's own name, and a refusal names the account it tried
+  ([#178]).
+
 ## [1.7.0] - 2026-10-07
 
 ### Added
@@ -452,3 +460,4 @@ of those findings has a case in `tests/regression.sh`.
 [#168]: https://github.com/moudlajs/star-traders-sync/issues/168
 [#169]: https://github.com/moudlajs/star-traders-sync/issues/169
 [#175]: https://github.com/moudlajs/star-traders-sync/issues/175
+[#178]: https://github.com/moudlajs/star-traders-sync/issues/178

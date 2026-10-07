@@ -522,6 +522,13 @@ struct ConnectPage: View {
             Text("Hub password").font(.headline)
             Text("The password of **\(m.hubUser)** on the Hub Mac. It is used once to install this Mac's key, and is not saved anywhere.")
                 .fixedSize(horizontal: false, vertical: true)
+            if m.hubUser == NSUserName() {
+                // The default is this Mac's own name: right only when both
+                // Macs use the same one (#178).
+                Text("**\(m.hubUser)** is this Mac's account name. If the Hub Mac's account is named differently, go Back and change it first: no password will work for an account that does not exist there.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             SecureField("password", text: $m.password)
                 .frame(maxWidth: 320)
                 .onSubmit { if !m.password.isEmpty { m.copyKey() } }
