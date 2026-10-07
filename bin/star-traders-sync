@@ -3609,7 +3609,9 @@ cmd_backup() {
     fi
 
     # The marker is written last. Anything without it was interrupted.
-    date -u +%Y-%m-%dT%H:%M:%SZ > "$dest/.sts-complete"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$dest/.sts-complete" 2>/dev/null \
+        || die $EX_RSYNC backup \
+            "could not mark the backup in $dest complete, so it was removed - the backup volume may be full or read-only"
     BACKUP_PENDING=""
 
     # Prune only timestamp-shaped, completed backups, newest kept.

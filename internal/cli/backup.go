@@ -236,7 +236,12 @@ func (r *run) backup(now time.Time) *fail.Failure {
 		return fail.New(exitcode.Rsync, "backup",
 			"backup is INCOMPLETE - %d files in the hub, only %d copied. The partial copy was removed so it cannot be mistaken for a good backup.", srcN, dstN)
 	}
-	_ = os.WriteFile(filepath.Join(target, ".sts-complete"), []byte(time.Now().UTC().Format("2006-01-02T15:04:05Z")+"\n"), 0o644)
+	// Unmarked, it would never join the rotation and nothing would remove
+	// it; still pending, the deferred cleanup does.
+	if err := os.WriteFile(filepath.Join(target, ".sts-complete"), []byte(time.Now().UTC().Format("2006-01-02T15:04:05Z")+"\n"), 0o644); err != nil {
+		return fail.New(exitcode.Rsync, "backup",
+			"could not mark the backup in %s complete, so it was removed - the backup volume may be full or read-only", target)
+	}
 	pendMu.Lock()
 	pending = ""
 	pendMu.Unlock()

@@ -1403,6 +1403,15 @@ if [ "$ATTACHED" -eq 1 ]; then
     check "  a second backup"                              0 "$STS" backup
     LASTB="$(ls "$CASE/vol/b" | grep -v '^\.' | tail -1)"
     check "  holds the same-size, same-second change"      0 test "$(cat "$CASE/vol/b/$LASTB/game_1.db")" = "v2-game_1.db"
+    # A backup that cannot be marked complete never joins the rotation, and
+    # nothing would ever remove it: refuse, and remove it now. A directory
+    # in the way of the marker is the reproducible way to fail that write.
+    BEFORE_N="$(ls "$CASE/vol/b" | grep -vc '^\.')"
+    mkdir "$CASE/hub/.sts-complete"
+    sleep 1
+    check "  an unmarkable backup is refused"              33 "$STS" backup
+    check "  and removed, not left unmarked"               0 test "$(ls "$CASE/vol/b" | grep -vc '^\.')" = "$BEFORE_N"
+    rmdir "$CASE/hub/.sts-complete"
     hdiutil detach -quiet "$CASE/vol" 2>/dev/null || hdiutil detach -quiet -force "$CASE/vol" 2>/dev/null
 else
     printf '  skip backup to a mounted volume (no disk image could be attached here)\n'
