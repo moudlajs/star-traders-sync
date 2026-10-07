@@ -19,6 +19,13 @@ upgrade now rather than later.
   read-only backup volume) exited 1 with no explanation. It now exits 33,
   says why, and removes the unmarked copy, which would otherwise never join
   the rotation or be pruned.
+- `sts doctor` called a symlinked save or hub folder empty (#168).
+- `sts doctor --fix` could clear the local lock of a run that had just
+  taken it and not yet written its pid, letting two runs in at once. A lock
+  under 10 seconds old is now reported as starting and left alone, as the
+  sync commands already do.
+- `sts doctor --fix` edited `~/.zshrc` even when its backup copy could not
+  be written. It now leaves the file alone and says so.
 
 ## [1.6.1] - 2026-10-07
 

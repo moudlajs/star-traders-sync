@@ -2216,7 +2216,10 @@ doc_fix_path() {
         doc_do "open a new shell, or: export PATH=\"\$HOME/bin:\$PATH\""
         return 0
     fi
-    [ -f "$rc" ] && cp "$rc" "$rc.sts-backup" 2>/dev/null
+    if [ -f "$rc" ] && ! cp "$rc" "$rc.sts-backup" 2>/dev/null; then
+        doc_fail "could not back up $rc, so it was not changed"
+        return 1
+    fi
     {
         printf '\n# star-traders-sync: sts and star-traders-sync live in ~/bin\n'
         printf '%s\n' "$line"
@@ -2337,8 +2340,16 @@ doc_state_dirs() {
     if [ -d "$lockdir" ]; then
         holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
         case "$holder" in ''|*[!${CH_DIGITS}]*) holder="" ;; esac
+        local lock_mtime
+        lock_mtime="$(stat -f%m "$lockdir" 2>/dev/null || echo 0)"
+        case "$lock_mtime" in ''|*[!${CH_DIGITS}]*) lock_mtime=0 ;; esac
         if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
             doc_note "another sts is running right now (pid $holder)"
+        elif [ $(( $(date -u +%s) - lock_mtime )) -lt 10 ]; then
+            # A run between its mkdir and its pid write: the pid file is
+            # empty or still names the run before. Never cleared, as in
+            # acquire_local_lock (#151).
+            doc_note "another sts is starting right now"
         else
             doc_warn "a stale local lock is present (owner ${holder:-unknown} is gone)"
             doc_try "clear the stale local lock" rm -rf "$lockdir" "$STATE_DIR/local.lock" || true

@@ -208,11 +208,13 @@ tsmode hub
 # line for line. --fix changes things, so each binary gets a fresh copy of
 # the state: fixboth SETUP ARGS... runs SETUP before each.
 echo "doctor"
+# --fix appends to ~/.zshrc: each run starts without one.
+rcreset() { chmod -R u+w "$HOME/.zshrc.sts-backup" 2>/dev/null; rm -rf "$HOME/.zshrc" "$HOME/.zshrc.sts-backup"; }
 fixboth() {
     local name="$1" setup="$2"; shift 2
     local brc grc
-    $setup; "$BASH_STS" "$@" >"$SB/b.out" 2>"$SB/b.err"; brc=$?
-    $setup; "$GO_STS"   "$@" >"$SB/g.out" 2>"$SB/g.err"; grc=$?
+    rcreset; $setup; "$BASH_STS" "$@" >"$SB/b.out" 2>"$SB/b.err"; brc=$?
+    rcreset; $setup; "$GO_STS"   "$@" >"$SB/g.out" 2>"$SB/g.err"; grc=$?
     if [ "$brc" = "$grc" ] && cmp -s "$SB/b.out" "$SB/g.out" && cmp -s "$SB/b.err" "$SB/g.err"; then
         PASS=$((PASS + 1)); printf '  ok   %s (%s)\n' "$name" "$brc"
     else
@@ -237,10 +239,15 @@ tsmode offline;                                          compare "the hub offlin
 tsmode pingfail;                                         compare "tailscale ping fails" doctor
 tsmode hub
 
-nostate() { fresh; rm -rf "$XDG_STATE_HOME" "$HOME/.zshrc" "$HOME/.zshrc.sts-backup"; }
+nostate() { fresh; rm -rf "$XDG_STATE_HOME"; }
 fixboth "no state directory"            nostate doctor
 fixboth "no state directory, --fix"     nostate doctor --fix
-stale() { fresh; mkdir -p "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; echo 99999 > "$XDG_STATE_HOME/star-traders-sync/local.lock"; }
+rcro() { nostate; printf 'alias ll="ls -l"\n' > "$HOME/.zshrc"; mkdir -p "$HOME/.zshrc.sts-backup"; chmod 555 "$HOME/.zshrc.sts-backup"; }
+fixboth "~/.zshrc cannot be backed up, --fix" rcro doctor --fix
+rcreset
+stale() { fresh; mkdir -p "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; echo 99999 > "$XDG_STATE_HOME/star-traders-sync/local.lock"; touch -t 202001010000 "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; }
+starting() { fresh; mkdir -p "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; : > "$XDG_STATE_HOME/star-traders-sync/local.lock"; }
+fixboth "a local lock being taken, --fix" starting doctor --fix
 fixboth "a stale local lock"            stale doctor
 fixboth "a stale local lock, --fix"     stale doctor --fix
 nohub() { fresh; rm -rf "$S/hub"; }

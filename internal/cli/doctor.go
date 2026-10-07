@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/config"
 	"github.com/moudlajs/star-traders-sync/internal/fail"
@@ -274,8 +275,15 @@ func (d *doctor) fixPath(rc string) {
 		d.do(`open a new shell, or: export PATH="$HOME/bin:$PATH"`)
 		return
 	}
-	if b, err := os.ReadFile(rc); err == nil && isFile(rc) {
-		_ = os.WriteFile(rc+".sts-backup", b, 0o644)
+	if isFile(rc) {
+		b, err := os.ReadFile(rc)
+		if err == nil {
+			err = os.WriteFile(rc+".sts-backup", b, 0o644)
+		}
+		if err != nil {
+			d.fail("could not back up %s, so it was not changed", rc)
+			return
+		}
 	}
 	fh, err := os.OpenFile(rc, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err == nil {
@@ -420,6 +428,13 @@ func (d *doctor) stateDirs() {
 	}
 	if pid, _ := strconv.Atoi(holder); holder != "" && syscall.Kill(pid, 0) == nil {
 		d.note("another sts is running right now (pid %s)", holder)
+		return
+	}
+	// A run between its mkdir and its pid write: the pid file is empty or
+	// still names the run before. Never cleared, as lock.AcquireLocal
+	// refuses it too (#151).
+	if st, err := os.Stat(lockDir); err == nil && time.Since(st.ModTime()) < 10*time.Second {
+		d.note("another sts is starting right now")
 		return
 	}
 	owner := holder
