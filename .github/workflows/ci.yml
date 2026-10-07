@@ -101,6 +101,16 @@ jobs:
       - name: Parity with the bash script
         run: tests/parity.sh
 
+      - name: The regression suite, against the Go build (#25)
+        # Every section of the script's own suite, run against the Go
+        # binary. STS_SKIP lists the sections for commands not ported yet;
+        # it only ever shrinks, and #25 is done when it is empty.
+        run: |
+          go build -o "$RUNNER_TEMP/sts-go" ./cmd/sts
+          STS_BIN="$RUNNER_TEMP/sts-go" \
+          STS_SKIP='^doctor|^restore|^backup' \
+            ./tests/regression.sh -v
+
   setup-app:
     # The macOS app (macos/). Builds the real universal .app and .dmg,
     # not just the package, so a packaging break shows up here rather than

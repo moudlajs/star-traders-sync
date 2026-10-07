@@ -12,7 +12,12 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-STS="$REPO/bin/star-traders-sync"
+# STS_BIN runs the suite against another build of the tool - the Go one
+# (#25) - which must pass it unchanged.
+STS="${STS_BIN:-$REPO/bin/star-traders-sync}"
+# Cases that test the script's own functions read them from here, whatever
+# build $STS is.
+BASH_STS="$REPO/bin/star-traders-sync"
 SB="$(mktemp -d "${TMPDIR:-/tmp}/sts-tests.XXXXXX")"
 REAL_HOME="$HOME"
 VERBOSE=0
@@ -95,6 +100,7 @@ EOF
 
 # check NAME EXPECTED_RC COMMAND...
 check() {
+    if [ "$SKIPPING" -eq 1 ]; then SKIPPED=$((SKIPPED + 1)); return 0; fi
     local name="$1" exp="$2"; shift 2
     local out rc
     out="$("$@" 2>&1)"; rc=$?
@@ -106,7 +112,19 @@ check() {
     fi
 }
 
-section() { printf '\n%s\n' "$1"; }
+# STS_SKIP: a regex of section titles not run - for a build that does not
+# have those commands yet (the Go one, #25). Skipped checks are counted and
+# reported, never passed silently.
+SKIPPED=0
+SKIPPING=0
+section() {
+    printf '\n%s\n' "$1"
+    SKIPPING=0
+    if [ -n "${STS_SKIP:-}" ] && printf '%s' "$1" | grep -qE "$STS_SKIP"; then
+        SKIPPING=1
+        printf '  (skipped: STS_SKIP)\n'
+    fi
+}
 
 # --------------------------------------------------------------------------
 section "seeding and the empty-side guards"
@@ -215,7 +233,7 @@ rm -rf "$CASE/.sts-lock"
 # that has no id yet.
 newcase hostid_race
 RACE="$CASE/racefn.sh"
-sed -n '/^stable_host_id() {/,/^}/p' "$STS" > "$RACE"
+sed -n '/^stable_host_id() {/,/^}/p' "$BASH_STS" > "$RACE"
 mkdir -p "$CASE/raceout"
 i=1
 while [ "$i" -le 20 ]; do
@@ -310,7 +328,7 @@ check "  nothing executed"                               1 test -e /tmp/sts-pwne
 section "remote command construction"
 newcase inject
 INJ="$CASE/injfn.sh"
-sed -n '/^shq() {/,/^}/p; /^hub_exec_args() {/,/^}/p' "$STS" > "$INJ"
+sed -n '/^shq() {/,/^}/p; /^hub_exec_args() {/,/^}/p' "$BASH_STS" > "$INJ"
 rm -f "$CASE/PWNED"
 INJ_OK=1
 # Values that would be code if they were interpolated into shell text.
@@ -945,9 +963,10 @@ check "  no hub lock left"                               1 test -d "$CASE/.sts-l
 check "  the next push succeeds"                         0 "$STS" push
 
 # A hangup in the instant this machine's saves have been moved aside and the
-# staged copy from the hub is not yet in place. IN_SWAP used to be set only
-# after that first mv, so on_exit swept the staged copy as an ordinary temp
-# dir and left only the parked old saves.
+# staged copy from the hub is not yet in place. Injected through a stub mv,
+# so it is about the script: the Go build swaps with rename(2) and holds a
+# signal until the swap is done (internal/transfer, TestAnInterruptWaitsForTheSwap).
+if [ -z "${STS_BIN:-}" ]; then
 newcase swaphup
 "$STS" push --force=local >/dev/null 2>&1
 printf 'from the other mac\n' > "$CASE/hub/game_1.db"     # the hub moved on
@@ -962,6 +981,9 @@ check "  the staged copy is kept"                        0 sh -c 'test -f "$(ls 
 check "  the old saves are parked, not lost"             0 sh -c 'test -f "$(ls -d "$1"/local.sts-old-* | head -1)/game_1.db"' _ "$CASE"
 check "  no hub lock left"                               1 test -d "$CASE/.sts-lock"
 check "  the next pull refuses until they are restored" 13 "$STS" pull
+else
+    printf '  skip the hangup mid-swap (script-only: the Go build cannot be interrupted between its renames)\n'
+fi
 
 # --------------------------------------------------------------------------
 section "a client of a remote hub, over a loopback ssh"
@@ -1068,6 +1090,38 @@ chmod +x "$CASE/hkstub/"*
 check "untrusted host key: refused (31)"                31 env PATH="$CASE/hkstub:$PATH" "$STS" status
 check "  says the same key is already trusted"           0 sh -c 'PATH="$2:$PATH" "$1" status 2>&1 >/dev/null | grep -q "identical host key"' _ "$STS" "$CASE/hkstub"
 check "  and prints nothing of it on stdout"             0 test -z "$(PATH="$CASE/hkstub:$PATH" "$STS" status 2>/dev/null)"
+
+# The connection drops while the hub is read back after a transfer: nothing
+# is recorded (the script's set -e stops there too), so the next run
+# decides from what is really on both sides.
+STATE_BEFORE="$(cat "$(STATEF)")"
+printf 'after-read change\n' > "$CASE/local/game_1.db"
+cat > "$CASE/clientstub/ssh-countdown" <<'STUB'
+2
+STUB
+cp "$CASE/clientstub/ssh" "$CASE/clientstub/ssh.real"
+cat > "$CASE/clientstub/ssh" <<STUB
+#!/bin/bash
+# The second hub manifest read (the one after the transfer) loses the line.
+args="\$*"
+case "\$args" in *"bash -s"*)
+    script="\$(cat)"
+    case "\$script" in *STS_UNHASHABLE*)
+        n=\$(cat "$CASE/clientstub/ssh-countdown"); n=\$((n - 1)); echo "\$n" > "$CASE/clientstub/ssh-countdown"
+        [ "\$n" -le 0 ] && { echo "client_loop: send disconnect" >&2; exit 255; } ;;
+    esac
+    printf '%s\n' "\$script" | exec "$CASE/clientstub/ssh.real" "\$@" ;;
+esac
+exec "$CASE/clientstub/ssh.real" "\$@"
+STUB
+chmod +x "$CASE/clientstub/ssh"
+check "hub unreadable after the push: it fails"          1 sh -c '"$1" push >/dev/null 2>&1; [ $? -eq 0 ]' _ "$STS"
+check "  and nothing was recorded"                       0 test "$(cat "$(STATEF)")" = "$STATE_BEFORE"
+mv "$CASE/clientstub/ssh.real" "$CASE/clientstub/ssh"
+rm -f "$CASE/clientstub/ssh-countdown"
+# The push itself went through; put both sides back to what the record says.
+printf 'second change\n' > "$CASE/hub/game_1.db"
+printf 'second change\n' > "$CASE/local/game_1.db"
 
 # The connection drops under the carry itself: no verdict, so no swap.
 touch "$CASE/clientstub/drop-carry"
@@ -1354,5 +1408,9 @@ else
     printf '  ok   the suite left the real home untouched\n'
 fi
 
-printf '\n%s: %s passed, %s failed\n' "$(basename "$0")" "$PASS" "$FAIL"
+if [ "$SKIPPED" -gt 0 ]; then
+    printf '\n%s: %s passed, %s failed, %s skipped (STS_SKIP=%s)\n' "$(basename "$0")" "$PASS" "$FAIL" "$SKIPPED" "$STS_SKIP"
+else
+    printf '\n%s: %s passed, %s failed\n' "$(basename "$0")" "$PASS" "$FAIL"
+fi
 [ "$FAIL" -eq 0 ]
