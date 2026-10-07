@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # Builds "Star Traders Sync.app" and a .dmg around it, with the
-# current bin/star-traders-sync bundled inside.
+# current bin/star-traders-sync and the Go build bundled inside, behind
+# the engine shim (#175).
 #
 #   macos/build-app.sh            universal (arm64 + x86_64), needs Xcode
 #   macos/build-app.sh --native   this Mac's architecture only, faster
@@ -38,9 +39,23 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swift "$HERE/icon/make-icon.swift" "$OUT/icon" >/dev/null
 cp "$OUT/icon/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN_DIR/STSSetup" "$APP/Contents/MacOS/STSSetup"
-cp "$REPO/bin/star-traders-sync" "$APP/Contents/Resources/star-traders-sync"
-cp "$REPO/config.example" "$APP/Contents/Resources/config.example"
-chmod 755 "$APP/Contents/Resources/star-traders-sync"
+# The tool is three files (#175): the engine shim every caller runs by its
+# old name, the script, and the Go build. The shim picks one.
+RES="$APP/Contents/Resources"
+sed "s/@STS_VERSION@/$VERSION/" "$HERE/engine-shim.sh" > "$RES/star-traders-sync"
+cp "$REPO/bin/star-traders-sync" "$RES/star-traders-sync.bash"
+GOARCHS=(arm64 amd64)
+[ "${1:-}" = "--native" ] && GOARCHS=("$(go env GOARCH)")
+thin=()
+for a in "${GOARCHS[@]}"; do
+    (cd "$REPO" && CGO_ENABLED=0 GOOS=darwin GOARCH="$a" go build -trimpath -o "$OUT/sts-go-$a" ./cmd/sts)
+    thin+=("$OUT/sts-go-$a")
+done
+lipo -create -output "$RES/star-traders-sync-go" "${thin[@]}"
+rm -f "${thin[@]}"
+codesign --force --sign - "$RES/star-traders-sync-go"
+cp "$REPO/config.example" "$RES/config.example"
+chmod 755 "$RES/star-traders-sync" "$RES/star-traders-sync.bash" "$RES/star-traders-sync-go"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

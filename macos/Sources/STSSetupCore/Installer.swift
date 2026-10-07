@@ -55,13 +55,35 @@ public enum Installer {
             + linkCommands(layout: layout, fileManager: fm)
     }
 
-    /// Step one: the script and config.example into Application Support.
+    /// The engines the bundled tool runs (#175): files beside it in the
+    /// bundle, installed beside it. A bundle without them - a checkout's
+    /// bare script - installs just the one file, as before.
+    public static let engineNames = ["star-traders-sync.bash", "star-traders-sync-go"]
+
+    /// Every file to install, engines first: the shim that picks one goes
+    /// last, so it never points at an engine not yet in place.
+    static func toolFiles(bundledScript: URL, layout: InstallLayout,
+                          fm: FileManager) -> [(src: URL, dst: URL)] {
+        let dir = layout.installedScript.deletingLastPathComponent()
+        var files: [(src: URL, dst: URL)] = []
+        for name in engineNames {
+            let src = bundledScript.deletingLastPathComponent().appendingPathComponent(name)
+            if fm.fileExists(atPath: src.path) {
+                files.append((src, dir.appendingPathComponent(name)))
+            }
+        }
+        return files + [(bundledScript, layout.installedScript)]
+    }
+
+    /// Step one: the tool and config.example into Application Support.
     public static func installFiles(bundledScript: URL, bundledExample: URL?,
                                     layout: InstallLayout,
                                     fileManager fm: FileManager = .default) throws -> [String] {
         try fm.createDirectory(at: layout.installedScript.deletingLastPathComponent(),
                                withIntermediateDirectories: true)
-        try atomicCopy(bundledScript, to: layout.installedScript, mode: 0o755, fm: fm)
+        for f in toolFiles(bundledScript: bundledScript, layout: layout, fm: fm) {
+            try atomicCopy(f.src, to: f.dst, mode: 0o755, fm: fm)
+        }
         if let ex = bundledExample {
             try atomicCopy(ex, to: layout.installedExample, mode: 0o644, fm: fm)
         }
@@ -92,8 +114,13 @@ public enum Installer {
     public static func refreshAppScript(bundledScript: URL?, bundledExample: URL?, layout: InstallLayout,
                                         isRunning: () -> Bool = scriptIsRunning,
                                         fileManager fm: FileManager = .default) -> RefreshResult {
-        guard let bundledScript, let new = try? Data(contentsOf: bundledScript) else { return .noBundledScript }
-        if let old = try? Data(contentsOf: layout.installedScript), old == new { return .unchanged }
+        guard let bundledScript, fm.fileExists(atPath: bundledScript.path) else { return .noBundledScript }
+        // Any of the files: an engine can change while the shim does not.
+        let current = toolFiles(bundledScript: bundledScript, layout: layout, fm: fm).allSatisfy { f in
+            guard let new = try? Data(contentsOf: f.src), let old = try? Data(contentsOf: f.dst) else { return false }
+            return old == new
+        }
+        if current { return .unchanged }
         if isRunning() { return .skippedWhileRunning }
         do {
             _ = try installFiles(bundledScript: bundledScript, bundledExample: bundledExample,

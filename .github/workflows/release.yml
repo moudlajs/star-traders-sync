@@ -33,8 +33,18 @@ jobs:
             echo "six releases. Move Unreleased into a [$tag] section first."
             exit 1; }
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
       - name: Regression suite must pass before a release exists
         run: ./tests/regression.sh
+
+      - name: And the Go build it ships must pass it too, and match the script (#175)
+        run: |
+          go build -o "$RUNNER_TEMP/sts-go" ./cmd/sts
+          STS_BIN="$RUNNER_TEMP/sts-go" ./tests/regression.sh
+          STS_GO="$RUNNER_TEMP/sts-go" tests/parity.sh
 
       - name: Build the app
         run: |
@@ -53,6 +63,17 @@ jobs:
           [ -n "$pub" ] || { echo "no public key found in Updater.swift"; exit 1; }
           swift macos/scripts/release-sign.swift verify "$dmg" "$dmg.sig" "$pub"
 
+      - name: The Go build, on its own, signed (#175)
+        env:
+          STS_RELEASE_SIGNING_KEY: ${{ secrets.STS_RELEASE_SIGNING_KEY }}
+        run: |
+          bin=macos/build/star-traders-sync-go-darwin-universal
+          cp "macos/build/Star Traders Sync.app/Contents/Resources/star-traders-sync-go" "$bin"
+          (cd macos/build && shasum -a 256 "$(basename "$bin")" > "$(basename "$bin").sha256")
+          swift macos/scripts/release-sign.swift sign "$bin" > "$bin.sig"
+          pub="$(grep -oE 'publicKeyBase64 = "[^"]+"' macos/Sources/STSSetupCore/Updater.swift | cut -d'"' -f2 || true)"
+          swift macos/scripts/release-sign.swift verify "$bin" "$bin.sig" "$pub"
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -64,4 +85,7 @@ jobs:
             install.sh \
             config.example \
             macos/build/Star-Traders-Sync.dmg \
-            macos/build/Star-Traders-Sync.dmg.sig
+            macos/build/Star-Traders-Sync.dmg.sig \
+            macos/build/star-traders-sync-go-darwin-universal \
+            macos/build/star-traders-sync-go-darwin-universal.sha256 \
+            macos/build/star-traders-sync-go-darwin-universal.sig

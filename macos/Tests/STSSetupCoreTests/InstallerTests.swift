@@ -134,6 +134,44 @@ final class InstallerTests: XCTestCase {
         XCTAssertEqual(Installer.refreshAppScript(bundledScript: nil, bundledExample: nil, layout: layout), .noBundledScript)
     }
 
+    /// A bundle as build-app.sh makes it (#175): the shim, with both
+    /// engines beside it.
+    func makeBundle() throws -> URL {
+        let res = home.appendingPathComponent("Bundle/Resources")
+        try fm.createDirectory(at: res, withIntermediateDirectories: true)
+        try "#!/bin/bash\n# shim\n".write(to: res.appendingPathComponent("star-traders-sync"), atomically: true, encoding: .utf8)
+        try fm.copyItem(at: script, to: res.appendingPathComponent("star-traders-sync.bash"))
+        try "go build v1\n".write(to: res.appendingPathComponent("star-traders-sync-go"), atomically: true, encoding: .utf8)
+        return res.appendingPathComponent("star-traders-sync")
+    }
+
+    func testTheShimIsInstalledWithBothEngines() throws {
+        let shim = try makeBundle()
+        _ = try Installer.installFiles(bundledScript: shim, bundledExample: example, layout: layout)
+        let dir = layout.installedScript.deletingLastPathComponent()
+        for name in ["star-traders-sync"] + Installer.engineNames {
+            let src = shim.deletingLastPathComponent().appendingPathComponent(name)
+            let dst = dir.appendingPathComponent(name)
+            XCTAssertEqual(try Data(contentsOf: dst), try Data(contentsOf: src), name)
+            XCTAssertTrue(fm.isExecutableFile(atPath: dst.path), name)
+        }
+    }
+
+    /// The shim rarely changes; a new engine behind it must still arrive.
+    func testAnEngineChangeAloneIsRefreshed() throws {
+        let shim = try makeBundle()
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: shim, bundledExample: example,
+                                                  layout: layout, isRunning: { false }), .refreshed)
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: shim, bundledExample: example,
+                                                  layout: layout, isRunning: { false }), .unchanged)
+        let go = shim.deletingLastPathComponent().appendingPathComponent("star-traders-sync-go")
+        try "go build v2\n".write(to: go, atomically: true, encoding: .utf8)
+        XCTAssertEqual(Installer.refreshAppScript(bundledScript: shim, bundledExample: example,
+                                                  layout: layout, isRunning: { false }), .refreshed)
+        let installed = layout.installedScript.deletingLastPathComponent().appendingPathComponent("star-traders-sync-go")
+        XCTAssertEqual(try String(contentsOf: installed, encoding: .utf8), "go build v2\n")
+    }
+
     func testAppScriptRefreshLeavesARepoLinkAlone() throws {
         try fm.createDirectory(at: layout.binDir, withIntermediateDirectories: true)
         let link = layout.binDir.appendingPathComponent("sts")

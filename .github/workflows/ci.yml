@@ -124,11 +124,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
       - name: Unit tests
         run: swift test --package-path macos
 
       - name: Build the .app and .dmg
         run: macos/build-app.sh
+
+      - name: The bundle holds the shim and both engines (#175)
+        run: |
+          res="macos/build/Star Traders Sync.app/Contents/Resources"
+          lipo "$res/star-traders-sync-go" -verify_arch arm64 x86_64
+          ver="$(bin/star-traders-sync --version)"
+          for e in bash go; do
+            got="$(STS_ENGINE=$e "$res/star-traders-sync" --version)"
+            echo "$e: $got"
+            [ "$got" = "$ver" ] || { echo "engine $e reports '$got', want '$ver'"; exit 1; }
+          done
 
   conventions:
     # PR title becomes the squash commit subject, so it is the thing that
@@ -192,4 +207,4 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y shellcheck
           shellcheck --shell=bash --severity=warning \
-            bin/star-traders-sync install.sh tests/regression.sh || true
+            bin/star-traders-sync install.sh tests/regression.sh macos/engine-shim.sh || true

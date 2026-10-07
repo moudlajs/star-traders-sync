@@ -13,6 +13,16 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Added
+
+- The Go build ships inside the app, beside the script, and is opt-in:
+  `echo go > ~/.config/star-traders-sync/engine`. The script stays the
+  default; `echo bash > ...` or deleting the file goes back. Every caller,
+  including the nightly backup job and its Full Disk Access grant, runs a
+  small launcher that picks the engine. Releases also attach the Go build
+  on its own, with a checksum and a signature. See `docs/engine.md`
+  ([#175]).
+
 ## [1.6.2] - 2026-10-07
 
 ### Fixed
@@ -438,3 +448,4 @@ of those findings has a case in `tests/regression.sh`.
 [#158]: https://github.com/moudlajs/star-traders-sync/issues/158
 [#168]: https://github.com/moudlajs/star-traders-sync/issues/168
 [#169]: https://github.com/moudlajs/star-traders-sync/issues/169
+[#175]: https://github.com/moudlajs/star-traders-sync/issues/175
