@@ -156,7 +156,9 @@ public struct SSHSetup {
     public func explain(_ r: CommandResult) -> String {
         let s = r.combined
         if s.contains("Permission denied") {
-            return "The hub refused the password. It is the password of the account on the hub Mac, not this one."
+            // Name the account: a wrong account name (#178) looks exactly
+            // like a wrong password from here.
+            return "The hub refused the password for the account \"\(user)\". Check both: it is the password of that account on the hub Mac, and the account name must be the one on the hub Mac (its home folder, /Users/name), which is often not the same as this Mac's. Go Back to change it."
         }
         if s.contains("Connection refused") {
             return "Remote Login is off on the hub. On the hub Mac: System Settings > General > Sharing > Remote Login."
