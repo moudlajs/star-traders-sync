@@ -1186,7 +1186,10 @@ check "restore the oldest of SNAPSHOT_KEEP"              0 "$STS" restore "$OLDE
 check "  nothing was pruned"                             0 test "$(ls "$SNAPS" | grep -c .)" -eq 4
 check "  the oldest is still there"                      0 test -d "$SNAPS/$OLDEST"
 
-# A snapshot that fails part way never becomes a listed safety copy. A
+# A snapshot that fails part way never becomes a listed safety copy.
+# Injected through a cpio that copies nothing, so it is about the script;
+# the Go build copies natively (TestAnIncompleteSnapshotStaysHidden).
+if [ -z "${STS_BIN:-}" ]; then
 # cpio that copies nothing and exits 0 - what macOS cpio does through a
 # symlinked parent - makes the pull's snapshot INCOMPLETE (63).
 COUNT_BEFORE="$(ls "$SNAPS" | grep -c .)"
@@ -1196,6 +1199,9 @@ check "an incomplete snapshot refuses the pull (63)"    63 env PATH="$CASE/nocpi
 check "  and is not listed as a safety copy"             0 test "$(ls "$SNAPS" | grep -c .)" -eq "$COUNT_BEFORE"
 check "  restore --json does not offer it either"        0 sh -c '"$1" restore --json 2>/dev/null | python3 -c "import json,sys; assert len(json.load(sys.stdin)[\"snapshots\"])==int(sys.argv[1])" "$2"' _ "$STS" "$COUNT_BEFORE"
 check "  the partial copy is kept aside, hidden"         0 sh -c 'ls -d "$1"/.partial-* >/dev/null 2>&1' _ "$SNAPS"
+else
+    printf '  skip an incomplete snapshot (script-only: injected through cpio)\n'
+fi
 
 check "a name that is a path: refused (65)"             65 "$STS" restore "../local"
 check "a dotted name: refused (65)"                     65 "$STS" restore ".."
