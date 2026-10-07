@@ -16,6 +16,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/config"
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
 	"github.com/moudlajs/star-traders-sync/internal/fail"
+	"github.com/moudlajs/star-traders-sync/internal/lock"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
 )
 
@@ -230,7 +231,7 @@ func Main(args []string, env Env) int {
 		o.Command, b2i(o.DryRun), o.Force, b2i(o.OfflineOK), Version)
 
 	switch o.Command {
-	case "status", "pull", "push", "play", "restore":
+	case "status", "pull", "push", "play", "restore", "backup":
 	default:
 		return notYet(env, o.Command)
 	}
@@ -249,6 +250,20 @@ func Main(args []string, env Env) int {
 	// "defer r.lockLoc.Release()" would bind the nil it holds now.
 	defer func() { r.lockLoc.Release() }() // status takes no hub lock
 	now := time.Now()
+	if o.Command == "backup" {
+		// backup is local to the hub and does not need the tailnet; its own
+		// lock, so a nightly run is not cancelled by an interactive one.
+		l, lf := lock.AcquireLocal(p.stateDir, true, r.pid, now, log)
+		if f = lf; f == nil {
+			r.lockLoc = l
+			r.ex.add(l.Release)
+			f = r.backup(now)
+		}
+		if f != nil {
+			return report(env, log, p, f)
+		}
+		return 0
+	}
 	if o.Command == "restore" {
 		// restore touches only this machine's saves: no tailnet, no hub.
 		if f = r.prepareLocal(now); f == nil {

@@ -108,7 +108,7 @@ jobs:
         run: |
           go build -o "$RUNNER_TEMP/sts-go" ./cmd/sts
           STS_BIN="$RUNNER_TEMP/sts-go" \
-          STS_SKIP='^doctor|^backup' \
+          STS_SKIP='^doctor' \
             ./tests/regression.sh -v
 
   setup-app:
