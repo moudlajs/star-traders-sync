@@ -3345,12 +3345,13 @@ backup_volume_mounted() {
     return 0
 }
 
-check_backup_volume() {
-    local vol="$CFG_BACKUP_VOLUME" dev_vol dev_parent waited
-
-    # A scheduled backup can fire moments after wake, before an external
-    # disk has remounted. Failing instantly would lose the whole day's
-    # backup over a condition that resolves itself in seconds.
+# A scheduled backup can fire moments after wake, before an external disk
+# has remounted. Failing instantly would lose the whole day's backup over a
+# condition that resolves itself in seconds. Called before the hub lock is
+# taken, so the other machine is not locked out of the hub while this
+# waits for a disk that may never come (#169).
+wait_for_backup_volume() {
+    local vol="$CFG_BACKUP_VOLUME" waited
     if [ "$CFG_BACKUP_MOUNT_WAIT" -gt 0 ] && ! backup_volume_mounted; then
         say "waiting up to ${CFG_BACKUP_MOUNT_WAIT}s for $vol to mount..."
         log INFO backup "waiting up to ${CFG_BACKUP_MOUNT_WAIT}s for $vol"
@@ -3364,6 +3365,12 @@ check_backup_volume() {
             fi
         done
     fi
+}
+
+# The volume, checked again under the hub lock: it can go away during the
+# wait.
+check_backup_volume() {
+    local vol="$CFG_BACKUP_VOLUME" dev_vol dev_parent
 
     [ -d "$vol" ] || die $EX_BACKUP_NOT_MOUNTED backup \
         "backup volume $vol is not present at all - is the disk plugged in?"
@@ -3538,6 +3545,7 @@ cmd_backup() {
     # torn backup used to join the rotation looking exactly like a good one.
     IS_HUB=1
     HUB_ENDPOINT_KIND="local"
+    wait_for_backup_volume
     acquire_hub_lock
 
     check_backup_volume

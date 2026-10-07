@@ -53,7 +53,10 @@ func volumeMounted(vol string) bool {
 	return ok1 && ok2 && dv != dp && writable(vol)
 }
 
-func (r *run) checkBackupVolume() *fail.Failure {
+// waitForBackupVolume is wait_for_backup_volume: up to BACKUP_MOUNT_WAIT
+// for a disk still remounting after wake. Before the hub lock, so the other
+// machine is not locked out while this waits (#169).
+func (r *run) waitForBackupVolume() {
 	vol := r.cfg.Get("BACKUP_VOLUME")
 	if wait := r.cfg.Int("BACKUP_MOUNT_WAIT"); wait > 0 && !volumeMounted(vol) {
 		r.say("waiting up to %ds for %s to mount...", wait, vol)
@@ -67,6 +70,12 @@ func (r *run) checkBackupVolume() *fail.Failure {
 			}
 		}
 	}
+}
+
+// checkBackupVolume is check_backup_volume, under the hub lock: the volume
+// can go away during the wait.
+func (r *run) checkBackupVolume() *fail.Failure {
+	vol := r.cfg.Get("BACKUP_VOLUME")
 	if st, err := os.Stat(vol); err != nil || !st.IsDir() {
 		return fail.New(exitcode.BackupNotMounted, "backup", "backup volume %s is not present at all - is the disk plugged in?", vol)
 	}
@@ -117,6 +126,7 @@ func (r *run) backup(now time.Time) *fail.Failure {
 	r.hub = &hub.Hub{Host: r.cfg.Get("HUB_HOST"), User: r.cfg.Get("HUB_USER"), Path: r.cfg.Get("HUB_PATH"),
 		IsLocal: true, EndpointKind: "local", Exec: hubexec.Local{}, Log: r.log, Stdout: r.out, Stderr: r.env.Stderr}
 	s := r.newSyncer(now)
+	r.waitForBackupVolume()
 	if f := s.hubLock.Acquire(); f != nil {
 		return f
 	}

@@ -19,6 +19,10 @@ upgrade now rather than later.
   read-only backup volume) exited 1 with no explanation. It now exits 33,
   says why, and removes the unmarked copy, which would otherwise never join
   the rotation or be pruned.
+- `sts backup` waiting for `BACKUP_MOUNT_WAIT` held the hub lock the whole
+  time, so the other Mac's `pull`, `push` and `play` were refused (50)
+  while the hub waited for an unplugged disk. It now waits first, then
+  takes the lock and checks the volume again (#169).
 - `sts doctor` called a symlinked save or hub folder empty (#168).
 - `sts doctor --fix` could clear the local lock of a run that had just
   taken it and not yet written its pid, letting two runs in at once. A lock
