@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +17,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/lock"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
 	"github.com/moudlajs/star-traders-sync/internal/manifest"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 	"github.com/moudlajs/star-traders-sync/internal/saves"
 	"github.com/moudlajs/star-traders-sync/internal/state"
 	"github.com/moudlajs/star-traders-sync/internal/tailscale"
@@ -45,15 +44,7 @@ type run struct {
 
 func (r *run) say(format string, a ...any) { fmt.Fprintf(r.out, format+"\n", a...) }
 
-func hostnameShort() string {
-	out, err := exec.Command("hostname", "-s").Output()
-	if err != nil {
-		h, _ := os.Hostname()
-		h, _, _ = strings.Cut(h, ".")
-		return h
-	}
-	return strings.TrimSpace(string(out))
-}
+func hostnameShort() string { return platform.ShortHostname() }
 
 // prepare is main() from the local lock to the hub path check: everything
 // every hub-facing command needs first.
@@ -296,10 +287,14 @@ func (r *run) status() *fail.Failure {
 	return nil
 }
 
-// pgrep is the script's 'pgrep -x NAME | tr "\n" " "'.
+// pgrep is the script's 'pgrep -x NAME | tr "\n" " "': each pid followed
+// by a space.
 func pgrep(name string) string {
-	out, _ := exec.Command("pgrep", "-x", name).Output()
-	return strings.ReplaceAll(string(out), "\n", " ")
+	var s string
+	for _, p := range platform.ProcessIDs(name) {
+		s += p + " "
+	}
+	return s
 }
 
 type jsonSide struct {

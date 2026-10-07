@@ -8,10 +8,8 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/config"
@@ -20,6 +18,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/hubexec"
 	"github.com/moudlajs/star-traders-sync/internal/lock"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 	"github.com/moudlajs/star-traders-sync/internal/tailscale"
 )
 
@@ -94,9 +93,8 @@ func whoami() string {
 	return "this user"
 }
 
-// The script's test(1) checks, which use access(2) rather than mode bits.
-func canRead(p string) bool { return syscall.Access(p, 4) == nil }
-func canExec(p string) bool { return syscall.Access(p, 1) == nil }
+func canRead(p string) bool { return platform.CanRead(p) }
+func canExec(p string) bool { return platform.CanExec(p) }
 func isDir(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
@@ -198,11 +196,11 @@ func (d *doctor) environment() {
 
 	// The hub side runs the script's snippets under bash, here too when
 	// this machine is the hub.
-	out, err := exec.Command("/bin/bash", "-c",
+	out, err := exec.Command(platform.Shell, "-c",
 		`printf '%s %s %s' "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "$BASH_VERSION"`).Output()
 	f := strings.Fields(string(out))
 	if err != nil || len(f) != 3 {
-		d.fail("/bin/bash is missing or would not run")
+		d.fail("%s is missing or would not run", platform.Shell)
 	} else if maj, _ := strconv.Atoi(f[0]); maj < 3 || maj == 3 && atoi(f[1]) < 2 {
 		d.fail("bash %s is too old, 3.2 required", f[2])
 	} else {
@@ -217,8 +215,9 @@ func (d *doctor) environment() {
 	}
 	if missing != "" {
 		d.fail("not on PATH:%s", missing)
-		d.do("these ship with macOS; python3 needs the Xcode command line tools:")
-		d.do("    xcode-select --install")
+		for _, l := range platform.ToolsHint {
+			d.do("%s", l)
+		}
 	} else {
 		d.ok("rsync, ssh, python3, shasum, cpio")
 		v, _ := exec.Command("rsync", "--version").CombinedOutput()
@@ -395,7 +394,12 @@ func isPlaceholder(v string) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(v, "/Volumes/Backup")
+	for _, p := range platform.PlaceholderPrefixes {
+		if strings.HasPrefix(v, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *doctor) stateDirs() {
@@ -430,7 +434,7 @@ func (d *doctor) stateDirs() {
 	if holder == "" || !onlyDigits(holder) {
 		holder = ""
 	}
-	if pid, _ := strconv.Atoi(holder); holder != "" && (busy || syscall.Kill(pid, 0) == nil) {
+	if pid, _ := strconv.Atoi(holder); holder != "" && (busy || platform.PidSignalable(pid)) {
 		d.note("another sts is running right now (pid %s)", holder)
 		return
 	}
@@ -476,7 +480,7 @@ func (d *doctor) saveDir() {
 		d.fail("save directory does not exist: %s", p)
 		d.do("launch the game once so it creates it, then re-run")
 		d.do("if the path is wrong, find the real one:")
-		d.do("    ls -la ~/Library | grep -i star")
+		d.do("%s", platform.FindSavesHint)
 		return
 	}
 	if !isDir(p) {
@@ -492,10 +496,8 @@ func (d *doctor) saveDir() {
 
 	// The appid is checkable without launching anything.
 	appid := d.cfg.Get("STEAM_APPID")
-	libs := []string{d.env.Getenv("HOME") + "/Library/Application Support/Steam"}
-	vols, _ := filepath.Glob("/Volumes/*/SteamLibrary")
 	found := false
-	for _, lib := range append(libs, vols...) {
+	for _, lib := range platform.SteamLibraries(d.env.Getenv("HOME")) {
 		if isFile(lib + "/steamapps/appmanifest_" + appid + ".acf") {
 			found = true
 			break
@@ -506,7 +508,7 @@ func (d *doctor) saveDir() {
 	} else {
 		d.warn("no Steam manifest found for appid %s", appid)
 		d.do("sts play needs it; pull and push do not")
-		d.do("check with: open steam://rungameid/%s", appid)
+		d.do("check with: %s", platform.LaunchHint(appid))
 	}
 }
 
@@ -737,8 +739,6 @@ func (d *doctor) ssh() {
 	}
 }
 
-var lastExit = regexp.MustCompile(`last exit code = [0-9]+`)
-
 func (d *doctor) hubOnly() {
 	if !d.isHub {
 		return
@@ -764,17 +764,7 @@ func (d *doctor) hubOnly() {
 	vol := d.cfg.Get("BACKUP_VOLUME")
 	if volumeMounted(vol) {
 		d.ok("backup volume %s is mounted and writable", vol)
-		info, _ := exec.Command("diskutil", "info", vol).Output()
-		var fs []string
-		for _, l := range strings.Split(string(info), "\n") {
-			if strings.Contains(l, "File System Personality") {
-				if f := strings.Fields(l); len(f) > 0 {
-					fs = append(fs, f[len(f)-1])
-				}
-			}
-		}
-		switch strings.Join(fs, "\n") {
-		case "ExFAT", "MS-DOS", "FAT32":
+		if platform.FullCopyVolume(vol) {
 			d.note("the backup volume has no hard links, so each backup is a full copy")
 		}
 	} else {
@@ -782,29 +772,23 @@ func (d *doctor) hubOnly() {
 		d.do("plug the disk in; sts backup refuses rather than writing to the internal disk")
 	}
 
-	const label = "com.github.moudlajs.star-traders-sync.backup"
-	job := fmt.Sprintf("gui/%d/%s", os.Getuid(), label)
-	printed, err := exec.Command("launchctl", "print", job).Output()
-	if err != nil {
+	job := platform.BackupJob("com.github.moudlajs.star-traders-sync.backup")
+	if !job.Installed {
 		d.warn("the daily backup job is not installed")
-		d.do("./launchd/install-backup-job.sh")
+		d.do("%s", job.InstallCmd)
 		return
 	}
-	var codes []string
-	for _, m := range lastExit.FindAllString(string(printed), -1) {
-		codes = append(codes, m[strings.LastIndex(m, " ")+1:])
-	}
-	switch ec := strings.Join(codes, "\n"); ec {
+	switch ec := strings.Join(job.LastExits, "\n"); ec {
 	case "":
 		d.ok("daily backup job is loaded, has not run yet")
-		d.do("run it now to be sure it works: launchctl kickstart -k %s", job)
+		d.do("run it now to be sure it works: %s", job.RunNowCmd)
 	case "0":
 		d.ok("daily backup job is loaded, last run exited 0")
 	default:
 		d.warn("daily backup job is loaded, last run exited %s", ec)
-		d.do("see ~/Library/Logs/star-traders-sync/backup.launchd.err")
+		d.do("see %s", job.ErrLog)
 		if ec == "70" {
-			d.do("exit 70 usually means the disk was unplugged, or macOS denied access to it")
+			d.do("%s", job.Exit70Hint)
 		}
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
 // Exec runs script with args as $1..$n.
@@ -29,7 +31,7 @@ type Exec interface {
 type Local struct{}
 
 func (Local) cmd(script string, args []string) *exec.Cmd {
-	return exec.Command("/bin/bash", append([]string{"-c", script, "sts"}, args...)...)
+	return exec.Command(platform.Shell, append([]string{"-c", script, "sts"}, args...)...)
 }
 
 func (l Local) Run(script string, args ...string) (string, error) {

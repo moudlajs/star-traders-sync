@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
@@ -18,6 +17,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/hub"
 	"github.com/moudlajs/star-traders-sync/internal/hubexec"
 	"github.com/moudlajs/star-traders-sync/internal/lock"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 	"github.com/moudlajs/star-traders-sync/internal/transfer"
 )
 
@@ -28,19 +28,12 @@ func (r *run) isHubByHostname() bool {
 	if want == strings.ToLower(r.host) {
 		return true
 	}
-	out, _ := exec.Command("scutil", "--get", "LocalHostName").Output()
-	return want == strings.ToLower(strings.TrimSpace(string(out)))
+	return want == strings.ToLower(platform.LocalHostName())
 }
 
-func device(p string) (uint64, bool) {
-	var st syscall.Stat_t
-	if syscall.Stat(p, &st) != nil {
-		return 0, false
-	}
-	return uint64(st.Dev), true
-}
+func device(p string) (uint64, bool) { return platform.Device(p) }
 
-func writable(p string) bool { return syscall.Access(p, 2) == nil } // W_OK
+func writable(p string) bool { return platform.CanWrite(p) }
 
 // volumeMounted is backup_volume_mounted: there, a mount point (another
 // device than its parent), and writable.

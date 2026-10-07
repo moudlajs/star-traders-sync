@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/fail"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
 // A remote hub runs the script's own text, so doctor sends it verbatim.
@@ -51,7 +51,7 @@ func TestDoctorLeavesAFlockedLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer fl.Close()
-	if err := syscall.Flock(int(fl.Fd()), syscall.LOCK_EX); err != nil {
+	if err := platform.LockFile(fl); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(state, "local.lock.d")

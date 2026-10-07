@@ -12,13 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
 	"github.com/moudlajs/star-traders-sync/internal/fail"
 	"github.com/moudlajs/star-traders-sync/internal/hubexec"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
 // DirName is the hub lock's name, beside HUB_PATH - never inside it, since
@@ -348,7 +348,7 @@ func AcquireLocal(stateDir string, backup bool, pid int, now time.Time, log *log
 	if err != nil {
 		return nil, fail.New(exitcode.LockLocal, "lock", "could not open the local lock in %s: %v", stateDir, err)
 	}
-	if err := syscall.Flock(int(fl.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := platform.LockFile(fl); err != nil {
 		fl.Close()
 		holder := strings.TrimSpace(firstLine(l.file))
 		if !digits(holder) {
@@ -414,16 +414,16 @@ func HoldLocal(stateDir string, create bool) (release func(), busy bool, err err
 		}
 		return func() {}, false, nil
 	}
-	if syscall.Flock(int(fl.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+	if platform.LockFile(fl) != nil {
 		fl.Close()
 		return func() {}, true, nil
 	}
-	return func() { _ = syscall.Flock(int(fl.Fd()), syscall.LOCK_UN); fl.Close() }, false, nil
+	return func() { platform.UnlockFile(fl); fl.Close() }, false, nil
 }
 
 func (l *Local) unflock() {
 	if l.flock != nil {
-		_ = syscall.Flock(int(l.flock.Fd()), syscall.LOCK_UN)
+		platform.UnlockFile(l.flock)
 		l.flock.Close()
 		l.flock = nil
 	}
@@ -444,10 +444,5 @@ func (l *Local) Release() {
 
 func alive(pid string) bool {
 	n, err := strconv.Atoi(pid)
-	if err != nil || n <= 0 {
-		return false
-	}
-	// kill -0: the process exists (EPERM means it exists, owned by another user).
-	err = syscall.Kill(n, 0)
-	return err == nil || err == syscall.EPERM
+	return err == nil && platform.PidAlive(n)
 }
