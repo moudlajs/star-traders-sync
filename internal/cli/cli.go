@@ -230,7 +230,7 @@ func Main(args []string, env Env) int {
 		o.Command, b2i(o.DryRun), o.Force, b2i(o.OfflineOK), Version)
 
 	switch o.Command {
-	case "status", "pull", "push":
+	case "status", "pull", "push", "play":
 	default:
 		return notYet(env, o.Command)
 	}
@@ -257,10 +257,13 @@ func Main(args []string, env Env) int {
 		f = r.status()
 	default:
 		s := r.newSyncer(now)
-		if o.Command == "pull" {
+		switch o.Command {
+		case "pull":
 			f = s.pull()
-		} else {
+		case "push":
 			f = s.push()
+		case "play":
+			f = s.play()
 		}
 		if f != nil {
 			code := report(env, log, p, f)
