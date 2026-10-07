@@ -637,6 +637,17 @@ check "  but not cleared without --fix"                  0 test -d "$CASE/state/
 check "  and cleared with --fix"                         1 test -d "$CASE/state/star-traders-sync/local.lock.d"
 
 # --------------------------------------------------------------------------
+section "build-app.sh says what it needs (#180)"
+# Both refusals come before any build starts, so these are quick.
+if [ -d /Library/Developer/CommandLineTools ]; then
+    check "universal build with only the CLT: refused"       1 env DEVELOPER_DIR=/Library/Developer/CommandLineTools "$REPO/macos/build-app.sh"
+    check "  and points at --native"                         0 sh -c 'DEVELOPER_DIR=/Library/Developer/CommandLineTools "$1" 2>&1 | grep -q -- "--native"' _ "$REPO/macos/build-app.sh"
+else
+    printf '  skip the CLT-only case (no Command Line Tools here)\n'
+fi
+check "no Go: refused, saying so"                        0 sh -c 'PATH=/usr/bin:/bin "$1" --native 2>&1 | grep -q "Go is needed"' _ "$REPO/macos/build-app.sh"
+
+# --------------------------------------------------------------------------
 section "engine shim"
 # The app installs macos/engine-shim.sh as star-traders-sync, with the script
 # and the Go build beside it (#175). Fake engines say which one ran.

@@ -4,8 +4,9 @@
 # current bin/star-traders-sync and the Go build bundled inside, behind
 # the engine shim (#175).
 #
-#   macos/build-app.sh            universal (arm64 + x86_64), needs Xcode
-#   macos/build-app.sh --native   this Mac's architecture only, faster
+#   macos/build-app.sh            universal (arm64 + x86_64), needs Xcode and Go
+#   macos/build-app.sh --native   this Mac's architecture only, faster; needs
+#                                 Go and the Command Line Tools, not Xcode
 #
 # Output goes to macos/build/. The app is ad-hoc signed, not notarized
 # (#61), so the first launch needs Privacy & Security > Open Anyway.
