@@ -421,13 +421,21 @@ func (d *doctor) stateDirs() {
 		d.ok("no stale local lock")
 		return
 	}
+	// Judged and cleared under the flock a Go run holds, so no run can take
+	// the lock between the checks below and the removal.
+	release, busy := lock.HoldLocal(d.p.stateDir, d.fix)
+	defer release()
 	b, _ := os.ReadFile(pidFile)
 	holder := strings.TrimRight(string(b), "\n")
 	if holder == "" || !onlyDigits(holder) {
 		holder = ""
 	}
-	if pid, _ := strconv.Atoi(holder); holder != "" && syscall.Kill(pid, 0) == nil {
+	if pid, _ := strconv.Atoi(holder); holder != "" && (busy || syscall.Kill(pid, 0) == nil) {
 		d.note("another sts is running right now (pid %s)", holder)
+		return
+	}
+	if busy {
+		d.note("another sts is starting right now")
 		return
 	}
 	// A run between its mkdir and its pid write: the pid file is empty or

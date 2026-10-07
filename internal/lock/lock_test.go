@@ -366,3 +366,37 @@ func TestAFailedPidWriteLeavesNoLock(t *testing.T) {
 		t.Fatal("the failed attempt left its lock directory")
 	}
 }
+
+func TestHoldLocal(t *testing.T) {
+	dir := t.TempDir()
+	log := &logx.Logger{File: filepath.Join(dir, "log"), Level: "DEBUG"}
+
+	// Without create, a missing flock file is not busy and is not made.
+	release, busy := HoldLocal(dir, false)
+	release()
+	if busy {
+		t.Error("busy with no flock file")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "local.lock.flock")); err == nil {
+		t.Error("created the flock file without create")
+	}
+
+	l, f := AcquireLocal(dir, false, os.Getpid(), time.Now(), log)
+	if f != nil {
+		t.Fatal(f.Msg)
+	}
+	if release, busy := HoldLocal(dir, true); !busy {
+		release()
+		t.Error("not busy while a run holds the lock")
+	}
+	l.Release()
+	release, busy = HoldLocal(dir, true)
+	if busy {
+		t.Error("busy after the run released it")
+	}
+	// Held by doctor, a run cannot start.
+	if _, f := AcquireLocal(dir, false, os.Getpid(), time.Now(), log); f == nil {
+		t.Error("a run took the lock while doctor held the flock")
+	}
+	release()
+}
