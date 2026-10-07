@@ -22,6 +22,22 @@ DMG="$OUT/Star-Traders-Sync.dmg"
 ARCHS=(--arch arm64 --arch x86_64)
 [ "${1:-}" = "--native" ] && ARCHS=()
 
+# Say what is missing before a toolchain says it less clearly (#180).
+# Nobody needs to build to use the app: the release has the dmg.
+need() {
+    printf 'error: %s\n' "$1" >&2
+    printf 'To just install the app, no build is needed: download Star-Traders-Sync.dmg from\n' >&2
+    printf '  https://github.com/moudlajs/star-traders-sync/releases/latest\n' >&2
+    exit 1
+}
+# A universal build goes through xcbuild, which ships only with Xcode.
+case "${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || true)}" in
+    *CommandLineTools*)
+        [ ${#ARCHS[@]} -eq 0 ] || need "a universal build needs Xcode, and this Mac has only the Command Line Tools.
+Build for this Mac only instead:  $0 --native" ;;
+esac
+command -v go >/dev/null 2>&1 || need "Go is needed to build the Go engine (brew install go)."
+
 # `|| true`: under pipefail a failed grep would abort here, before the
 # friendlier message below could say what went wrong.
 VERSION="$(grep -oE '^readonly STS_VERSION="[^"]+"' "$REPO/bin/star-traders-sync" | cut -d'"' -f2 || true)"
