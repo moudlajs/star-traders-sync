@@ -25,9 +25,14 @@ type exiter struct {
 	exiting sync.Mutex
 }
 
-// finish is Main's side: once it holds exiting, no handler can start, and
-// if one already has, this waits until it exits the process.
-func (e *exiter) finish() { e.exiting.Lock() }
+// finish is Main's side, on every way out - the script's on_exit runs on
+// every exit, not only on a signal: it takes exiting (so no handler can
+// start; one that already has exits the process first) and runs the hooks.
+// They are idempotent, so what a command already released is a no-op.
+func (e *exiter) finish() {
+	e.exiting.Lock()
+	e.run()
+}
 
 func (e *exiter) add(h func()) {
 	e.mu.Lock()
