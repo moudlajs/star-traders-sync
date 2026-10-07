@@ -1408,6 +1408,15 @@ check "backup refuses a non-mount-point volume"         70 "$STS" backup
 # it, or the other Mac is locked out until the TTL.
 check "  and releases the hub lock it took"              1 test -e "$CASE/.sts-lock"
 check "  so a push straight after is not refused"        0 "$STS" push
+# Waiting for the disk must not hold the hub: the other Mac would be locked
+# out for all of BACKUP_MOUNT_WAIT, every night the disk is unplugged (#169).
+printf 'BACKUP_MOUNT_WAIT=5\n' >> "$CASE/cfg/star-traders-sync/config"
+"$STS" backup >/dev/null 2>&1 & BPID=$!
+sleep 2
+check "  waiting for the disk does not hold the hub lock" 1 test -e "$CASE/.sts-lock"
+wait "$BPID"; BRC=$?
+check "  and still refuses when it never mounts"         0 test "$BRC" = 70
+sed -i '' '/^BACKUP_MOUNT_WAIT=/d' "$CASE/cfg/star-traders-sync/config"
 
 # A same-size change in the same second reaches the next backup too (#158):
 # backup hard-links unchanged files against the previous one, and rsync's
