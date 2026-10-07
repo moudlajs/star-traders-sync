@@ -372,7 +372,7 @@ func TestHoldLocal(t *testing.T) {
 	log := &logx.Logger{File: filepath.Join(dir, "log"), Level: "DEBUG"}
 
 	// Without create, a missing flock file is not busy and is not made.
-	release, busy := HoldLocal(dir, false)
+	release, busy, _ := HoldLocal(dir, false)
 	release()
 	if busy {
 		t.Error("busy with no flock file")
@@ -385,12 +385,12 @@ func TestHoldLocal(t *testing.T) {
 	if f != nil {
 		t.Fatal(f.Msg)
 	}
-	if release, busy := HoldLocal(dir, true); !busy {
+	if release, busy, _ := HoldLocal(dir, true); !busy {
 		release()
 		t.Error("not busy while a run holds the lock")
 	}
 	l.Release()
-	release, busy = HoldLocal(dir, true)
+	release, busy, _ = HoldLocal(dir, true)
 	if busy {
 		t.Error("busy after the run released it")
 	}

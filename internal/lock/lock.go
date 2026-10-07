@@ -400,21 +400,25 @@ func AcquireLocal(stateDir string, backup bool, pid int, now time.Time, log *log
 // life, so doctor can judge and clear a stale local lock with no run able
 // to take it in between. busy: another run holds it. create makes the
 // flock file when it is missing; without it a missing file means no Go
-// run is holding it, and nothing is written (doctor without --fix).
-func HoldLocal(stateDir string, create bool) (release func(), busy bool) {
+// run is holding it, and nothing is written (doctor without --fix). With
+// create, err says the flock could not be taken, so nothing may be cleared.
+func HoldLocal(stateDir string, create bool) (release func(), busy bool, err error) {
 	flag := os.O_RDWR
 	if create {
 		flag |= os.O_CREATE
 	}
 	fl, err := os.OpenFile(filepath.Join(stateDir, "local.lock.flock"), flag, 0o644)
 	if err != nil {
-		return func() {}, false
+		if create {
+			return func() {}, false, err
+		}
+		return func() {}, false, nil
 	}
 	if syscall.Flock(int(fl.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
 		fl.Close()
-		return func() {}, true
+		return func() {}, true, nil
 	}
-	return func() { _ = syscall.Flock(int(fl.Fd()), syscall.LOCK_UN); fl.Close() }, false
+	return func() { _ = syscall.Flock(int(fl.Fd()), syscall.LOCK_UN); fl.Close() }, false, nil
 }
 
 func (l *Local) unflock() {

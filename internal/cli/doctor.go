@@ -423,7 +423,7 @@ func (d *doctor) stateDirs() {
 	}
 	// Judged and cleared under the flock a Go run holds, so no run can take
 	// the lock between the checks below and the removal.
-	release, busy := lock.HoldLocal(d.p.stateDir, d.fix)
+	release, busy, ferr := lock.HoldLocal(d.p.stateDir, d.fix)
 	defer release()
 	b, _ := os.ReadFile(pidFile)
 	holder := strings.TrimRight(string(b), "\n")
@@ -450,6 +450,11 @@ func (d *doctor) stateDirs() {
 		owner = "unknown"
 	}
 	d.warn("a stale local lock is present (owner %s is gone)", owner)
+	if ferr != nil {
+		// Without the flock a run could take the lock mid-clear.
+		d.fail("could not take the run lock in %s, so the stale lock was not cleared", d.p.stateDir)
+		return
+	}
 	d.try("clear the stale local lock", func() bool {
 		return os.RemoveAll(lockDir) == nil && os.RemoveAll(pidFile) == nil
 	})

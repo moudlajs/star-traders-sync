@@ -2352,11 +2352,26 @@ doc_state_dirs() {
             doc_note "another sts is starting right now"
         else
             doc_warn "a stale local lock is present (owner ${holder:-unknown} is gone)"
-            doc_try "clear the stale local lock" rm -rf "$lockdir" "$STATE_DIR/local.lock" || true
+            doc_try "clear the stale local lock" doc_clear_local_lock "$lockdir" "$holder" || true
         fi
     else
         doc_ok "no stale local lock"
     fi
+}
+
+# Re-judged immediately before the rm: a run that cleared the same stale
+# lock and took a fresh one since doctor looked has a new pid or a new
+# mtime, and is left alone. Not atomic - the script has no flock - but the
+# window shrinks to the gap between this check and the rm.
+doc_clear_local_lock() {
+    local lockdir="$1" was="$2" now_holder lock_mtime
+    now_holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
+    case "$now_holder" in ''|*[!${CH_DIGITS}]*) now_holder="" ;; esac
+    [ "$now_holder" = "$was" ] || return 1
+    lock_mtime="$(stat -f%m "$lockdir" 2>/dev/null || echo 0)"
+    case "$lock_mtime" in ''|*[!${CH_DIGITS}]*) lock_mtime=0 ;; esac
+    [ $(( $(date -u +%s) - lock_mtime )) -ge 10 ] || return 1
+    rm -rf "$lockdir" "$STATE_DIR/local.lock"
 }
 
 doc_save_dir() {

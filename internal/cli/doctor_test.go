@@ -73,3 +73,30 @@ func TestDoctorLeavesAFlockedLock(t *testing.T) {
 		t.Errorf("did not say why:\n%s", out.String())
 	}
 }
+
+// When the flock cannot be taken, --fix clears nothing and says so.
+func TestDoctorNeedsTheFlockToClear(t *testing.T) {
+	state := t.TempDir()
+	dir := filepath.Join(state, "local.lock.d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(dir, old, old)
+	_ = os.WriteFile(filepath.Join(state, "local.lock"), []byte("99999\n"), 0o644)
+	if err := os.Chmod(state, 0o555); err != nil { // no flock file can be made
+		t.Fatal(err)
+	}
+	defer os.Chmod(state, 0o755)
+
+	var out bytes.Buffer
+	d := &doctor{out: &out, fix: true, p: paths{stateDir: state, configFile: filepath.Join(state, "cfg", "config"),
+		logFile: filepath.Join(state, "logs", "log")}, log: &logx.Logger{File: filepath.Join(state, "log")}}
+	d.stateDirs()
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("cleared the lock without the flock:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "could not take the run lock") {
+		t.Errorf("did not say why:\n%s", out.String())
+	}
+}
