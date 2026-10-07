@@ -637,6 +637,72 @@ check "  but not cleared without --fix"                  0 test -d "$CASE/state/
 check "  and cleared with --fix"                         1 test -d "$CASE/state/star-traders-sync/local.lock.d"
 
 # --------------------------------------------------------------------------
+section "engine shim"
+# The app installs macos/engine-shim.sh as star-traders-sync, with the script
+# and the Go build beside it (#175). Fake engines say which one ran.
+newcase engine_shim
+SHIMDIR="$CASE/support/bin"
+mkdir -p "$SHIMDIR" "$CASE/home/bin"
+sed 's/@STS_VERSION@/9.9.9/' "$REPO/macos/engine-shim.sh" > "$SHIMDIR/star-traders-sync"
+printf '#!/bin/bash\necho "bash engine: $*"\n' > "$SHIMDIR/star-traders-sync.bash"
+printf '#!/bin/bash\necho "go engine: $*"\n' > "$SHIMDIR/star-traders-sync-go"
+chmod 755 "$SHIMDIR"/*
+ln -s "$SHIMDIR/star-traders-sync" "$CASE/home/bin/sts"
+ENGINE_FILE="$CASE/cfg/star-traders-sync/engine"
+shim_says() {   # shim_says EXPECTED [env assignments...] - run ~/bin/sts status
+    local want="$1"; shift
+    out="$(env "$@" "$CASE/home/bin/sts" status 2>&1)"
+    [ "$out" = "$want" ] || { printf '      got: %s\n' "$out"; return 1; }
+}
+rm -f "$ENGINE_FILE"
+check "no engine chosen: the script runs"                0 shim_says "bash engine: status"
+echo go > "$ENGINE_FILE"
+check "engine file says go: the Go build runs"           0 shim_says "go engine: status"
+check "  STS_ENGINE=bash overrides the file"             0 shim_says "bash engine: status" STS_ENGINE=bash
+echo "bash # rolled back" > "$ENGINE_FILE"
+check "rollback: the first word decides"                 0 shim_says "bash engine: status"
+check "  STS_ENGINE=go overrides the file"               0 shim_says "go engine: status" STS_ENGINE=go
+mv "$SHIMDIR/star-traders-sync-go" "$SHIMDIR/gone"
+check "go chosen but missing: the script runs"           0 sh -c '"$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" 
+check "  and it says why"                                0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "engine is go, but .* is missing"' _ "$CASE/home/bin/sts"
+mv "$SHIMDIR/gone" "$SHIMDIR/star-traders-sync-go"
+check "the shim carries the version the app reads"       0 grep -qx 'readonly STS_VERSION="9.9.9"' "$SHIMDIR/star-traders-sync"
+
+check "  and nothing on stderr when no engine is chosen"   0 test -z "$(rm -f "$ENGINE_FILE"; "$CASE/home/bin/sts" status 2>&1 >/dev/null)"
+
+# The app's "is sts running" check is pgrep -f on bin/sts or
+# bin/star-traders-sync. exec -a keeps that name on a binary engine, or the
+# app would replace the tool under a running sync. A shebang script would
+# not show it, and macOS kills a copied /bin/sleep, so a tiny compiled
+# sleeper stands in for the Go build.
+if printf '#include <unistd.h>\nint main(void){sleep(5);return 0;}\n' \
+        | cc -x c -o "$SHIMDIR/star-traders-sync-go" - 2>/dev/null; then
+    STS_ENGINE=go "$CASE/home/bin/sts" & SPID=$!
+    sleep 1
+    check "a running Go engine is still seen as sts"     0 sh -c 'ps -o args= -p "$1" | grep -qE "bin/(star-traders-sync|sts)( |$)"' _ "$SPID"
+    kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null
+else
+    printf '  skip the running-name check (no C compiler here)\n'
+fi
+
+# The real thing: the shim in front of the real script and the Go build.
+cp "$BASH_STS" "$SHIMDIR/star-traders-sync.bash"
+GO_BUILD=""
+[ "$STS" != "$BASH_STS" ] && GO_BUILD="$STS"      # the suite is running against Go
+if [ -z "$GO_BUILD" ] && command -v go >/dev/null 2>&1; then
+    (cd "$REPO" && go build -o "$CASE/sts-go" ./cmd/sts) && GO_BUILD="$CASE/sts-go"
+fi
+if [ -n "$GO_BUILD" ]; then
+    cp "$GO_BUILD" "$SHIMDIR/star-traders-sync-go"
+    WANT="$("$BASH_STS" --version)"
+    check "the Go build runs through the shim"           0 test "$(STS_ENGINE=go "$CASE/home/bin/sts" --version)" = "$WANT"
+    check "the script runs through the shim"             0 test "$(STS_ENGINE=bash "$CASE/home/bin/sts" --version)" = "$WANT"
+    check "  and a refusal keeps its exit code"          2 env STS_ENGINE=go "$CASE/home/bin/sts" bogus
+else
+    printf '  skip the shim with real engines (no Go build here)\n'
+fi
+
+# --------------------------------------------------------------------------
 section "status --json"
 # jget PATH: run status --json with stderr discarded, so this also proves
 # stdout carries only the JSON, then print one dotted field.
