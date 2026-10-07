@@ -353,7 +353,7 @@ func (s *syncer) push() *fail.Failure {
 func (r *run) dryRun() {
 	t := &transfer.T{Exclude: r.cfg.Exclude()}
 	e := strings.Join(t.Excludes(), " ")
-	sshE := "ssh " + strings.Join(r.hub.SSHOpts, " ")
+	sshE := "ssh " + r.hub.SSHOptsText
 	plan := func(title, src, dst string) {
 		r.say("  %s", title)
 		args := []string{"-a", "-c", "-n", "-i", "--delete"}

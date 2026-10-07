@@ -414,6 +414,16 @@ rm -rf "$CASE/state"
 check "doctor --fix created the state directory"         0 test -d "$CASE/state/star-traders-sync"
 check "  and left the saves alone"                       0 test -f "$CASE/local/core.db"
 
+# --fix edits ~/.zshrc only with a backup beside it. When the backup cannot
+# be written, the file is left exactly as it was.
+newcase doctor_rc_backup
+mkdir -p "$CASE/home/.zshrc.sts-backup"; chmod 555 "$CASE/home/.zshrc.sts-backup"
+printf 'alias ll="ls -l"\n' > "$CASE/home/.zshrc"
+RC_OUT="$(PATH="${PATH//:$HOME\/bin/}" "$STS" doctor --fix 2>&1 || true)"
+check "rc backup fails: ~/.zshrc is not changed"         0 test "$(cat "$CASE/home/.zshrc")" = 'alias ll="ls -l"'
+check "  and doctor says so"                             0 sh -c 'printf "%s" "$1" | grep -q "could not back up"' _ "$RC_OUT"
+chmod 755 "$CASE/home/.zshrc.sts-backup"
+
 # The bug that made all of this necessary: doctor's helpers return non-zero
 # for ordinary first-run states, and under set -e a bare call aborted the
 # whole report at the first problem - the one thing doctor exists not to do.
@@ -425,6 +435,13 @@ check "a later failure does not truncate the report"     1 "$STS" doctor
 check "  the summary line still prints"                  0 sh -c '"$1" doctor 2>&1 | grep -qE "problem\(s\)"' _ "$STS"
 check "  the reassurance still prints"                   0 sh -c '"$1" doctor 2>&1 | grep -q "Nothing above was changed"' _ "$STS"
 check "  and later sections still ran"                   0 sh -c '"$1" doctor 2>&1 | grep -q "tailscale"' _ "$STS"
+
+# A symlinked save folder is followed by every other command; doctor's
+# count used to stop at the link and call it empty (#168).
+newcase doctor_symlinked_saves
+mv "$CASE/local" "$CASE/real-local"; ln -s "$CASE/real-local" "$CASE/local"
+check "symlinked save folder: its files are counted"   0 sh -c '"$1" doctor 2>&1 | grep -q "save directory, [1-9]"' _ "$STS"
+check "  and it is not called empty"                   1 sh -c '"$1" doctor 2>&1 | grep -q "save directory is empty"' _ "$STS"
 
 # doctor must reach the same verdict as the real commands. It used to
 # hand-roll a subset of the validation and miss the nesting rule, so it
@@ -604,6 +621,15 @@ LIVE_OUT="$("$STS" doctor 2>&1 || true)"
 check "a live sts is reported, not cleared"              0 sh -c 'printf "%s" "$1" | grep -q "another sts is running"' _ "$LIVE_OUT"
 check "  and its lock is left alone"                     0 test -d "$CASE/state/star-traders-sync/local.lock.d"
 
+# A run between its mkdir and its pid write: the pid file is still empty.
+# Clearing that would let two runs in at once (#151).
+: > "$CASE/state/star-traders-sync/local.lock"
+touch "$CASE/state/star-traders-sync/local.lock.d"
+"$STS" doctor --fix >/dev/null 2>&1 || true
+check "a lock being taken right now is not cleared"      0 test -d "$CASE/state/star-traders-sync/local.lock.d"
+check "  and is reported as starting"                    0 sh -c '"$1" doctor 2>&1 | grep -q "another sts is starting"' _ "$STS"
+
+touch -t 202001010000 "$CASE/state/star-traders-sync/local.lock.d"
 printf '99999\n' > "$CASE/state/star-traders-sync/local.lock"
 check "a dead owner's lock is reported stale"            0 sh -c '"$1" doctor 2>&1 | grep -q "owner 99999 is gone"' _ "$STS"
 check "  but not cleared without --fix"                  0 test -d "$CASE/state/star-traders-sync/local.lock.d"

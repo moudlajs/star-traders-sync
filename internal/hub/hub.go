@@ -33,6 +33,7 @@ type Hub struct {
 	DNS, IP          string // the peer's two addresses, for the host-key advice
 	Exec             hubexec.Exec
 	SSHOpts          []string
+	SSHOptsText      string // hubexec.OptionsText, for printed commands
 	Log              *logx.Logger
 	Stdout, Stderr   io.Writer
 }
@@ -126,24 +127,24 @@ func (h *Hub) CheckReachable() *fail.Failure {
 		if strings.Contains(out, s) {
 			h.Log.Log("ERROR", "ssh", "host key UNKNOWN for %s: %s", h.Endpoint, out)
 			lines := []string{fmt.Sprintf("error: the SSH host key for %s is not trusted yet.", h.Endpoint), ""}
-			return fail.Printed(exitcode.SSHHostkey, "ssh", "", append(lines, h.hostKeyHelp(h.Endpoint)...)...)
+			return fail.Printed(exitcode.SSHHostkey, "ssh", "", append(lines, h.HostKeyHelp(h.Endpoint)...)...)
 		}
 	}
 	h.Log.Log("ERROR", "ssh", "non-interactive ssh failed rc=%d: %s", rc, out)
 	return fail.Printed(exitcode.SSHFailed, "ssh", "",
 		fmt.Sprintf("error: could not ssh to the hub non-interactively (rc=%d).", rc),
 		"ssh said:", out,
-		"Reproduce it by hand with:", "  ssh "+strings.Join(h.SSHOpts, " ")+" "+h.Target(),
+		"Reproduce it by hand with:", "  ssh "+h.SSHOptsText+" "+h.Target(),
 		"If it asks for a password, key auth is not set up:",
 		"  ssh-copy-id -i ~/.ssh/id_ed25519.pub "+h.Target())
 }
 
-// hostKeyHelp is hostkey_help: if the machine's other address is already
+// HostKeyHelp is hostkey_help: if the machine's other address is already
 // trusted with the same key, adding this one is safe and the comparison is
 // done for the user; otherwise they verify out of band. Never auto-accept.
 // (All of it on stderr: the script's first line of the "safe" advice went
 // to stdout, the rest to stderr.)
-func (h *Hub) hostKeyHelp(want string) []string {
+func (h *Hub) HostKeyHelp(want string) []string {
 	alt := h.DNS
 	if want == h.DNS {
 		alt = h.IP

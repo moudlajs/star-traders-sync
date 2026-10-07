@@ -103,13 +103,10 @@ jobs:
 
       - name: The regression suite, against the Go build (#25)
         # Every section of the script's own suite, run against the Go
-        # binary. STS_SKIP lists the sections for commands not ported yet;
-        # it only ever shrinks, and #25 is done when it is empty.
+        # binary, none skipped.
         run: |
           go build -o "$RUNNER_TEMP/sts-go" ./cmd/sts
-          STS_BIN="$RUNNER_TEMP/sts-go" \
-          STS_SKIP='^doctor' \
-            ./tests/regression.sh -v
+          STS_BIN="$RUNNER_TEMP/sts-go" ./tests/regression.sh -v
 
   setup-app:
     # The macOS app (macos/). Builds the real universal .app and .dmg,

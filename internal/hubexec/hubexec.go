@@ -60,6 +60,15 @@ func Options(connectTimeout, port, extra string) []string {
 	return append(o, strings.Fields(extra)...)
 }
 
+// OptionsText is the script's $SSH_OPTS as one string, for the commands it
+// prints: "ssh $(ssh_opts) ..." keeps the space before an empty
+// SSH_EXTRA_OPTS, and the printed text has to be the script's, byte for
+// byte (tests/parity.sh).
+func OptionsText(connectTimeout, port, extra string) string {
+	return "-o BatchMode=yes -o ConnectTimeout=" + connectTimeout +
+		" -o StrictHostKeyChecking=yes -p " + port + " " + extra
+}
+
 // Quote is the script's shq: one literal word for a POSIX shell.
 func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

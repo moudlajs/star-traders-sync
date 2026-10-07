@@ -2216,7 +2216,10 @@ doc_fix_path() {
         doc_do "open a new shell, or: export PATH=\"\$HOME/bin:\$PATH\""
         return 0
     fi
-    [ -f "$rc" ] && cp "$rc" "$rc.sts-backup" 2>/dev/null
+    if [ -f "$rc" ] && ! cp "$rc" "$rc.sts-backup" 2>/dev/null; then
+        doc_fail "could not back up $rc, so it was not changed"
+        return 1
+    fi
     {
         printf '\n# star-traders-sync: sts and star-traders-sync live in ~/bin\n'
         printf '%s\n' "$line"
@@ -2337,15 +2340,38 @@ doc_state_dirs() {
     if [ -d "$lockdir" ]; then
         holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
         case "$holder" in ''|*[!${CH_DIGITS}]*) holder="" ;; esac
+        local lock_mtime
+        lock_mtime="$(stat -f%m "$lockdir" 2>/dev/null || echo 0)"
+        case "$lock_mtime" in ''|*[!${CH_DIGITS}]*) lock_mtime=0 ;; esac
         if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
             doc_note "another sts is running right now (pid $holder)"
+        elif [ $(( $(date -u +%s) - lock_mtime )) -lt 10 ]; then
+            # A run between its mkdir and its pid write: the pid file is
+            # empty or still names the run before. Never cleared, as in
+            # acquire_local_lock (#151).
+            doc_note "another sts is starting right now"
         else
             doc_warn "a stale local lock is present (owner ${holder:-unknown} is gone)"
-            doc_try "clear the stale local lock" rm -rf "$lockdir" "$STATE_DIR/local.lock" || true
+            doc_try "clear the stale local lock" doc_clear_local_lock "$lockdir" "$holder" || true
         fi
     else
         doc_ok "no stale local lock"
     fi
+}
+
+# Re-judged immediately before the rm: a run that cleared the same stale
+# lock and took a fresh one since doctor looked has a new pid or a new
+# mtime, and is left alone. Not atomic - the script has no flock - but the
+# window shrinks to the gap between this check and the rm.
+doc_clear_local_lock() {
+    local lockdir="$1" was="$2" now_holder lock_mtime
+    now_holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
+    case "$now_holder" in ''|*[!${CH_DIGITS}]*) now_holder="" ;; esac
+    [ "$now_holder" = "$was" ] || return 1
+    lock_mtime="$(stat -f%m "$lockdir" 2>/dev/null || echo 0)"
+    case "$lock_mtime" in ''|*[!${CH_DIGITS}]*) lock_mtime=0 ;; esac
+    [ $(( $(date -u +%s) - lock_mtime )) -ge 10 ] || return 1
+    rm -rf "$lockdir" "$STATE_DIR/local.lock"
 }
 
 doc_save_dir() {
@@ -2365,7 +2391,9 @@ doc_save_dir() {
     fi
 
     local count
-    count="$(find "$p" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
+    # The trailing slash: BSD find does not follow a symlinked starting
+    # point, and would count a symlinked save folder as empty (#168).
+    count="$(find "$p/" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
     if [ "${count:-0}" -eq 0 ]; then
         doc_warn "save directory is empty: $p"
         doc_do "launch the game once, or check the path is right"
@@ -2616,7 +2644,7 @@ doc_hub_only() {
 
     if [ -d "$CFG_HUB_PATH" ]; then
         local n
-        n="$(find "$CFG_HUB_PATH" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
+        n="$(find "$CFG_HUB_PATH/" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
         doc_ok "hub directory, ${n:-0} files"
     elif hub_is_busy; then
         doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"

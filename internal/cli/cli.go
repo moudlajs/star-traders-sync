@@ -189,8 +189,10 @@ func Main(args []string, env Env) int {
 		return int(code)
 	}
 
+	// doctor runs before every other check, because the things those
+	// checks abort on are exactly what it exists to report.
 	if o.Command == "doctor" {
-		return notYet(env, o.Command)
+		return runDoctor(env, o, p, log)
 	}
 
 	// Cheapest, most fundamental refusals first - these need no config.
@@ -230,11 +232,6 @@ func Main(args []string, env Env) int {
 	log.Log("INFO", "start", "command=%s dry_run=%d force='%s' offline_ok=%d version=%s",
 		o.Command, b2i(o.DryRun), o.Force, b2i(o.OfflineOK), Version)
 
-	switch o.Command {
-	case "status", "pull", "push", "play", "restore", "backup":
-	default:
-		return notYet(env, o.Command)
-	}
 	r := &run{env: env, opt: o, cfg: cfg, p: p, log: log, out: env.Stdout, json: io.Discard,
 		pid: os.Getpid(), host: hostnameShort(), ex: &exiter{}}
 	stopSignals := r.ex.watch()
@@ -321,13 +318,6 @@ func report(env Env, log *logx.Logger, p paths, f *fail.Failure) int {
 	fmt.Fprintf(env.Stderr, "error: %s\n", f.Msg)
 	fmt.Fprintf(env.Stderr, "exit code %d - see %s\n", f.Code, p.logFile)
 	return int(f.Code)
-}
-
-// notYet: the Go build is not the shipped tool until #26. Everything past
-// config validation still lives in bin/star-traders-sync.
-func notYet(env Env, command string) int {
-	fmt.Fprintf(env.Stderr, "error: '%s' is not in the Go build yet - use bin/%s (v2.0, #20-#26)\n", command, prog)
-	return 1
 }
 
 func b2i(b bool) int {

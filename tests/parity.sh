@@ -145,7 +145,9 @@ case "\$*" in
             down)    echo "failed to connect to local backend" >&2; exit 1 ;;
             notjson) echo "Tailscale is stopped." ; exit 0 ;;
             missing) printf '{"BackendState":"Running","Self":{"HostName":"elsewhere","DNSName":"elsewhere.t.ts.net.","TailscaleIPs":["100.64.0.9"],"Online":true},"Peer":{}}\n' ;;
-            offline|pingfail) printf '{"BackendState":"Running","Self":{"HostName":"elsewhere","DNSName":"elsewhere.t.ts.net.","TailscaleIPs":["100.64.0.9"],"Online":true},"Peer":{"p":{"HostName":"$ME","DNSName":"$ME.t.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":\$([ "\$mode" = offline ] && echo false || echo true)}}}\n' ;;
+            offline|pingfail|peer)
+                on=true; [ "\$mode" = offline ] && on=false
+                printf '{"BackendState":"Running","Self":{"HostName":"elsewhere","DNSName":"elsewhere.t.ts.net.","TailscaleIPs":["100.64.0.9"],"Online":true},"Peer":{"p":{"HostName":"$ME","DNSName":"$ME.t.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":%s}}}\n' "\$on" ;;
             *)       printf '{"BackendState":"Running","Self":{"HostName":"$ME","DNSName":"$ME.t.ts.net.","TailscaleIPs":["100.64.0.1"],"Online":true},"Peer":{}}\n' ;;
         esac ;;
     *ping*) [ "\$mode" = pingfail ] && { echo "no reply"; exit 1; }; echo pong ;;
@@ -199,6 +201,91 @@ tsmode missing;                                          compare "the hub not in
 tsmode offline;                                          compare "the hub offline (25)" status
 compare "the hub offline, --offline-ok is play only" status --offline-ok
 tsmode pingfail;                                         compare "tailscale ping fails (26)" status
+tsmode hub
+
+# --------------------------------------------------------------------------
+# doctor: the app parses this text (DoctorReport.swift), so it must match
+# line for line. --fix changes things, so each binary gets a fresh copy of
+# the state: fixboth SETUP ARGS... runs SETUP before each.
+echo "doctor"
+# --fix appends to ~/.zshrc: each run starts without one.
+rcreset() { chmod -R u+w "$HOME/.zshrc.sts-backup" 2>/dev/null; rm -rf "$HOME/.zshrc" "$HOME/.zshrc.sts-backup"; }
+fixboth() {
+    local name="$1" setup="$2"; shift 2
+    local brc grc
+    rcreset; $setup; "$BASH_STS" "$@" >"$SB/b.out" 2>"$SB/b.err"; brc=$?
+    rcreset; $setup; "$GO_STS"   "$@" >"$SB/g.out" 2>"$SB/g.err"; grc=$?
+    if [ "$brc" = "$grc" ] && cmp -s "$SB/b.out" "$SB/g.out" && cmp -s "$SB/b.err" "$SB/g.err"; then
+        PASS=$((PASS + 1)); printf '  ok   %s (%s)\n' "$name" "$brc"
+    else
+        FAIL=$((FAIL + 1)); printf '  FAIL %s: bash %s, go %s\n' "$name" "$brc" "$grc"
+        diff -u "$SB/b.out" "$SB/g.out" | sed 's/^/       /' | head -20
+    fi
+}
+fresh;                                                   compare "a hub with no saves synced yet" doctor
+"$BASH_STS" push --force=local >/dev/null 2>&1;          compare "a healthy hub" doctor
+rm -rf "$XDG_CONFIG_HOME";                               compare "no config" doctor
+with 'NOPE=1\n';                                         compare "an unknown key" doctor
+with 'HUB_USER=youruser\nBACKUP_VOLUME=/Volumes/Backup\n'; compare "placeholders" doctor
+config 'HUB_HOST=h\n';                                   compare "required keys missing" doctor
+with 'LOCAL_SAVE_PATH=/srv/sts/hub/saves\n';             compare "nested paths" doctor
+fresh; rm -rf "$S/local";                                compare "no save folder" doctor
+fresh; rm -f "$S/local"/*;                               compare "an empty save folder" doctor
+fresh; mv "$S/local" "$S/real"; ln -s "$S/real" "$S/local"; compare "a symlinked save folder" doctor
+fresh; tsmode down;                                      compare "tailscaled down" doctor
+tsmode notjson;                                          compare "tailscale not JSON" doctor
+tsmode missing;                                          compare "the hub not in the tailnet" doctor
+tsmode offline;                                          compare "the hub offline" doctor
+tsmode pingfail;                                         compare "tailscale ping fails" doctor
+tsmode hub
+
+nostate() { fresh; rm -rf "$XDG_STATE_HOME"; }
+fixboth "no state directory"            nostate doctor
+fixboth "no state directory, --fix"     nostate doctor --fix
+rcro() { nostate; printf 'alias ll="ls -l"\n' > "$HOME/.zshrc"; mkdir -p "$HOME/.zshrc.sts-backup"; chmod 555 "$HOME/.zshrc.sts-backup"; }
+fixboth "~/.zshrc cannot be backed up, --fix" rcro doctor --fix
+rcreset
+stale() { fresh; mkdir -p "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; echo 99999 > "$XDG_STATE_HOME/star-traders-sync/local.lock"; touch -t 202001010000 "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; }
+starting() { fresh; mkdir -p "$XDG_STATE_HOME/star-traders-sync/local.lock.d"; : > "$XDG_STATE_HOME/star-traders-sync/local.lock"; }
+fixboth "a local lock being taken, --fix" starting doctor --fix
+fixboth "a stale local lock"            stale doctor
+fixboth "a stale local lock, --fix"     stale doctor --fix
+nohub() { fresh; rm -rf "$S/hub"; }
+fixboth "no hub folder, --fix"          nohub doctor --fix
+busy() { fresh; rm -rf "$S/hub"; mkdir "$S/.sts-lock"; }
+fixboth "no hub folder mid-sync, --fix" busy doctor --fix
+fresh; rm -rf "$S/.sts-lock"
+
+# The ssh path, from a machine that is not the hub. ssh-keygen -F and ssh
+# are stubbed: SSH_MODE untrusted, denied, or ok (ssh then runs the hub
+# snippet here, on the sandbox's hub folder).
+cat > "$SB/stub/ssh-keygen" <<STUB
+#!/bin/bash
+[ "\$(cat "$SB/stub/sshmode")" = untrusted ] && exit 1
+exit 0
+STUB
+cat > "$SB/stub/ssh" <<STUB
+#!/bin/bash
+case "\$(cat "$SB/stub/sshmode")" in
+    denied) echo "me@100.64.0.1: Permission denied (publickey)." >&2; exit 255 ;;
+esac
+last="\${!#}"
+case "\$last" in
+    "echo STS_OK") echo STS_OK ;;
+    "bash -s --"*) eval "\$last" ;;
+esac
+STUB
+chmod +x "$SB/stub/ssh-keygen" "$SB/stub/ssh"
+sshmode() { echo "$1" > "$SB/stub/sshmode"; }
+mkdir -p "$HOME/.ssh"
+fresh; tsmode peer
+rm -f "$HOME/.ssh/id_ed25519";                           compare "no ssh key" doctor
+: > "$HOME/.ssh/id_ed25519"
+sshmode untrusted;                                       compare "host key not trusted" doctor
+sshmode denied;                                          compare "key not on the hub" doctor
+sshmode ok;                                              compare "ssh works" doctor
+rm -rf "$S/hub";                                         compare "ssh works, no hub folder" doctor
+rm -f "$SB/stub/ssh" "$SB/stub/ssh-keygen"
 tsmode hub
 unset STS_TS_APP_PATH
 
