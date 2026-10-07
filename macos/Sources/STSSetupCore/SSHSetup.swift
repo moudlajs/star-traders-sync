@@ -158,7 +158,7 @@ public struct SSHSetup {
         if s.contains("Permission denied") {
             // Name the account: a wrong account name (#178) looks exactly
             // like a wrong password from here.
-            return "The hub refused the password for the account \"\(user)\". Check both: it is the password of that account on the hub Mac, and the account name must be the one on the hub Mac (its home folder, /Users/name), which is often not the same as this Mac's. Go Back to change it."
+            return "The hub refused the password for the account \"\(user)\". Check the account name first: it must be the account on the hub Mac, whose home folder is /Users/name there, and that is often not this Mac's name. Go Back to change it. Then check the password is that account's password on the hub Mac."
         }
         if s.contains("Connection refused") {
             return "Remote Login is off on the hub. On the hub Mac: System Settings > General > Sharing > Remote Login."
