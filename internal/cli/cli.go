@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/fail"
 	"github.com/moudlajs/star-traders-sync/internal/lock"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
 // Version must equal STS_VERSION in bin/star-traders-sync while both
@@ -70,7 +72,7 @@ func pathsFrom(env Env) paths {
 		configFile: filepath.Join(cfg, prog, "config"),
 		stateDir:   filepath.Join(state, prog),
 		stateFile:  filepath.Join(state, prog, "last-sync.json"),
-		logFile:    filepath.Join(home, "Library/Logs", prog, prog+".log"),
+		logFile:    filepath.Join(platform.LogDir(home, prog), prog+".log"),
 	}
 }
 
@@ -176,6 +178,13 @@ func Main(args []string, env Env) int {
 		fmt.Fprint(env.Stdout, stop.stdout)
 		fmt.Fprint(env.Stderr, stop.stderr)
 		return int(stop.code)
+	}
+
+	// Every command past --help and --version needs this OS's platform
+	// implementation; until the port exists, say so rather than half-work.
+	if !platform.Supported {
+		fmt.Fprintf(env.Stderr, "error: %s does not run on %s yet - Linux is #1, Windows is #3\n", prog, runtime.GOOS)
+		return 1
 	}
 
 	log := &logx.Logger{File: p.logFile, Level: "INFO", MaxBytes: 5242880, Keep: 3}

@@ -15,6 +15,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
 	"github.com/moudlajs/star-traders-sync/internal/fail"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
 // AppPath is the App Store build's CLI, preferred over PATH. The suite
@@ -23,7 +24,7 @@ func AppPath(getenv func(string) string) string {
 	if p := getenv("STS_TS_APP_PATH"); p != "" {
 		return p
 	}
-	return "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+	return platform.TailscaleAppPath
 }
 
 // Find is find_tailscale.

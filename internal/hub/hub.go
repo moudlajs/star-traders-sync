@@ -20,6 +20,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/lock"
 	"github.com/moudlajs/star-traders-sync/internal/logx"
 	"github.com/moudlajs/star-traders-sync/internal/manifest"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 	"github.com/moudlajs/star-traders-sync/internal/tailscale"
 )
 
@@ -92,7 +93,7 @@ func (h *Hub) Resolve(ts *tailscale.Client, preferMagicDNS, offlineOK bool, ping
 // PingMagicDNS is the script's "ping -c1 -t2": does the name resolve and
 // answer.
 func PingMagicDNS(host string) bool {
-	return exec.Command("ping", "-c1", "-t2", host).Run() == nil
+	return exec.Command("ping", platform.PingArgs(host)...).Run() == nil
 }
 
 // CheckReachable is check_hub_reachable: one ssh probe, its failure modes

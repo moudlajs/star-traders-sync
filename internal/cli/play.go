@@ -2,14 +2,11 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
 	"github.com/moudlajs/star-traders-sync/internal/fail"
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
 // play is cmd_play: pull, launch the game, wait for it to exit, push. The
@@ -45,9 +42,9 @@ func (s *syncer) play() *fail.Failure {
 	start := time.Now().Unix()
 	appID := s.cfg.Get("STEAM_APPID")
 	s.say("launching Star Traders: Frontiers (appid %s)...", appID)
-	s.log.Log("INFO", "play", "open steam://rungameid/%s", appID)
-	if exec.Command("open", "steam://rungameid/"+appID).Run() != nil {
-		return fail.New(exitcode.GameNoStart, "play", "'open steam://rungameid/%s' failed - is Steam installed?", appID)
+	s.log.Log("INFO", "play", "%s", platform.LaunchHint(appID))
+	if platform.LaunchGame(appID) != nil {
+		return fail.New(exitcode.GameNoStart, "play", "'%s' failed - is Steam installed?", platform.LaunchHint(appID))
 	}
 
 	name := s.cfg.Get("GAME_PROCESS_NAME")
@@ -70,8 +67,8 @@ func (s *syncer) play() *fail.Failure {
 			fmt.Sprintf("Waited %ds for a process named %s and saw nothing.", timeout, name),
 			"Nothing was pushed - an unchanged save is not worth recording.",
 			fmt.Sprintf("Check that STEAM_APPID=%s is right and Steam is installed:", appID),
-			"  open steam://rungameid/"+appID,
-			"  pgrep -x "+name)
+			"  "+platform.LaunchHint(appID),
+			"  "+platform.ProcessHint(name))
 	}
 
 	s.say("game running (pid %s) - waiting for it to exit. Ctrl-C here does not stop the game.", pid)
@@ -96,7 +93,7 @@ func (s *syncer) play() *fail.Failure {
 
 	// Give a crash reporter time to write its report.
 	time.Sleep(3 * time.Second)
-	if crash := crashReport(s.env.Getenv("HOME"), name, start); crash != "" {
+	if crash := platform.CrashReport(s.env.Getenv("HOME"), name, start); crash != "" {
 		s.log.Log("WARN", "play", "game exited via CRASH - report at %s", crash)
 		s.warn("the game crashed (report: %s) - pushing the save anyway", crash)
 	} else {
@@ -114,18 +111,8 @@ func (s *syncer) play() *fail.Failure {
 
 // firstPid is pgrep -x NAME | head -1.
 func firstPid(name string) string {
-	out, _ := exec.Command("pgrep", "-x", name).Output()
-	first, _, _ := strings.Cut(string(out), "\n")
-	return strings.TrimSpace(first)
-}
-
-// crashReport is a DiagnosticReports file for the game written since start.
-func crashReport(home, name string, start int64) string {
-	matches, _ := filepath.Glob(filepath.Join(home, "Library/Logs/DiagnosticReports", name) + "*")
-	for _, m := range matches {
-		if st, err := os.Stat(m); err == nil && st.Mode().IsRegular() && st.ModTime().Unix() >= start {
-			return m
-		}
+	if ids := platform.ProcessIDs(name); len(ids) > 0 {
+		return ids[0]
 	}
 	return ""
 }

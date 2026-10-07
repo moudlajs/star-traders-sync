@@ -4,8 +4,8 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"syscall"
 
+	"github.com/moudlajs/star-traders-sync/internal/platform"
 	"github.com/moudlajs/star-traders-sync/internal/transfer"
 )
 
@@ -57,17 +57,17 @@ func (e *exiter) run() {
 	}
 }
 
-var signalCodes = map[os.Signal]int{syscall.SIGINT: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129, syscall.SIGPIPE: 141}
-
 // watch starts handling the signals; the returned func stops it.
 func (e *exiter) watch() func() {
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGPIPE)
+	for sig := range platform.ExitSignals {
+		signal.Notify(ch, sig)
+	}
 	done := make(chan struct{})
 	go func() {
 		select {
 		case sig := <-ch:
-			code := signalCodes[sig]
+			code := platform.ExitSignals[sig]
 			out := func() {
 				e.exiting.Lock() // never unlocked: this path ends the process
 				e.run()

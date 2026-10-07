@@ -95,6 +95,13 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Builds for every OS (#24)
+        # Only internal/platform may be OS-specific, so the rest must compile
+        # everywhere; the ports (#1, #3) then add a file there, not edits.
+        run: |
+          GOOS=linux go vet ./...
+          GOOS=windows go vet ./...
+
       - name: Unit tests
         run: go test ./...
 
