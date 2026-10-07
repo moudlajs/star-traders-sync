@@ -133,3 +133,35 @@ func TestALeftoverParkedGenerationIsKept(t *testing.T) {
 		t.Fatal("the leftover's save changed")
 	}
 }
+
+// A snapshot that comes up short refuses, and stays hidden as .partial-:
+// never listed, counted or pruned as a safety copy.
+func TestAnIncompleteSnapshotStaysHidden(t *testing.T) {
+	dir := t.TempDir()
+	saves := dir + "/local"
+	if err := os.Mkdir(saves, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"core.db", "game_1.db"} {
+		if err := os.WriteFile(saves+"/"+f, []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func(c func(string, string) error) { copyFileFn = c }(copyFileFn)
+	copyFileFn = func(src, dst string) error {
+		if strings.HasSuffix(src, "game_1.db") {
+			return errors.New("I/O error")
+		}
+		return copyFile(src, dst)
+	}
+	tr := &T{Pid: 1, Keep: 3, Now: time.Now, Log: &logx.Logger{File: dir + "/log"}, Guard: &Guard{}}
+	if _, f := tr.SnapshotLocal(saves, true); f == nil || f.Code != 63 {
+		t.Fatalf("got %v, want a 63 refusal", f)
+	}
+	if got := listed(dir + "/star-traders-sync-snapshots"); len(got) != 0 {
+		t.Fatalf("an incomplete snapshot is listed: %v", got)
+	}
+	if partial, _ := filepath.Glob(dir + "/star-traders-sync-snapshots/.partial-*"); len(partial) != 1 {
+		t.Fatalf("the partial copy is not kept aside: %v", partial)
+	}
+}

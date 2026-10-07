@@ -161,9 +161,12 @@ func copyTree(src, dst, skipTop string) error {
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		return copyFile(p, filepath.Join(dst, rel))
+		return copyFileFn(p, filepath.Join(dst, rel))
 	})
 }
+
+// copyFileFn is copyFile, a seam for the tests of an incomplete copy.
+var copyFileFn = copyFile
 
 func copyFile(src, dst string) error {
 	info, err := os.Stat(src)
@@ -365,6 +368,15 @@ func (t *T) Rsync(step string, args ...string) *fail.Failure {
 
 // ---------------------------------------------------------------------------
 // Machine-local files and the swap
+
+// GlobNames is globNames, for restore.
+func GlobNames(dir, pattern string) []string { return globNames(dir, pattern) }
+
+// CopyTree is copyTree with nothing skipped: cpio -pdm of a whole tree.
+func CopyTree(src, dst string) error { return copyTree(src, dst, "") }
+
+// CountFiles is find DIR -type f | grep -c .
+func CountFiles(dir string) int { return countFiles(dir, "") }
 
 // globNames is the script's unquoted "$live"/$name: bash glob semantics, so
 // a leading dot is only matched by a pattern that starts with one.

@@ -230,7 +230,7 @@ func Main(args []string, env Env) int {
 		o.Command, b2i(o.DryRun), o.Force, b2i(o.OfflineOK), Version)
 
 	switch o.Command {
-	case "status", "pull", "push", "play":
+	case "status", "pull", "push", "play", "restore":
 	default:
 		return notYet(env, o.Command)
 	}
@@ -240,7 +240,8 @@ func Main(args []string, env Env) int {
 	defer stopSignals()
 	defer r.ex.finish() // runs first: an interrupt mid-release finishes before Main returns
 	if o.JSON {
-		// stdout carries the JSON object and nothing else; every other
+		// stdout carries the JSON (status's object, restore's list) and
+		// nothing else; every other
 		// message goes to stderr, so a caller can parse stdout on exit 0.
 		r.out, r.json = env.Stderr, env.Stdout
 	}
@@ -248,6 +249,16 @@ func Main(args []string, env Env) int {
 	// "defer r.lockLoc.Release()" would bind the nil it holds now.
 	defer func() { r.lockLoc.Release() }() // status takes no hub lock
 	now := time.Now()
+	if o.Command == "restore" {
+		// restore touches only this machine's saves: no tailnet, no hub.
+		if f = r.prepareLocal(now); f == nil {
+			f = r.restore()
+		}
+		if f != nil {
+			return report(env, log, p, f)
+		}
+		return 0
+	}
 	f = r.prepare(now)
 	switch {
 	case f != nil:
