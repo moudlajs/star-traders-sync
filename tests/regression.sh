@@ -426,6 +426,13 @@ check "  the summary line still prints"                  0 sh -c '"$1" doctor 2>
 check "  the reassurance still prints"                   0 sh -c '"$1" doctor 2>&1 | grep -q "Nothing above was changed"' _ "$STS"
 check "  and later sections still ran"                   0 sh -c '"$1" doctor 2>&1 | grep -q "tailscale"' _ "$STS"
 
+# A symlinked save folder is followed by every other command; doctor's
+# count used to stop at the link and call it empty (#168).
+newcase doctor_symlinked_saves
+mv "$CASE/local" "$CASE/real-local"; ln -s "$CASE/real-local" "$CASE/local"
+check "symlinked save folder: its files are counted"   0 sh -c '"$1" doctor 2>&1 | grep -q "save directory, [1-9]"' _ "$STS"
+check "  and it is not called empty"                   1 sh -c '"$1" doctor 2>&1 | grep -q "save directory is empty"' _ "$STS"
+
 # doctor must reach the same verdict as the real commands. It used to
 # hand-roll a subset of the validation and miss the nesting rule, so it
 # could report the config fine for a config push would refuse.

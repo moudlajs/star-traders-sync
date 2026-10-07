@@ -2365,7 +2365,9 @@ doc_save_dir() {
     fi
 
     local count
-    count="$(find "$p" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
+    # The trailing slash: BSD find does not follow a symlinked starting
+    # point, and would count a symlinked save folder as empty (#168).
+    count="$(find "$p/" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
     if [ "${count:-0}" -eq 0 ]; then
         doc_warn "save directory is empty: $p"
         doc_do "launch the game once, or check the path is right"
@@ -2616,7 +2618,7 @@ doc_hub_only() {
 
     if [ -d "$CFG_HUB_PATH" ]; then
         local n
-        n="$(find "$CFG_HUB_PATH" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
+        n="$(find "$CFG_HUB_PATH/" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
         doc_ok "hub directory, ${n:-0} files"
     elif hub_is_busy; then
         doc_warn "hub directory does not exist yet: $CFG_HUB_PATH"

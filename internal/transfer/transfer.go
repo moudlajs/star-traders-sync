@@ -351,7 +351,7 @@ func (t *T) Rsync(step string, args ...string) *fail.Failure {
 		t.Log.Log("ERROR", step, "disk full (rsync rc=%d): %s", rc, errOut)
 		hubLine := "  hub:   df -h " + t.Hub.Path
 		if t.Hub.Endpoint != "" {
-			hubLine = "  hub:   ssh " + strings.Join(t.Hub.SSHOpts, " ") + " " + t.Hub.Target() + " df -h " + t.Hub.Path
+			hubLine = "  hub:   ssh " + t.Hub.SSHOptsText + " " + t.Hub.Target() + " df -h " + t.Hub.Path
 		}
 		return fail.Printed(exitcode.DiskFull, step, "",
 			"error: out of disk space during transfer.",

@@ -86,7 +86,8 @@ func (r *run) prepare(now time.Time) *fail.Failure {
 	}
 	r.hub = &hub.Hub{Host: r.cfg.Get("HUB_HOST"), User: r.cfg.Get("HUB_USER"), Path: r.cfg.Get("HUB_PATH"),
 		Exclude: r.cfg.Exclude(), Log: r.log, Stdout: r.out, Stderr: r.env.Stderr,
-		SSHOpts: hubexec.Options(r.cfg.Get("SSH_CONNECT_TIMEOUT"), r.cfg.Get("SSH_PORT"), r.cfg.Get("SSH_EXTRA_OPTS"))}
+		SSHOpts:     hubexec.Options(r.cfg.Get("SSH_CONNECT_TIMEOUT"), r.cfg.Get("SSH_PORT"), r.cfg.Get("SSH_EXTRA_OPTS")),
+		SSHOptsText: hubexec.OptionsText(r.cfg.Get("SSH_CONNECT_TIMEOUT"), r.cfg.Get("SSH_PORT"), r.cfg.Get("SSH_EXTRA_OPTS"))}
 	if self, name := tailscale.HubIsSelf(st, r.hub.Host); self {
 		r.hub.IsLocal, r.hub.EndpointKind, r.hub.Exec = true, "local", hubexec.Local{}
 		r.log.Log("INFO", "hub", "this machine is the hub (%s) - using local paths, no ssh", name)
