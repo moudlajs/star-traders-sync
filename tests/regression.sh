@@ -645,7 +645,13 @@ if [ -d /Library/Developer/CommandLineTools ]; then
 else
     printf '  skip the CLT-only case (no Command Line Tools here)\n'
 fi
-check "no Go: refused, saying so"                        0 sh -c 'PATH=/usr/bin:/bin "$1" --native 2>&1 | grep -q "Go is needed"' _ "$REPO/macos/build-app.sh"
+# Go off PATH: only meaningful where Go is not in the system directories,
+# or this would start a real build.
+if PATH=/usr/bin:/bin command -v go >/dev/null 2>&1; then
+    printf '  skip the missing-Go case (go is in /usr/bin or /bin here)\n'
+else
+    check "no Go: refused, saying so"                    0 sh -c 'PATH=/usr/bin:/bin "$1" --native 2>&1 | grep -q "Go is needed"' _ "$REPO/macos/build-app.sh"
+fi
 
 # --------------------------------------------------------------------------
 section "engine shim"
