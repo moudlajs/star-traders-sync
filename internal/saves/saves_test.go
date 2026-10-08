@@ -15,8 +15,6 @@ func logger(t *testing.T) *logx.Logger {
 	return &logx.Logger{File: filepath.Join(t.TempDir(), "log"), Level: "DEBUG"}
 }
 
-// status reports staging directories and never removes one, however old;
-// a sync sweeps only the stale ones.
 func TestStatusNeverSweepsAndASyncSweepsOnlyStale(t *testing.T) {
 	root := t.TempDir()
 	saves := filepath.Join(root, "local")

@@ -3,7 +3,6 @@ import XCTest
 @testable import STSSetupCore
 
 final class UpdaterTests: XCTestCase {
-    /// The shape of the real v1.4.0 releases/latest response, trimmed.
     static let feed = """
     {"tag_name":"v1.4.1","body":"Fixes things.","assets":[
       {"name":"star-traders-sync","size":144716,"digest":"sha256:\(String(repeating: "a", count: 64))",
@@ -25,8 +24,7 @@ final class UpdaterTests: XCTestCase {
         XCTAssertTrue(UpdateFeed.isTrustedDownload(r.signatureURL))
     }
 
-    // #108: a release without its signature is not offered, the same as
-    // one without a digest.
+    // #108
     func testAnUnsignedReleaseIsNotOffered() {
         let unsigned = Self.feed.replacingOccurrences(of: "\"name\":\"Star-Traders-Sync.dmg.sig\"", with: "\"name\":\"other\"")
         XCTAssertNotEqual(unsigned, Self.feed)
@@ -111,7 +109,6 @@ final class UpdaterTests: XCTestCase {
         try? fm.removeItem(at: dir)
     }
 
-    /// A minimal, ad-hoc signed app bundle, like build-app.sh makes.
     func makeApp(at url: URL, version: String, id: String? = nil) throws {
         let macos = url.appendingPathComponent("Contents/MacOS")
         try fm.createDirectory(at: macos, withIntermediateDirectories: true)
@@ -129,7 +126,6 @@ final class UpdaterTests: XCTestCase {
         let app = stage.appendingPathComponent(UpdateInstaller.appName)
         try makeApp(at: app, version: version, id: id)
         if tamper {
-            // Changed after signing: the seal no longer matches.
             try "#!/bin/sh\necho evil\n".write(to: app.appendingPathComponent("Contents/MacOS/STSSetup"),
                                                atomically: true, encoding: .utf8)
         }
@@ -154,25 +150,18 @@ final class UpdaterTests: XCTestCase {
         XCTAssertEqual(leftovers, [], "no staged copy left behind")
     }
 
-    /// A staged app folder in place of a disk image, for the refusal checks.
     func makeStage(version: String, id: String? = nil, tamper: Bool = false) throws -> URL {
         let stage = dir.appendingPathComponent("stage-\(UUID().uuidString)")
         let app = stage.appendingPathComponent(UpdateInstaller.appName)
         try makeApp(at: app, version: version, id: id)
         if tamper {
-            // Changed after signing: the seal no longer matches.
             try "#!/bin/sh\necho evil\n".write(to: app.appendingPathComponent("Contents/MacOS/STSSetup"),
                                                atomically: true, encoding: .utf8)
         }
         return stage
     }
 
-    /// hdiutil faked through install's run seam (#124): "attach" copies the
-    /// staged folder to the mount point, "detach" empties it. Everything
-    /// else - codesign, ditto - runs for real, so what is refused is still
-    /// decided by the real checks. On CI, back-to-back real attaches hit
-    /// EAGAIN for longer than any sensible retry; the one real attach is in
-    /// testInstallsAVerifiedUpdateInPlace.
+    /// hdiutil faked through install's run seam (#124): CI's back-to-back real attaches hit EAGAIN; codesign and ditto still run.
     func fakeHdiutil(_ exe: String, _ args: [String]) -> CommandResult {
         guard exe == "/usr/bin/hdiutil" else { return Shell.run(exe, args) }
         switch args.first {
@@ -209,8 +198,7 @@ final class UpdaterTests: XCTestCase {
         XCTAssertTrue(Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", target.path]).ok)
     }
 
-    // #124: a busy diskarbitrationd makes attach fail with EAGAIN. That is
-    // retried; any other failure is final at once.
+    // #124
     func testAttachRetriesOnlyTheTransientError() {
         let eagain = CommandResult(status: 1, stdout: "", stderr: "hdiutil: attach failed - Resource temporarily unavailable")
         let mounted = CommandResult(status: 0, stdout: "/dev/disk9", stderr: "")

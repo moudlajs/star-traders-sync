@@ -1,7 +1,6 @@
 import Foundation
 
-/// One of this Mac's safety copies, as `sts restore --json` lists them (#90):
-/// the snapshot taken before an overwrite, named by its UTC time.
+/// One of this Mac's safety copies, as `sts restore --json` lists them (#90).
 public struct SafetyCopy: Decodable, Equatable, Identifiable {
     public let name: String
     public let files: Int

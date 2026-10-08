@@ -1,16 +1,13 @@
 import Foundation
 
-/// A plain log next to the script's own, so a failure on a machine nobody
-/// can screen-share into can be sent back as one file.
-/// Never given a password: callers log command output only.
+/// A plain setup log beside the script's own. Never given a password: callers log command output only.
 public enum SetupLog {
     public static var url: URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Logs/star-traders-sync/setup-app.log")
     }
 
-    /// Tests switch this off, so a test run never writes into the user's
-    /// real log.
+    /// Off in tests, so a test run never writes into the user's real log.
     public static var enabled = true
 
     public static func write(_ message: String) {

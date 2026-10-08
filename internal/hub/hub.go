@@ -1,8 +1,4 @@
-// Package hub is where the hub lives and how it is read: which address it
-// is reached at, whether ssh works non-interactively, whether HUB_PATH is
-// usable, and the hub side's manifest, newest file and lock owner. The
-// script's resolve_hub_endpoint, check_hub_reachable, check_hub_path,
-// manifest_hub, newest_mtime_hub and status's lock probe.
+// Package hub is where the hub lives and how it is read: endpoint, ssh, HUB_PATH, manifest and lock owner.
 package hub
 
 import (
@@ -26,15 +22,15 @@ import (
 
 // Hub is one run's view of the hub.
 type Hub struct {
-	Host, User, Path string // HUB_HOST, HUB_USER, HUB_PATH
+	Host, User, Path string
 	Exclude          []string
-	IsLocal          bool   // this machine is the hub host
+	IsLocal          bool
 	EndpointKind     string // local, magicdns, tailnet-ip or offline
 	Endpoint         string // the address ssh uses; "" when local or offline
-	DNS, IP          string // the peer's two addresses, for the host-key advice
+	DNS, IP          string
 	Exec             hubexec.Exec
 	SSHOpts          []string
-	SSHOptsText      string // hubexec.OptionsText, for printed commands
+	SSHOptsText      string
 	Log              *logx.Logger
 	Stdout, Stderr   io.Writer
 }
@@ -42,10 +38,7 @@ type Hub struct {
 // Target is ssh_target.
 func (h *Hub) Target() string { return h.User + "@" + h.Endpoint }
 
-// Resolve is resolve_hub_endpoint for a hub that is not this machine:
-// the hub peer, whether it is online, MagicDNS if it resolves, else the
-// tailnet IP, and a tailscale ping. offlineOK lets play run on the local
-// save when the hub is offline.
+// Resolve is resolve_hub_endpoint: MagicDNS if it resolves, else the tailnet IP; offlineOK lets play run offline.
 func (h *Hub) Resolve(ts *tailscale.Client, preferMagicDNS, offlineOK bool, ping func(host string) bool) *fail.Failure {
 	st, f := ts.EnsureUp()
 	if f != nil {
@@ -90,14 +83,12 @@ func (h *Hub) Resolve(ts *tailscale.Client, preferMagicDNS, offlineOK bool, ping
 	return nil
 }
 
-// PingMagicDNS is the script's "ping -c1 -t2": does the name resolve and
-// answer.
+// PingMagicDNS is the script's "ping -c1 -t2": does the name resolve and answer.
 func PingMagicDNS(host string) bool {
 	return exec.Command("ping", platform.PingArgs(host)...).Run() == nil
 }
 
-// CheckReachable is check_hub_reachable: one ssh probe, its failure modes
-// turned into distinct codes, a changed or unknown host key never accepted.
+// CheckReachable is check_hub_reachable; a changed or unknown host key is never accepted.
 func (h *Hub) CheckReachable() *fail.Failure {
 	if h.IsLocal {
 		h.Log.Log("DEBUG", "ssh", "hub is local, skipping ssh probe")
@@ -140,11 +131,7 @@ func (h *Hub) CheckReachable() *fail.Failure {
 		"  ssh-copy-id -i ~/.ssh/id_ed25519.pub "+h.Target())
 }
 
-// HostKeyHelp is hostkey_help: if the machine's other address is already
-// trusted with the same key, adding this one is safe and the comparison is
-// done for the user; otherwise they verify out of band. Never auto-accept.
-// (All of it on stderr: the script's first line of the "safe" advice went
-// to stdout, the rest to stderr.)
+// HostKeyHelp is hostkey_help: never auto-accept, only compare against the other address's trusted key.
 func (h *Hub) HostKeyHelp(want string) []string {
 	alt := h.DNS
 	if want == h.DNS {
@@ -181,8 +168,7 @@ func (h *Hub) HostKeyHelp(want string) []string {
 		`      || echo "MISMATCH: $GOT - do not proceed"`}
 }
 
-// keyField is the script's "| awk '{print $3}' | head -1" over ssh-keygen
-// -F or ssh-keyscan output (skipping ssh-keygen's # comment lines).
+// keyField is "| awk '{print $3}' | head -1" over ssh-keygen -F or ssh-keyscan output.
 func keyField(c *exec.Cmd, skipComments bool) string {
 	out, _ := c.Output()
 	for _, line := range strings.Split(string(out), "\n") {
@@ -196,11 +182,7 @@ func keyField(c *exec.Cmd, skipComments bool) string {
 	return ""
 }
 
-// CheckPath is check_hub_path: HUB_PATH exists, is a directory, and the hub
-// user can read and write it. A missing hub with a parked .sts-old copy
-// beside it is an interrupted swap: the data is intact there, and an empty
-// hub must never be created on top of it. allowMissing: a first push may
-// create the hub.
+// CheckPath is check_hub_path; a missing hub beside a parked .sts-old is an interrupted swap, never recreated.
 func (h *Hub) CheckPath(allowMissing bool) *fail.Failure {
 	out, err := h.Exec.Run(checkPathScript, h.Path)
 	if err != nil {
@@ -242,9 +224,7 @@ func (h *Hub) CheckPath(allowMissing bool) *fail.Failure {
 	return fail.New(exitcode.HubPerms, "hub", "unexpected hub path probe result: %s", out)
 }
 
-// Manifest is the hub side's manifest: built here when this machine is the
-// hub (identical to the script's, see package manifest), else the script's
-// own MANIFEST_SCRIPT run on the hub.
+// Manifest is the hub's manifest: built here when local, else MANIFEST_SCRIPT run on the hub.
 func (h *Hub) Manifest() (manifest.Manifest, error) {
 	if h.IsLocal {
 		return manifest.Build(h.Path, h.Exclude)
@@ -257,8 +237,7 @@ func (h *Hub) Manifest() (manifest.Manifest, error) {
 	return manifest.Parse(out), nil
 }
 
-// Newest is newest_mtime_hub: the newest file's mtime, snapshot and lock
-// dirs left out, 0 for none.
+// Newest is newest_mtime_hub: the newest file's mtime, snapshot and lock dirs left out, 0 for none.
 func (h *Hub) Newest() int64 {
 	if h.IsLocal {
 		return NewestLocal(h.Path)
@@ -297,8 +276,7 @@ func NewestLocal(dir string) int64 {
 	return newest
 }
 
-// LockInfo is status's probe: the hub lock owner's first three lines (host,
-// pid, time) joined by spaces, or "" when the lock is free.
+// LockInfo is status's probe: the hub lock owner's host, pid and time, or "" when free.
 func (h *Hub) LockInfo() string {
 	out, _ := h.Exec.Output(io.Discard, lockInfoScript, filepath.Dir(strings.TrimRight(h.Path, "/"))+"/"+lock.DirName)
 	return out

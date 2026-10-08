@@ -27,8 +27,7 @@ func parse(t *testing.T) *Status {
 func TestFindPeerAsTheScript(t *testing.T) {
 	st := parse(t)
 	for host, want := range map[string]Found{
-		// Two peers share a HostName: the first in the document wins (the
-		// script's dict order), with its first IPv4 address.
+		// Two peers share a HostName: the first in the document wins, with its first IPv4 address.
 		"remotehub":          {DNS: "remotehub.t.ts.net", IP: "100.64.0.1", Online: true},
 		"REMOTEHUB":          {DNS: "remotehub.t.ts.net", IP: "100.64.0.1", Online: true},
 		"remotehub-1":        {DNS: "remotehub-1.t.ts.net", IP: "100.64.0.2", Online: false},

@@ -1,12 +1,7 @@
-// Package decide is the conflict state machine: from the two sides'
-// fingerprints and file counts and the recorded state of the last sync, what
-// a sync would do. Pure functions, ported from the script's decide() and
-// effective_decision(), and tested against them for every combination.
-// Nothing is ever merged and nothing is ever auto-picked.
+// Package decide is the conflict state machine, ported from the script's decide(); nothing is merged or auto-picked.
 package decide
 
-// Decision is one of the script's decision names, as status --json reports
-// them and --expect-decision takes them.
+// Decision is one of the script's decision names, as status --json and --expect-decision use them.
 type Decision string
 
 const (
@@ -21,8 +16,7 @@ const (
 	LocalEmptied     Decision = "LOCAL_EMPTIED"
 )
 
-// State is the last recorded sync, or a first run. A missing, corrupt or
-// foreign state file is a first run - never "nothing changed".
+// State is the last recorded sync; a missing or foreign state file is a first run, never "nothing changed".
 type State struct {
 	FirstRun  bool
 	Direction string
@@ -61,14 +55,11 @@ func Decide(local, hub Side, st State) Decision {
 	case hchanged:
 		return HubOnly
 	}
-	// Neither side changed since the last sync, yet they differ: the
-	// record is inconsistent with reality.
+	// Neither side changed since the last sync, yet they differ: the record is wrong.
 	return DivergedState
 }
 
-// Effective is what a sync would actually do: Decide, behind the
-// emptied-side guards that pull and push apply first (effective_decision).
-// status reports this, and every guard acts on it (#81).
+// Effective is effective_decision: Decide behind the emptied-side guards; status and every guard use it (#81).
 func Effective(local, hub Side, st State) Decision {
 	switch {
 	case hub.Count == 0 && local.Count > 0:

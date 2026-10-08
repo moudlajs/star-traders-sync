@@ -9,26 +9,16 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/transfer"
 )
 
-// exiter is the script's EXIT trap for the Go build: what has to be undone
-// on the way out (locks, staging), run on an interrupt with the script's
-// exit code - INT 130, TERM 143, HUP 129, PIPE 141 - and, if a swap is in
-// flight, only once it has finished. Installed before the first lock, so no
-// signal can leave one behind.
+// exiter is the script's EXIT trap: undo hooks run on exit or a signal (exit 128+N), after any swap in flight.
 type exiter struct {
 	mu    sync.Mutex
 	hooks []func()
 	guard *transfer.Guard
-	// exiting has one owner: the signal handler that started running the
-	// hooks, or Main on its way out. Neither may exit while the other is
-	// mid-release - a hub lock released over ssh is a script sent on
-	// stdin, and exiting under it cut it off and left the lock behind.
+	// exiting has one owner: a hub lock released over ssh is cut off, and leaked, if the process exits under it.
 	exiting sync.Mutex
 }
 
-// finish is Main's side, on every way out - the script's on_exit runs on
-// every exit, not only on a signal: it takes exiting (so no handler can
-// start; one that already has exits the process first) and runs the hooks.
-// They are idempotent, so what a command already released is a no-op.
+// finish runs the idempotent hooks on every way out, as the script's on_exit does.
 func (e *exiter) finish() {
 	e.exiting.Lock()
 	e.run()
@@ -46,8 +36,6 @@ func (e *exiter) setGuard(g *transfer.Guard) {
 	e.mu.Unlock()
 }
 
-// run runs every hook, newest first; each is safe to run twice, since the
-// normal path releases the same things.
 func (e *exiter) run() {
 	e.mu.Lock()
 	hooks := append([]func(){}, e.hooks...)
@@ -57,7 +45,6 @@ func (e *exiter) run() {
 	}
 }
 
-// watch starts handling the signals; the returned func stops it.
 func (e *exiter) watch() func() {
 	ch := make(chan os.Signal, 1)
 	for sig := range platform.ExitSignals {

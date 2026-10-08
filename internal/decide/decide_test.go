@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// The script's decide() and effective_decision(), sourced from the script
-// itself and run by bash, are the reference.
+// bashFunctions sources the script's decide() and effective_decision() as the reference.
 func bashFunctions(t *testing.T) string {
 	t.Helper()
 	src, err := os.ReadFile("../../bin/star-traders-sync")
@@ -28,8 +27,7 @@ func bashFunctions(t *testing.T) string {
 	return strings.Join(out, "\n")
 }
 
-// ansiC quotes s for bash as $'...', where \t is a real tab (Go's %q
-// makes "\t", which bash double quotes keep as a backslash and a t).
+// ansiC quotes s as $'...' so \t is a real tab; bash keeps Go's %q "\t" as a backslash and a t.
 func ansiC(s string) string {
 	return "$'" + strings.NewReplacer(`\`, `\\`, "'", `\'`, "\t", `\t`).Replace(s) + "'"
 }
@@ -41,9 +39,7 @@ func stateLine(st State) string {
 	return strings.Join([]string{st.Direction, st.Epoch, st.LocalFP, st.HubFP}, "\t")
 }
 
-// Every reachable combination: each side's fingerprint is one of a few
-// values, each count zero or not, and the state either a first run or a
-// record whose fingerprints each match a side or not.
+// Every reachable combination of fingerprints, counts and recorded state.
 func TestEveryCombinationMatchesTheScript(t *testing.T) {
 	fns := bashFunctions(t)
 	fps := []string{"aaa", "bbb", "empty"}

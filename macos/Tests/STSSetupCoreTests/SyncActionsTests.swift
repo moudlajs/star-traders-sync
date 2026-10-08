@@ -13,9 +13,7 @@ final class SyncActionsTests: XCTestCase {
         SyncActions.plan(for: try status(decision)).buttons.map(\.action)
     }
 
-    /// The core guarantee: a button is only offered where the script would
-    /// accept that command. These pairs are the script's own rules (see
-    /// cmd_pull, cmd_push and the regression cases for each decision).
+    /// The pairs are the script's own rules (cmd_pull, cmd_push and the regression cases).
     func testOnlyOffersWhatTheScriptAccepts() throws {
         XCTAssertEqual(try actions("INSYNC"), [.play])
         XCTAssertEqual(try actions("HUB_ONLY"), [.play, .pull])
@@ -28,7 +26,7 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertEqual(try actions("DIVERGED_STATE"), [.resetRecord], "--force does not override it")
     }
 
-    /// #89: the newer side is recommended, whichever it is.
+    /// #89
     func testConflictsRecommendTheNewerSaves() throws {
         // In the sample the Hub was played later than this Mac.
         let b = SyncActions.plan(for: try status("BOTH_CHANGED")).buttons
@@ -38,7 +36,6 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertNotNil(b[0].confirmation)
         XCTAssertNotNil(b[1].confirmation)
 
-        // This Mac played later: then this Mac's saves are the newer ones.
         let json = SyncStatusTests.sample
             .replacingOccurrences(of: "\"FIRSTRUN_CONFLICT\"", with: "\"BOTH_CHANGED\"")
             .replacingOccurrences(of: "\"newest\": 1789844322", with: "\"newest\": 1799999999")
@@ -47,7 +44,6 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertEqual(local.first?.label, "Keep the newer saves")
     }
 
-    /// Timestamps from two Macs are not precise enough to call a near tie.
     func testANearTieRecommendsNeither() throws {
         func plan(hub: Int, local: Int) throws -> [ActionButton] {
             let json = SyncStatusTests.sample
@@ -104,9 +100,7 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertEqual(SyncAction.play.arguments(expecting: .inSync), ["play"], "play takes no expectation")
     }
 
-    /// The app must never send a flag its bundled script does not accept:
-    /// that fails every action button with exit 2. Every flag the actions
-    /// can pass is checked against the script's parse_args.
+    /// Every flag the actions can pass is checked against the script's parse_args; an unknown one exits 2.
     func testTheScriptAcceptsEveryFlagTheAppSends() throws {
         let script = try String(contentsOf: InstallerTests.repo.appendingPathComponent("bin/star-traders-sync"), encoding: .utf8)
         var flags = Set<String>()
@@ -121,8 +115,6 @@ final class SyncActionsTests: XCTestCase {
         }
     }
 
-    /// The whole safety case for syncing without asking: only a plain pull
-    /// when only the hub changed, a plain push when only this Mac did.
     func testAutomaticSyncOnlyDoesTheTwoSafeMoves() throws {
         for d in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
                   "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE", "LOCAL_EMPTIED"] {
@@ -146,7 +138,6 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertNil(SyncActions.automatic(for: try status("LOCAL_ONLY", lock: "workmac 1")))
     }
 
-    /// A press queued during a status check runs only if still valid.
     func testAQueuedPressRunsOnlyIfStillOffered() throws {
         let play = try XCTUnwrap(SyncActions.plan(for: try status("HUB_ONLY")).buttons.first { $0.action == .play })
         XCTAssertTrue(SyncActions.stillOffered(play, for: try status("HUB_ONLY")))
@@ -173,7 +164,6 @@ final class SyncActionsTests: XCTestCase {
         XCTAssertNil(SyncAction.resetRecord.arguments)
     }
 
-    /// Lines are the script's real say() output for a play session.
     func testPlayProgressFollowsTheScript() {
         var p = ActionProgress(action: .play)
         XCTAssertEqual(p.current, 0)

@@ -1,20 +1,5 @@
-/*
- * sts-backup-launcher
- *
- * A launchd job that runs a shell script is, to macOS privacy protection,
- * just /bin/bash. Granting a launchd job access to a removable volume
- * therefore means granting it to /bin/bash - and so to every shell script
- * that ever runs on the machine.
- *
- * This exists so the grant has somewhere narrower to land. launchd starts
- * this binary; this binary starts bash as a child. TCC attributes a child
- * to the responsible process that spawned it, so the permission is held by
- * this one ad-hoc-signed binary rather than by the system shell.
- *
- * It does nothing else: no arguments are taken from the environment, the
- * script path is fixed at compile time, and the child's exit status is
- * propagated unchanged so launchd still sees the real exit code.
- */
+/* sts-backup-launcher: launchd starts this, it runs the backup script and passes its exit status through. */
+/* Exists so the disk-access grant lands on this binary, not on /bin/bash (TCC credits the spawning process). */
 
 #include <stdio.h>
 #include <stdlib.h>

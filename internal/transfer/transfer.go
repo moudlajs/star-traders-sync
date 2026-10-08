@@ -1,9 +1,5 @@
-// Package transfer moves saves between this machine and the hub with every
-// guarantee the script has (#22): the target is snapshotted first, with
-// the snapshot's file count asserted; rsync runs into a staging directory
-// on the receiving side; machine-local SYNC_EXCLUDE files are carried
-// across; and only then are the two directories swapped, by two renames
-// that no signal can come between.
+// Package transfer moves saves between this machine and the hub (#22): snapshot first, rsync into staging,
+// carry machine-local files, then swap by two renames no signal can come between.
 package transfer
 
 import (
@@ -28,9 +24,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/manifest"
 )
 
-// Guard is the process's swap state, shared with its signal handler: while
-// a swap is in flight the staged copy may be the only complete copy of the
-// saves, so an interrupt waits for the swap instead of tearing through it.
+// Guard is the swap state shared with the signal handler: mid-swap, the staged copy may be the only complete one.
 type Guard struct {
 	mu      sync.Mutex
 	inSwap  bool
@@ -39,13 +33,10 @@ type Guard struct {
 	cleanup []string
 }
 
-// ErrClosed: an interrupt is already taking the process down, so the swap
-// was not started (its staging may already be gone).
+// ErrClosed: an interrupt is already exiting, so the swap was not started.
 var ErrClosed = errors.New("interrupted before the swap")
 
-// Swapping runs fn as the swap: an interrupt meanwhile is held until it
-// returns. InSwap reports whether one is in flight (the remote swap, which
-// an interrupt can still cut, by killing ssh).
+// Swapping runs fn as the swap, holding any interrupt until it returns.
 func (g *Guard) Swapping(fn func() error) error {
 	g.mu.Lock()
 	if g.closed {
@@ -81,16 +72,14 @@ func (g *Guard) Interrupt(onExit func()) {
 	onExit()
 }
 
-// Later registers a path that is removed on exit (the script's
-// cleanup_later): staging directories, temp files.
+// Later registers a path removed on exit (cleanup_later).
 func (g *Guard) Later(p string) {
 	g.mu.Lock()
 	g.cleanup = append(g.cleanup, p)
 	g.mu.Unlock()
 }
 
-// Cleanup removes them - except while a swap is in flight, when nothing
-// staged may go.
+// Cleanup removes them, except while a swap is in flight.
 func (g *Guard) Cleanup() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -111,7 +100,7 @@ type T struct {
 	Pid      int
 	Now      func() time.Time
 	Log      *logx.Logger
-	Out      io.Writer // say()
+	Out      io.Writer
 	Stderr   io.Writer
 	Guard    *Guard
 	HubHost  string
@@ -122,11 +111,7 @@ func (t *T) say(format string, a ...any) { fmt.Fprintf(t.Out, format+"\n", a...)
 
 func iso(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05Z") }
 
-// ---------------------------------------------------------------------------
-// Snapshots
-
-// countFiles is find DIR -type f, the snapshot directory left out, as the
-// script counts a snapshot's source.
+// countFiles is find DIR -type f, the snapshot directory left out.
 func countFiles(dir string, skipTop string) int {
 	n := 0
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -144,8 +129,7 @@ func countFiles(dir string, skipTop string) int {
 	return n
 }
 
-// copyTree is cpio -pdm: regular files with their mode and mtime, the
-// directories they need; skipTop (the snapshot directory) left out.
+// copyTree is cpio -pdm: regular files with mode and mtime, skipTop left out.
 func copyTree(src, dst, skipTop string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -165,7 +149,7 @@ func copyTree(src, dst, skipTop string) error {
 	})
 }
 
-// copyFileFn is copyFile, a seam for the tests of an incomplete copy.
+// copyFileFn is a seam for the tests of an incomplete copy.
 var copyFileFn = copyFile
 
 func copyFile(src, dst string) error {
@@ -196,11 +180,7 @@ func copyFile(src, dst string) error {
 	return os.Chtimes(dst, info.ModTime(), info.ModTime())
 }
 
-// SnapshotLocal is snapshot_local: copy dir beside itself into
-// star-traders-sync-snapshots/<UTC time>, built as .partial-<name> and
-// renamed only once its file count matches the source - a snapshot that
-// silently copied nothing is what --delete used to be gated on. prune
-// false keeps every snapshot (restore must never prune the one it reads).
+// SnapshotLocal is snapshot_local: built as .partial-<name>, renamed once its file count matches; prune false keeps all.
 func (t *T) SnapshotLocal(dir string, prune bool) (string, *fail.Failure) {
 	root := filepath.Join(filepath.Dir(dir), manifest.SnapDirName)
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -245,8 +225,7 @@ func (t *T) SnapshotLocal(dir string, prune bool) (string, *fail.Failure) {
 	return snap, nil
 }
 
-// pruneLocal keeps the newest SNAPSHOT_KEEP - and none are pruned while
-// the live directory is empty: then they may be the only copy left.
+// pruneLocal keeps the newest SNAPSHOT_KEEP, and prunes nothing while the live directory is empty.
 func (t *T) pruneLocal(root, live string) {
 	if t.Keep <= 0 {
 		return
@@ -311,9 +290,6 @@ func (t *T) SnapshotHub() (string, *fail.Failure) {
 		"could not snapshot the hub directory on %s into %s: %s", t.HubHost, guess, strings.TrimRight(out, "\n"))
 }
 
-// ---------------------------------------------------------------------------
-// rsync
-
 // Excludes is rsync_excludes: snapshot and lock dirs, then SYNC_EXCLUDE.
 func (t *T) Excludes() []string {
 	e := []string{"--exclude=" + manifest.SnapDirName + "/", "--exclude=" + manifest.LockDirName + "/"}
@@ -323,9 +299,7 @@ func (t *T) Excludes() []string {
 	return e
 }
 
-// Rsync is run_rsync: its own exit code and stderr on a failure, a full
-// disk told apart (34) from anything else (33). The target is untouched
-// either way - the transfer ran into a staging directory.
+// Rsync is run_rsync: a full disk (34) told apart from anything else (33).
 func (t *T) Rsync(step string, args ...string) *fail.Failure {
 	t.Log.Log("INFO", step, "rsync %s", strings.Join(args, " "))
 	var o, e bytes.Buffer
@@ -366,9 +340,6 @@ func (t *T) Rsync(step string, args ...string) *fail.Failure {
 		"The target was not modified - the transfer ran into a temp directory.")
 }
 
-// ---------------------------------------------------------------------------
-// Machine-local files and the swap
-
 // GlobNames is globNames, for restore.
 func GlobNames(dir, pattern string) []string { return globNames(dir, pattern) }
 
@@ -378,8 +349,7 @@ func CopyTree(src, dst string) error { return copyTree(src, dst, "") }
 // CountFiles is find DIR -type f | grep -c .
 func CountFiles(dir string) int { return countFiles(dir, "") }
 
-// globNames is the script's unquoted "$live"/$name: bash glob semantics, so
-// a leading dot is only matched by a pattern that starts with one.
+// globNames is bash glob semantics: a leading dot only matches a pattern that starts with one.
 func globNames(dir, pattern string) []string {
 	matches, _ := filepath.Glob(filepath.Join(dir, pattern))
 	var out []string
@@ -392,8 +362,7 @@ func globNames(dir, pattern string) []string {
 	return out
 }
 
-// PreserveExcluded carries SYNC_EXCLUDE entries from live into staged, so
-// the swap does not delete them; one that cannot be carried refuses (63).
+// PreserveExcluded carries SYNC_EXCLUDE entries from live into staged; one that cannot be carried refuses (63).
 func (t *T) PreserveExcluded(live, staged string) *fail.Failure {
 	if st, err := os.Stat(live); err != nil || !st.IsDir() {
 		return nil
@@ -443,8 +412,7 @@ func copyAll(src, dst string) error {
 	})
 }
 
-// PreserveExcludedHub is preserve_excluded_hub: the same carry on the hub,
-// which reports the first path it could not carry (#128).
+// PreserveExcludedHub is preserve_excluded_hub, reporting the first path it could not carry (#128).
 func (t *T) PreserveExcludedHub(staged string) *fail.Failure {
 	if len(t.Exclude) == 0 {
 		return nil
@@ -465,22 +433,17 @@ func (t *T) PreserveExcludedHub(staged string) *fail.Failure {
 			"failed to preserve the excluded path %s/%s on the hub - refusing to swap, because the swap would delete it", t.Hub.Path, f)
 	}
 	if err == nil {
-		return nil // no hub directory yet, nothing to carry
+		return nil
 	}
 	t.Log.Log("ERROR", "preserve", "excluded-file carry on the hub failed: %s", out)
 	return fail.New(exitcode.Snapshot, "preserve",
 		"could not check the hub's excluded files before the swap - refusing to swap, because it could delete them (%s)", strings.TrimRight(out, "\n"))
 }
 
-// SwapIntoPlace is swap_into_place: target aside, staged in, old removed.
-// A failed second rename puts the original back. No signal can come
-// between the two renames (see Guard).
+// SwapIntoPlace is swap_into_place: target aside, staged in, old removed; a failed second rename restores.
 func (t *T) SwapIntoPlace(tmp, target string) *fail.Failure {
 	old := fmt.Sprintf("%s.sts-old-%d", target, t.Pid)
-	// A leftover with this name - an earlier run's, with the same pid - may
-	// be the only place some saves are. The script deletes it; here it is
-	// moved aside instead, still named .sts-old-* so recover_orphans keeps
-	// reporting it, and never deleted.
+	// A leftover .sts-old-* may hold the only copy of some saves: moved aside, never deleted.
 	if _, err := os.Lstat(old); err == nil {
 		aside := fmt.Sprintf("%s.%d", old, t.Now().UnixNano())
 		if rename(old, aside) != nil {
@@ -497,8 +460,7 @@ func (t *T) SwapIntoPlace(tmp, target string) *fail.Failure {
 		}
 		if rename(tmp, target) != nil {
 			if rename(old, target) != nil {
-				// Say where the saves really are: telling the user they were
-				// restored would be the opposite of the truth.
+				// Say where the saves really are: claiming they were restored would be false.
 				f = fail.New(exitcode.Rsync, "swap",
 					"could not move the staged copy into place, nor put the original back - your saves are intact at %s. Move them back by hand: mv %s %s", old, old, target)
 			} else {
@@ -518,11 +480,8 @@ func (t *T) SwapIntoPlace(tmp, target string) *fail.Failure {
 	return nil
 }
 
-// rename is os.Rename, a seam for the tests of the swap's failure paths.
+// rename is a seam for the tests of the swap's failure paths.
 var rename = os.Rename
-
-// ---------------------------------------------------------------------------
-// The two directions
 
 // PullHubToLocal: the hub becomes this machine's saves.
 func (t *T) PullHubToLocal(target string) *fail.Failure {
@@ -561,8 +520,7 @@ func (t *T) PullHubToLocal(target string) *fail.Failure {
 // PushLocalToHub: this machine's saves become the hub.
 func (t *T) PushLocalToHub(src string) *fail.Failure {
 	tmp := fmt.Sprintf("%s/.sts-incoming-%d", filepath.Dir(t.Hub.Path), t.Pid)
-	// Sweep staging directories left by interrupted pushes: safe under the
-	// hub lock, nothing else is mid-transfer.
+	// Sweeping staging leftovers is safe under the hub lock.
 	_, _ = t.Hub.Exec.Run(sweepHubScript, filepath.Dir(t.Hub.Path))
 	if _, err := t.Hub.Exec.Run(stageHubScript, tmp); err != nil {
 		return fail.New(exitcode.HubPerms, "push", "could not create the staging directory %s on %s", tmp, t.HubHost)

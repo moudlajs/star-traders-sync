@@ -1,8 +1,5 @@
-// Package manifest fingerprints a save directory the way the bash script's
-// MANIFEST_SCRIPT does, byte for byte: one line per regular file,
-// "<sha256>  <size>  ./<path>", sorted bytewise, excluded names left out.
-// Decisions are made on these fingerprints, never on sizes or mtimes: two
-// saves can have the same size and different contents (CLAUDE.md).
+// Package manifest fingerprints a save directory byte for byte as the script's MANIFEST_SCRIPT does.
+// Decisions use fingerprints, never sizes or mtimes: two saves of the same size can differ.
 package manifest
 
 import (
@@ -19,7 +16,6 @@ import (
 	"strings"
 )
 
-// Always excluded, as the script passes them before SYNC_EXCLUDE.
 const (
 	SnapDirName = "star-traders-sync-snapshots"
 	LockDirName = ".sts-lock"
@@ -28,13 +24,11 @@ const (
 // Manifest is a directory's file list.
 type Manifest struct {
 	Lines []string // "<sha256>  <size>  ./<path>", sorted
-	// Unhashable files, as "./<path>": their contents cannot be compared,
-	// so a sync refuses (13) rather than guess.
+	// Unhashable files, as "./<path>": a sync refuses (13) rather than guess.
 	Unhashable []string
 }
 
-// Text is the manifest as the script prints it, without the final newline
-// (its callers capture it with $(...), which drops that).
+// Text is the manifest as the script prints it, without the final newline $(...) drops.
 func (m Manifest) Text() string {
 	var all []string
 	all = append(all, m.Lines...)
@@ -45,8 +39,7 @@ func (m Manifest) Text() string {
 	return strings.Join(all, "\n")
 }
 
-// pathOf: the script sorts find's output - the paths - before hashing, so
-// order is by path whatever the line holds.
+// pathOf: the script sorts find's paths before hashing, so order is by path.
 func pathOf(line string) string {
 	if i := strings.Index(line, "  ./"); i >= 0 {
 		return line[i+2:]
@@ -57,16 +50,10 @@ func pathOf(line string) string {
 // Count is how many files it lists.
 func (m Manifest) Count() int { return len(m.Lines) + len(m.Unhashable) }
 
-// ErrUnhashable: the manifest lists something whose contents could not be
-// read. Its fingerprint would compare equal to another side's with the
-// same unreadable path whatever the contents, so there is none: a sync
-// refuses (13) rather than decide on it (the script's
-// assert_manifest_hashable).
+// ErrUnhashable: an unreadable file has no fingerprint, or two sides could compare equal whatever the contents.
 var ErrUnhashable = errors.New("some files cannot be fingerprinted")
 
-// Fingerprint is the sha256 of Text, or "empty" for no files, as
-// fingerprint_of_manifest computes it - and an error if anything in it is
-// unhashable, so such a manifest can never reach a decision.
+// Fingerprint is fingerprint_of_manifest: sha256 of Text, "empty" for no files, an error if anything is unhashable.
 func (m Manifest) Fingerprint() (string, error) {
 	if len(m.Unhashable) > 0 {
 		return "", fmt.Errorf("%w: %s", ErrUnhashable, strings.Join(m.Unhashable, ", "))
@@ -79,9 +66,7 @@ func (m Manifest) Fingerprint() (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// matcher is one exclude name, with find(1)'s fnmatch semantics and no
-// FNM_PATHNAME: "*" matches anything, "/" included. The names are limited
-// to [A-Za-z0-9._*@+-] by config validation, so "*" is the only special.
+// matcher is one exclude name with find(1)'s fnmatch semantics, no FNM_PATHNAME: "*" matches "/" too.
 type matcher struct{ name, path *regexp.Regexp }
 
 func newMatcher(n string) matcher {
@@ -93,16 +78,7 @@ func newMatcher(n string) matcher {
 	}
 }
 
-// Build lists dir. A missing dir is an empty manifest (the script's
-// "cd || exit 0").
-//
-// Unlike the script, nothing unreadable is skipped silently. find's errors
-// go to /dev/null there, so an unreadable subdirectory just shrinks the
-// manifest and the script refuses only later, at the snapshot or the
-// transfer. Here an unreadable subdirectory is listed as unhashable
-// ("./sub/"), which refuses (13) before anything is decided, and an
-// unreadable dir itself is an error: never an "empty" manifest that would
-// read as FIRST_SEED or LOCAL_EMPTIED.
+// Build lists dir; a missing dir is empty, but anything unreadable is unhashable or an error, never skipped.
 func Build(dir string, exclude []string) (Manifest, error) {
 	names := append([]string{SnapDirName, LockDirName}, exclude...)
 	var ms []matcher
@@ -114,14 +90,13 @@ func Build(dir string, exclude []string) (Manifest, error) {
 	st, err := os.Stat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return m, nil // nothing there yet: empty, as the script's cd || exit 0
+		return m, nil
 	case err != nil:
-		return m, fmt.Errorf("cannot read %s: %w", dir, err) // EACCES, EIO, a stale mount
+		return m, fmt.Errorf("cannot read %s: %w", dir, err)
 	case !st.IsDir():
 		return m, fmt.Errorf("%s is not a directory", dir)
 	}
-	// WalkDir does not follow a symlinked root - it would report the link
-	// itself and no files, an "empty" side. The script's cd follows it.
+	// WalkDir does not follow a symlinked root; the script's cd does.
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return m, fmt.Errorf("cannot resolve %s: %w", dir, err)
@@ -135,8 +110,7 @@ func Build(dir string, exclude []string) (Manifest, error) {
 			}
 			rel, _ := filepath.Rel(dir, p)
 			under := "./" + filepath.ToSlash(rel) + "/"
-			// Nothing under an excluded directory is listed anyway, so
-			// one we cannot read is no reason to refuse.
+			// Nothing under an excluded directory is listed, so an unreadable one is no reason to refuse.
 			excluded := false
 			for _, x := range ms {
 				if x.path.MatchString(under) {
@@ -161,9 +135,7 @@ func Build(dir string, exclude []string) (Manifest, error) {
 				return nil
 			}
 		}
-		// A newline in a name cannot survive the script's line-based
-		// manifest (a remote hub's): refuse it as unhashable, as the script
-		// does, rather than fingerprint what the other side cannot.
+		// A newline in a name cannot survive the line-based manifest: unhashable, as in the script.
 		if strings.ContainsAny(dot, "\n\r") {
 			unreadable = append(unreadable, dot)
 			return nil
@@ -201,8 +173,7 @@ func hashFile(p string) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 
-// Parse reads a manifest in the script's text form - what MANIFEST_SCRIPT
-// prints on a remote hub.
+// Parse reads a manifest in the script's text form, as MANIFEST_SCRIPT prints it on a remote hub.
 func Parse(text string) Manifest {
 	var m Manifest
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {

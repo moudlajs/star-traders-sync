@@ -1,7 +1,4 @@
-// Package config reads ~/.config/star-traders-sync/config the way the bash
-// script does: KEY=value lines, parsed and never evaluated, every key on a
-// whitelist, and every refusal with the script's exit code and wording, so
-// the two can be diffed against each other (tests/parity.sh).
+// Package config reads the KEY=value config as the bash script does: parsed, never evaluated, keys whitelisted.
 package config
 
 import (
@@ -24,7 +21,6 @@ func refuse(code exitcode.Code, format string, a ...any) *Failure {
 	return fail.New(code, "config", format, a...)
 }
 
-// Known keys, in the script's config_key_known order.
 var known = []string{
 	"HUB_HOST", "HUB_USER", "HUB_PATH",
 	"LOCAL_SAVE_PATH",
@@ -36,7 +32,6 @@ var known = []string{
 	"LOG_MAX_BYTES", "LOG_KEEP", "LOG_LEVEL",
 }
 
-// Defaults for the optional keys, as the script sets them.
 var defaults = map[string]string{
 	"GAME_START_TIMEOUT": "90", "SSH_PORT": "22", "SSH_CONNECT_TIMEOUT": "10",
 	"PREFER_MAGICDNS": "1", "SNAPSHOT_KEEP": "10", "LOCK_TTL_SECONDS": "3600",
@@ -86,8 +81,7 @@ func (c *Config) Int(key string) int {
 	return n
 }
 
-// Exclude is SYNC_EXCLUDE split on whitespace, as the script's unquoted
-// loop splits it.
+// Exclude is SYNC_EXCLUDE split on whitespace, as the script's unquoted loop splits it.
 func (c *Config) Exclude() []string { return strings.Fields(c.values["SYNC_EXCLUDE"]) }
 
 // Load parses the file. home expands a leading ~ in path keys.
@@ -113,8 +107,7 @@ func Load(path, home string) (*Config, *Failure) {
 	lineno := 0
 	for sc.Scan() {
 		lineno++
-		// ScanLines already drops one trailing CR, so a file saved with
-		// CRLF parses, blank lines included (tests/parity.sh checks it).
+		// ScanLines drops one trailing CR, so a CRLF file parses.
 		line := sc.Text()
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -123,8 +116,7 @@ func Load(path, home string) (*Config, *Failure) {
 		if eq < 0 {
 			return nil, refuse(exitcode.ConfigMalformed, "%s line %d is not KEY=value: %s", path, lineno, line)
 		}
-		// The script deletes every whitespace character from the key
-		// (tr -d '[:space:]'), not only the ends.
+		// The script deletes every whitespace character from the key (tr -d '[:space:]'), not only the ends.
 		key := strings.Map(func(r rune) rune {
 			if strings.ContainsRune(" \t\n\v\f\r", r) {
 				return -1
@@ -209,8 +201,7 @@ func (c *Config) Validate() *Failure {
 		return refuse(exitcode.ConfigMalformed, "HUB_PATH must be absolute - it is evaluated on the hub host, where ~ is the hub user's home, got '%s'", hub)
 	}
 
-	// rsync hands a remote path to the hub's login shell, and openrsync
-	// has no --protect-args: see "Notes on paths" in docs/design.md (#42).
+	// openrsync has no --protect-args, so a remote path goes through the hub's login shell (#42).
 	for _, k := range pathKeys {
 		v := c.values[k]
 		if !onlyChars(v, alnum+"._/@+-") {

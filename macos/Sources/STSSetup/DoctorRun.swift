@@ -1,12 +1,7 @@
 import STSSetupCore
 import SwiftUI
 
-/// One run of `sts doctor --fix`, revealed a section at a time.
-///
-/// The script prints its whole report in well under a second, which reads
-/// as a flash of text. Sections are shown one after another instead, each
-/// only once it is complete, at a pace the eye can follow. The checks
-/// themselves are real and already finished; only the reveal is paced.
+/// One run of `sts doctor --fix`; the checks finish at once, only the per-section reveal is paced for the eye.
 @MainActor
 final class DoctorRun: ObservableObject {
     @Published private(set) var report = DoctorReport()
@@ -22,10 +17,8 @@ final class DoctorRun: ObservableObject {
 
     var visibleSections: ArraySlice<DoctorSection> { report.sections.prefix(shown) }
 
-    /// Every row from the start; each changes in place (DoctorReport.rows).
     var rows: [DoctorRow] { report.rows(revealed: shown, finished: !running && passed != nil) }
 
-    /// The section being checked right now, for the spinner row.
     var upcoming: DoctorSection? {
         running && shown < report.sections.count ? report.sections[shown] : nil
     }
@@ -55,8 +48,6 @@ final class DoctorRun: ObservableObject {
 
         Task { @MainActor in
             while generation == gen {
-                // A section is complete once the next one has started, or
-                // the run is over.
                 let complete = processDone ? report.sections.count : max(0, report.sections.count - 1)
                 if shown < complete {
                     try? await Task.sleep(nanoseconds: Self.pace)
@@ -83,9 +74,6 @@ struct DoctorProgressView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Grouped like a System Settings list: one rounded panel, every
-            // row drawn from the start, each turning grey, spinner, result
-            // in place. Nothing slides in, nothing overlaps.
             VStack(spacing: 0) {
                 ForEach(Array(run.rows.enumerated()), id: \.element.id) { i, row in
                     if i > 0 { Divider().padding(.leading, 40) }
@@ -138,7 +126,6 @@ struct DoctorSectionRow: View {
 
     init(section: DoctorSection) {
         self.section = section
-        // Problems open by themselves; a passing section stays one line.
         _expanded = State(initialValue: [.fail, .warn].contains(section.outcome))
     }
 
@@ -225,8 +212,7 @@ struct DoctorSectionRow: View {
     }
 }
 
-/// A section not reached yet: grey, the spinner when it is next, or "not
-/// checked" once the run is over without it.
+/// A section not reached yet: grey, a spinner when next, or "not checked" once the run is over.
 struct PendingDoctorRow: View {
     let row: DoctorRow
 

@@ -9,9 +9,7 @@ permissions:
 
 jobs:
   assign:
-    # One maintainer, so an unassigned issue is always an oversight. The
-    # issue template also sets an assignee, but that only covers issues
-    # created through it.
+    # The issue template assigns too, but only for issues created through it.
     if: github.event.issue.assignees[0] == null
     runs-on: ubuntu-latest
     steps:

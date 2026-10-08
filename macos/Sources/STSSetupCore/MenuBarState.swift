@@ -1,18 +1,15 @@
 import Foundation
 
-/// What the menu bar icon says at a glance (#91): one of a few states,
-/// from the same status and run the main window shows.
+/// What the menu bar icon says at a glance (#91).
 public enum MenuBarState: Equatable {
     /// Nothing known yet: the first check has not finished.
     case checking
     case upToDate
     /// A sync, a Play or a restore is running.
     case syncing
-    /// The two sides differ in a way the app or Play settles by itself:
-    /// fetching newer saves, or sending this Mac's.
+    /// The sides differ in a way the app or Play settles by itself.
     case willSync
-    /// Only the user can settle it: a choice between saves, an emptied
-    /// side, or a problem (hub offline, a refusal).
+    /// Only the user can settle it: a choice between saves, an emptied side, or a problem.
     case needsYou
 
     public static func of(status: SyncStatus?, busy: Bool, problem: Bool) -> MenuBarState {

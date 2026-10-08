@@ -1,32 +1,18 @@
 #!/bin/bash
-#
-# star-traders-sync - sync Star Traders: Frontiers saves between Macs over
-# Tailscale, through a hub directory that is the single source of truth.
-#
-# One script, identical on both machines. Every difference lives in
-# ~/.config/star-traders-sync/config.
-#
-# Plain bash 3.2. No bash 4 features: no associative arrays, no ${x^^},
-# no mapfile, no <<<.
+# star-traders-sync - sync Star Traders: Frontiers saves between Macs over Tailscale, through a hub.
+# Plain bash 3.2: no associative arrays, no ${x^^}, no mapfile, no <<<.
 
 set -Eeuo pipefail
 
 readonly STS_VERSION="1.8.0"
 readonly PROG="star-traders-sync"
 
-# Character classes spelled out, never as ranges. A bracket range in a case
-# pattern ([A-Z], [0-9]) follows the locale's collation: under the
-# en_US.UTF-8 of an ordinary Terminal, [A-Z] also matched lower case and
-# [A-Za-z] matched letters such as e-acute, so a check accepted what it was
-# written to refuse. These expand to the same set in every locale.
+# Character classes spelled out, never as ranges: [A-Z] follows locale collation and matches more.
 readonly CH_DIGITS="0123456789"
 readonly CH_UPPER="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 readonly CH_LOWER="abcdefghijklmnopqrstuvwxyz"
 
-# --------------------------------------------------------------------------
-# Exit codes. Every one of these is documented in --help and in the
-# docs/troubleshooting.md table. Nothing exits non-zero without one of these.
-# --------------------------------------------------------------------------
+# Exit codes, documented in --help and docs/troubleshooting.md.
 readonly EX_OK=0
 readonly EX_USAGE=2
 
@@ -70,9 +56,7 @@ readonly EX_NO_SNAPSHOT=65         # restore: no such safety copy, or an empty o
 readonly EX_BACKUP_NOT_MOUNTED=70  # backup volume not mounted
 readonly EX_BACKUP_NOT_HUB=71      # sts backup run off the hub host
 
-# --------------------------------------------------------------------------
-# Globals set during startup
-# --------------------------------------------------------------------------
+# Globals
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$PROG"
 CONFIG_FILE="$CONFIG_DIR/config"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$PROG"
@@ -109,7 +93,6 @@ BACKUP_PENDING=""    # a backup directory that is not yet known to be good
 DYING=0              # 1 once die() has been entered, so on_err stays quiet
 CLEANUP_PATHS=""      # newline separated, removed by the EXIT trap
 
-# Config values, all prefixed CFG_. Defaults for optional keys only.
 CFG_HUB_HOST=""
 CFG_HUB_USER=""
 CFG_HUB_PATH=""
@@ -133,9 +116,7 @@ CFG_LOG_MAX_BYTES="5242880"
 CFG_LOG_KEEP="3"
 CFG_LOG_LEVEL="INFO"
 
-# --------------------------------------------------------------------------
-# Logging. stdout stays short and human readable; detail goes to the log.
-# --------------------------------------------------------------------------
+# Logging
 
 iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -166,7 +147,6 @@ rotate_log() {
     mv -f "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null || true
 }
 
-# log LEVEL STEP MESSAGE...
 log() {
     local level="$1" step="$2"; shift 2
     local msg="$*"
@@ -185,11 +165,9 @@ log() {
     fi
 }
 
-# say MESSAGE - the short human line on stdout
 say()  { printf '%s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 
-# die EXITCODE STEP MESSAGE... - log at ERROR, print to stderr, exit
 die() {
     local code="$1" step="$2"; shift 2
     DYING=1
@@ -199,9 +177,7 @@ die() {
     exit "$code"
 }
 
-# --------------------------------------------------------------------------
-# Traps. Cleanup and lock release always run, on every exit path.
-# --------------------------------------------------------------------------
+# Traps
 
 on_err() {
     local code=$? line=${1:-?}
@@ -211,23 +187,17 @@ on_err() {
 
 on_exit() {
     local code=$?
-    # Best effort from here on: a failed write (a closed pipe or terminal)
-    # must not abort the cleanup halfway under set -e.
+    # Best effort from here: a failed write must not abort the cleanup halfway under set -e.
     set +e
-    # The terminal may be the thing that just went away; a second hangup
-    # here must not cut the cleanup short.
+    # The terminal may be what just went away; a second hangup must not cut cleanup short.
     trap '' HUP
     release_hub_lock
-    # While a swap is in flight the staged copy may be the ONLY complete copy
-    # of the saves. Never sweep it away on a signal; leave a breadcrumb that
-    # the next run recovers from instead.
+    # Mid-swap the staged copy may be the ONLY complete copy of the saves: never sweep it away.
     if [ "$IN_SWAP" -eq 1 ]; then
         log ERROR trap "interrupted mid-swap - staged data left in place deliberately, run $PROG again to recover"
         printf 'error: interrupted while swapping directories.\n' >&2
         printf 'Nothing was deleted. Re-run %s and it will recover.\n' "$PROG" >&2
-        # Still release the lock: the guard protects data, not the lock -
-        # its directory included, or the next run finds a lock with no
-        # holder (#151).
+        # Still release the lock, its directory included, or the next run finds a holderless lock (#151).
         [ -n "$LOCAL_LOCK_FILE" ] && rm -f "$LOCAL_LOCK_FILE" 2>/dev/null
         [ -n "$LOCAL_LOCK_DIR" ] && rmdir "$LOCAL_LOCK_DIR" 2>/dev/null
         return $code
@@ -236,9 +206,7 @@ on_exit() {
         log WARN backup "removing incomplete backup $BACKUP_PENDING"
         rm -rf "$BACKUP_PENDING" 2>/dev/null || true
     fi
-    # A for loop over the variable, not printf piped into while: after a
-    # closed pipe that printf can emit stale output too (see exit_quietly),
-    # and every line it emits here is handed to rm -rf.
+    # A for loop, not printf | while: after a closed pipe printf can emit stale output, and it feeds rm -rf.
     local p IFS='
 '
     set -f
@@ -253,28 +221,13 @@ on_exit() {
 
 trap 'on_err $LINENO' ERR
 trap on_exit EXIT
-# Without these, a Ctrl-C or a launchd SIGTERM exits 0 and an interrupted
-# transfer is reported as a clean success.
+# Without these, Ctrl-C or a launchd SIGTERM exits 0 and an interrupted transfer looks like success.
 trap 'exit 130' INT
 trap 'exit 143' TERM
-# `sts play | head -1`: once the reader goes away, the next write raises
-# SIGPIPE, and that run used to leave the hub lock held, blocking the other
-# machine (#129). PIPE and HUP (terminal closed) now both exit through
-# on_exit with the vanished output pointed at /dev/null first.
-#
-# bash 3.2 keeps the text of the write that hit the closed pipe in its
-# stdout buffer, and every $(...) or pipe forked afterwards inherits that
-# buffer and flushes it into its own output - so on_exit's
-# "$(hub_lock_path)" came back as that text plus the path, and the lock was
-# never removed. The echo flushes it into /dev/null on the bash this was
-# found on, but not on every build, so on_exit's cleanup must not depend on
-# it: the lock path is saved at acquire time and nothing there forks for
-# its output.
+# After SIGPIPE, bash 3.2 flushes the stale write into later forks, so cleanup must not fork for output (#129).
 exit_quietly() {
     if [ "$1" = 141 ]; then
-        # Only stdout is known to be gone. stderr may still be a terminal
-        # that should see on_exit's recovery message; if it is the same
-        # closed pipe, its writes now fail with EPIPE instead of a signal.
+        # Only stdout is known to be gone; stderr may still be a terminal that should see the recovery message.
         trap '' PIPE
         exec >/dev/null
     else
@@ -289,10 +242,7 @@ trap 'exit_quietly 141' PIPE
 cleanup_later() { CLEANUP_PATHS="$CLEANUP_PATHS
 $1"; }
 
-# --------------------------------------------------------------------------
-# Config. The file is parsed, never sourced - a config file must not be able
-# to execute code. Unknown keys are a hard error rather than a shrug.
-# --------------------------------------------------------------------------
+# Config: parsed, never sourced - a config file must not be able to execute code.
 
 config_key_known() {
     case "$1" in
@@ -316,7 +266,7 @@ config_key_is_path() {
     esac
 }
 
-# Only a leading ~/ is expanded, and only in path keys. Nothing else.
+# Only a leading ~/ is expanded, and only in path keys.
 expand_tilde() {
     case "$1" in
         "~/"*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
@@ -336,7 +286,6 @@ load_config() {
     local lineno=0 line key val
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno + 1))
-        # strip trailing CR so a file edited on another platform still parses
         line="${line%$'\r'}"
         case "$line" in
             ''|'#'*) continue ;;
@@ -349,22 +298,17 @@ load_config() {
 
         key="${line%%=*}"
         val="${line#*=}"
-        # trim surrounding whitespace on the key only; values are literal
         key="$(printf '%s' "$key" | tr -d '[:space:]')"
 
         config_key_known "$key" || die $EX_CONFIG_MALFORMED config \
             "$CONFIG_FILE line $lineno: unknown key '$key' - see config.example"
 
-        # Trim surrounding whitespace so `KEY = value` does not smuggle a
-        # space into the value.
         val="${val#"${val%%[![:space:]]*}"}"
         val="${val%"${val##*[![:space:]]}"}"
 
         if config_key_is_path "$key" && [ -n "$val" ]; then
             val="$(expand_tilde "$val")"
-            # Strip trailing slashes: `mv dir/ dir.old` fails with EINVAL,
-            # and every path here is used as an operand, never a directory
-            # suffix.
+            # Strip trailing slashes: `mv dir/ dir.old` fails with EINVAL.
             while :; do
                 case "$val" in
                     /) break ;;
@@ -379,7 +323,6 @@ load_config() {
     log DEBUG config "loaded $CONFIG_FILE"
 }
 
-# Every missing required key is reported at once, not one per run.
 validate_config() {
     local missing="" k v name
     for k in HUB_HOST HUB_USER HUB_PATH LOCAL_SAVE_PATH STEAM_APPID \
@@ -396,7 +339,6 @@ validate_config() {
         exit $EX_CONFIG_INCOMPLETE
     fi
 
-    # Numeric keys must actually be numeric, or later arithmetic lies.
     for k in GAME_START_TIMEOUT SSH_PORT SSH_CONNECT_TIMEOUT PREFER_MAGICDNS \
              SNAPSHOT_KEEP LOCK_TTL_SECONDS CLOCK_SKEW_TOLERANCE BACKUP_KEEP \
              BACKUP_MOUNT_WAIT LOG_MAX_BYTES LOG_KEEP; do
@@ -419,12 +361,7 @@ validate_config() {
              "HUB_PATH must be absolute - it is evaluated on the hub host, where ~ is the hub user's home, got '$CFG_HUB_PATH'" ;;
     esac
 
-    # This restriction is now about rsync alone. hub_exec_args passes values
-    # as positional parameters, so ssh no longer parses them as syntax - but
-    # rsync hands a remote path to the hub's login shell itself, and
-    # openrsync has no --protect-args, so a space still splits a transfer in
-    # two and a metacharacter still reaches a shell. Lifting this means
-    # solving that first; see "Notes on paths" in docs/design.md.
+    # rsync hands remote paths to the hub's login shell and openrsync has no --protect-args (docs/design.md).
     for k in HUB_PATH LOCAL_SAVE_PATH BACKUP_VOLUME BACKUP_DEST; do
         eval "v=\${CFG_$k}"
         case "$v" in
@@ -442,8 +379,6 @@ validate_config() {
         esac
     done
 
-    # L4: on the hub, both sides are local paths. If one contained the other,
-    # push would move the live save directory out from under the game.
     if [ "$CFG_HUB_PATH" = "$CFG_LOCAL_SAVE_PATH" ]; then
         die $EX_CONFIG_MALFORMED config \
             "HUB_PATH and LOCAL_SAVE_PATH are the same directory. The hub must be separate from the game's save directory, on every machine including the hub itself."
@@ -467,9 +402,7 @@ validate_config() {
     log DEBUG config "validated"
 }
 
-# --------------------------------------------------------------------------
 # Preflight: the checks that do not need the network.
-# --------------------------------------------------------------------------
 
 check_not_root() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -500,8 +433,7 @@ check_tools() {
     log DEBUG preflight "rsync=$(command -v rsync) ssh=$(command -v ssh)"
 }
 
-# Recover from a run that died between the two renames of a swap, and clear
-# staging directories left by failed transfers.
+# Recover from a run that died mid-swap, and clear staging directories left by failed transfers.
 recover_orphans() {
     local mode="${1:-sweep}" parent old incoming age now cand
     parent="$(dirname "$CFG_LOCAL_SAVE_PATH")"
@@ -524,10 +456,7 @@ recover_orphans() {
         fi
     fi
 
-    # A staging directory younger than this may belong to a run that is
-    # still going. We hold the local lock, so that can only be a run on the
-    # other side of a crash - but the cost of waiting is nil and the cost of
-    # deleting live data is total.
+    # Leave young staging dirs alone: waiting costs nothing, deleting live data costs everything.
     now="$(date -u +%s)"
     for incoming in "$parent"/.sts-incoming-*; do
         [ -d "$incoming" ] || continue
@@ -544,9 +473,7 @@ recover_orphans() {
         rm -rf "$incoming"
     done
 
-    # An interrupt between a successful swap and the final cleanup leaves a
-    # complete previous generation behind. Report it rather than let it
-    # accumulate silently until a pid collision destroys it.
+    # Report a leftover previous generation rather than let a pid collision destroy it silently.
     for cand in "$CFG_LOCAL_SAVE_PATH".sts-old-*; do
         [ -d "$cand" ] || continue
         log WARN recover "previous generation left at $cand - safe to delete once you are happy"
@@ -554,7 +481,6 @@ recover_orphans() {
     return 0
 }
 
-# Local save directory must exist, be a directory, and contain something.
 # An empty local save directory is a real state, not a fresh start.
 check_local_save_path() {
     local p="$CFG_LOCAL_SAVE_PATH"
@@ -579,13 +505,9 @@ check_local_save_path() {
 }
 
 
-# --------------------------------------------------------------------------
 # Tailscale
-# --------------------------------------------------------------------------
 
-# STS_TS_APP_PATH exists for the regression suite: pointed at a path that
-# does not exist, it makes find_tailscale fall through to PATH, where the
-# suite's stub is, even on a Mac with the Tailscale app installed.
+# STS_TS_APP_PATH lets the regression suite hide the Tailscale app so its PATH stub is used.
 readonly TS_APP_PATH="${STS_TS_APP_PATH:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}"
 
 find_tailscale() {
@@ -603,12 +525,9 @@ find_tailscale() {
         "tailscale not found at $TS_APP_PATH nor on PATH - install the Tailscale app or 'brew install tailscale'"
 }
 
-# Emits the raw JSON. Distinguishes "daemon is down" from "command failed".
 ts_status_json() {
     local out rc err errf
-    # stdout only: the JSON. Anything tailscale says on stderr (a client and
-    # daemon version mismatch after an update, say) is kept apart; merged,
-    # it sat in front of the JSON and every parser below crashed on it.
+    # stdout only: tailscale's stderr (e.g. a version-mismatch warning) merged in broke the JSON parsers.
     errf="$(mktemp "${TMPDIR:-/tmp}/sts-ts.XXXXXX")"
     set +e
     out="$("$TS_BIN" status --json 2>"$errf")"
@@ -629,8 +548,7 @@ ts_status_json() {
     fi
     [ -n "$err" ] && log WARN tailscale "status --json warned: $(printf '%s' "$err" | head -1)"
 
-    # Exit 0 is not proof of an answer: disconnected, the App Store CLI can
-    # print a plain sentence instead. Refuse in words, never a traceback.
+    # Exit 0 is not proof of JSON: disconnected, the App Store CLI can print a plain sentence.
     if ! printf '%s' "$out" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; then
         log ERROR tailscale "status --json was not JSON: $(printf '%s' "$out" | head -1)"
         die $EX_TS_LOGGED_OUT tailscale \
@@ -644,8 +562,7 @@ ts_backend_state() {
         'import json,sys; print(json.load(sys.stdin).get("BackendState",""))'
 }
 
-# States 11 and 12: try `tailscale up` exactly once, then re-check. If it
-# wants a browser, say so and get out rather than blocking forever.
+# Try `tailscale up` exactly once; if it wants a browser, exit rather than block forever.
 ts_ensure_up() {
     local json state
     json="$(ts_status_json)"
@@ -658,8 +575,7 @@ ts_ensure_up() {
     fi
 
     log WARN tailscale "backend state is $state, attempting 'tailscale up' once"
-    # stderr, not say: this function's stdout is the JSON its caller
-    # captures, and a sentence in front of it broke every parser (#103).
+    # stderr, not say: stdout is the JSON the caller captures (#103).
     printf 'Tailscale is %s - bringing it up (one attempt)...\n' "$state" >&2
 
     local out rc
@@ -668,7 +584,6 @@ ts_ensure_up() {
     rc=$?
     set -e
 
-    # An auth URL means a human has to click. Never hang waiting for it.
     case "$out" in
         *"https://login.tailscale.com/"*)
             local url
@@ -716,9 +631,6 @@ for p in list(d.get("Peer", {}).values()) + [d.get("Self", {})]:
 ' "$host"
 }
 
-# Decide how we address the hub: MagicDNS if it resolves, tailnet IP if not.
-# On a machine whose tailscaled does not install a system resolver the IP
-# fallback is the normal path, so it is logged at INFO, not WARN.
 resolve_hub_endpoint() {
     local json peer dns ip online
 
@@ -776,25 +688,12 @@ resolve_hub_endpoint() {
     log DEBUG tailscale "ping ok: $(printf '%s' "$out" | head -1)"
 }
 
-# --------------------------------------------------------------------------
-# Hub access. The hub is reached by ssh, or by plain local paths when this
-# machine IS the hub. Everything above this layer uses the same calls.
-# --------------------------------------------------------------------------
+# Hub access: ssh, or plain local paths when this machine IS the hub.
 
 readonly SNAP_DIRNAME="star-traders-sync-snapshots"
 readonly LOCK_DIRNAME=".sts-lock"
 
-# Does CFG_HUB_HOST name this machine?
-#
-# Compared case-insensitively against BOTH the node's HostName and the short
-# MagicDNS label, because they can differ: a rename in the admin console
-# changes one and not the other, and Tailscale suffixes -1 or -2 when two
-# machines collide on a name - entirely possible with two Macs.
-#
-# One copy, used by detect_self_is_hub and by doctor. Doctor previously had
-# its own version comparing HostName only, so on a machine where the two
-# names differed it decided the hub was remote, tried to ssh to itself, and
-# skipped every hub check without saying so.
+# Matches HostName OR the short MagicDNS label: renames and -1/-2 collision suffixes make them differ.
 hub_host_matches() {
     local host="$1" dns="$2" want
     want="$(printf '%s' "$CFG_HUB_HOST" | tr '[:upper:]' '[:lower:]')"
@@ -822,10 +721,7 @@ detect_self_is_hub() {
     fi
 }
 
-# BatchMode, timeout and StrictHostKeyChecking are fixed on purpose. An
-# unknown or changed host key must fail loudly, never auto-accept.
-# ssh_opts_set fills SSH_OPTS without forking, for hub_exec_args; ssh_opts
-# prints the same string for everything else.
+# BatchMode and StrictHostKeyChecking=yes are fixed: an unknown or changed host key must fail, never auto-accept.
 SSH_OPTS=""
 ssh_opts_set() {
     SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=$CFG_SSH_CONNECT_TIMEOUT \
@@ -835,22 +731,16 @@ ssh_opts() { ssh_opts_set; printf '%s' "$SSH_OPTS"; }
 
 ssh_target() { printf '%s@%s' "$CFG_HUB_USER" "$HUB_ENDPOINT"; }
 
-# The exact command a human can paste to reproduce a failure by hand.
 ssh_repro_cmd() {
     printf 'ssh %s %s' "$(ssh_opts)" "$(ssh_target)"
 }
 
-# Single-quote a value so a shell reads it back as one literal word.
-# Every embedded quote is closed, escaped and reopened: ' -> '\''
+# Single-quote for a shell: each embedded ' becomes '\''
 shq() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
-# hub_exec COMMAND - run a shell command where the hub lives.
-#
-# The command is shell TEXT, so anything interpolated into it is code. Use
-# it only for commands with no variable parts; everything else belongs in
-# hub_exec_args.
+# hub_exec runs shell TEXT: only for commands with no variable parts; everything else uses hub_exec_args.
 hub_exec() {
     local cmd="$1"
     if [ "$IS_HUB" -eq 1 ]; then
@@ -861,20 +751,7 @@ hub_exec() {
     fi
 }
 
-# hub_exec_args SCRIPT ARG... - run SCRIPT where the hub lives, with ARGs
-# available as "$1", "$2" and so on.
-#
-# This exists because building shell text out of config values makes those
-# values executable. A path containing a quote - /Users/dan/Daniel's saves
-# is entirely ordinary on macOS - turned a sync into arbitrary code
-# execution on BOTH machines, and the call sites that did it included ones
-# running rm -rf and mv on the hub.
-#
-# Values now arrive as positional parameters, which survive both bash -c
-# and a remote shell without ever being parsed as syntax. The script itself
-# is a fixed literal; only the data varies.
-# shq_into VAR VALUE: VALUE single-quoted for a remote shell, into VAR. The
-# same result as $(shq VALUE), without the fork - see hub_exec_args.
+# shq_into VAR VALUE: the same as $(shq VALUE), without the fork.
 shq_into() {
     local rest="$2" out=""
     while :; do
@@ -886,10 +763,8 @@ shq_into() {
     printf -v "$1" "'%s'" "$out"
 }
 
-# Nothing here forks for its output: on_exit releases the hub lock through
-# this after a closed pipe, when bash 3.2 can flush stale output into any
-# $(...) (see exit_quietly). A polluted ssh target or argument would leave
-# the lock held (#129, client side).
+# Values arrive as positional parameters, never as shell text: a quote in a path must not become code.
+# Nothing here forks for its output: on_exit releases the hub lock through this after a closed pipe (#129).
 hub_exec_args() {
     local script="$1"; shift
     if [ "$IS_HUB" -eq 1 ]; then
@@ -903,8 +778,7 @@ hub_exec_args() {
         ssh_opts_set
         case "$-" in *f*) had_f=1 ;; esac
         set -f
-        # bash -s reads the script from stdin, so the script text never
-        # passes through the remote shell's parser as a command line.
+        # bash -s reads the script from stdin, so it never passes through the remote shell's parser.
         # shellcheck disable=SC2086
         ssh $SSH_OPTS "$CFG_HUB_USER@$HUB_ENDPOINT" "bash -s --$quoted" <<SCRIPT || rc=$?
 $script
@@ -914,12 +788,7 @@ SCRIPT
     fi
 }
 
-# The same machine is reachable by MagicDNS name AND tailnet IP, and each
-# address is trusted separately by ssh. If one of them is already in
-# known_hosts, the key it holds is a verification source the user has
-# already accepted, so we can do the comparison for them instead of making
-# them eyeball two SHA256 strings. If neither is trusted, fall back to
-# out-of-band verification - we never auto-accept.
+# If the other address (DNS vs IP) is already trusted with the same key, say so; never auto-accept.
 hostkey_help() {
     local want="$1" alt="" altkey="" wantkey=""
 
@@ -956,7 +825,6 @@ hostkey_help() {
     printf '      || echo "MISMATCH: $GOT - do not proceed"\n' >&2
 }
 
-# Probe ssh once, and turn its failure modes into distinct exit codes.
 check_hub_reachable() {
     if [ "$IS_HUB" -eq 1 ]; then
         log DEBUG ssh "hub is local, skipping ssh probe"
@@ -1001,7 +869,6 @@ check_hub_reachable() {
     exit $EX_SSH_FAILED
 }
 
-# Hub directory must exist and be readable AND writable by the hub user.
 check_hub_path() {
     local allow_missing="${1:-no}" out rc
     set +e
@@ -1055,17 +922,9 @@ check_hub_path() {
     esac
 }
 
-# --------------------------------------------------------------------------
-# Fingerprints. Two directories can have identical file sizes and still hold
-# completely different saves - on this pair of machines core.db is 12288
-# bytes on both - so content hashes decide, not sizes or mtimes.
-# --------------------------------------------------------------------------
+# Fingerprints: content hashes decide, never sizes or mtimes (core.db is 12288 bytes on both sides).
 
-# Builds the shell snippet that emits "sha256  size  relpath" per file,
-# sorted, excluding snapshots, locks and anything in SYNC_EXCLUDE.
-# The manifest script is a fixed literal. The directory and every exclude
-# name arrive as positional parameters, so a name containing a quote cannot
-# become syntax.
+# Emits "sha256  size  relpath" per file, sorted; dir and excludes arrive as positional parameters.
 readonly MANIFEST_SCRIPT='
 dir="$1"; shift
 cd "$dir" 2>/dev/null || exit 0
@@ -1092,8 +951,6 @@ done
 set +f
 '
 
-# Emits the exclude names as separate arguments, always including the
-# snapshot and lock directories.
 manifest_args() {
     local name
     printf '%s\n' "$SNAP_DIRNAME"
@@ -1104,10 +961,6 @@ manifest_args() {
     done
     set +f
 }
-
-
-# Sets the positional parameters to the exclude names, snapshot and lock
-# directories first. Callers then pass "$@" straight through.
 
 manifest_local() {
     local dir="$1" nm
@@ -1155,11 +1008,8 @@ count_files() {
     printf '%s' "${n:-0}"
 }
 
-# Newest mtime under a directory, as a unix epoch. 0 when empty.
 newest_mtime_local() {
     local dir="$1" newest
-    # Same argument-passing discipline as the hub side: this was still
-    # interpolating a path into bash -c text.
     newest="$(/bin/bash -c '
         cd "$1" 2>/dev/null || exit 0
         LC_ALL=C find . -type f ! -path "./$2/*" ! -path "./$3/*" \
@@ -1180,21 +1030,11 @@ newest_mtime_hub() {
 
 hub_clock_epoch() { hub_exec 'date -u +%s'; }
 
-# --------------------------------------------------------------------------
-# Locks. Two layers: a hub lock so two machines cannot both write the hub,
-# and a local lock so two sts invocations on one machine cannot race.
-# --------------------------------------------------------------------------
+# Locks: a hub lock so two machines cannot both write the hub, a local lock so two runs here cannot race.
 
-# The human-readable name, used in messages only.
 this_host_id() { printf '%s' "$(hostname -s)"; }
 
-# The identity the hub lock is actually compared against.
-#
-# hostname -s can change with DHCP or network conditions on macOS. When it
-# did, this machine's own stale lock was thereafter seen as another
-# machine's and was never cleared at any age, requiring a manual rm -rf on
-# the hub to recover. A value generated once and kept in the state
-# directory does not move.
+# A persisted id, not hostname -s, which macOS can change - our own stale lock then never cleared.
 stable_host_id() {
     local f="$STATE_DIR/host-id" tmp id
     if [ -f "$f" ]; then
@@ -1207,20 +1047,7 @@ stable_host_id() {
     id="$(uuidgen 2>/dev/null || true)"
     [ -n "$id" ] || id="$(this_host_id)-$$-$(date -u +%s)"
 
-    # The first write has to be atomic. `backup` and the sync commands hold
-    # different local locks on purpose, so a nightly backup can overlap a
-    # manual push; on a machine that has no id yet, both would generate one
-    # and a plain `>` would be last-writer-wins. The loser would then carry
-    # an id in memory that is not the one on disk, and a lock it left behind
-    # would afterwards look like another machine's - reintroducing exactly
-    # the permanent lockout this function exists to prevent.
-    #
-    # ln(1) is atomic and fails if the target exists, so the loser of the
-    # race finds out and adopts the winner's id instead of its own.
-    # mktemp, not "$f.$$": two processes can share a pid-derived name (a
-    # subshell inherits its parent's $$), and then one would link a file the
-    # other had already overwritten - returning an id that is not the one on
-    # disk, which is the very failure this is guarding against.
+    # Atomic first write (mktemp + ln): concurrent runs such as backup and push must agree on one id.
     tmp="$(mktemp "$f.XXXXXX" 2>/dev/null || true)"
     [ -n "$tmp" ] || tmp="$f.$$.$RANDOM"
     if printf '%s\n' "$id" > "$tmp" 2>/dev/null && ln "$tmp" "$f" 2>/dev/null; then
@@ -1230,7 +1057,6 @@ stable_host_id() {
     fi
     rm -f "$tmp" 2>/dev/null || true
 
-    # Either someone else won the race, or the file could not be created.
     id="$(head -1 "$f" 2>/dev/null || true)"
     case "$id" in
         ?*) printf '%s' "$id" ;;
@@ -1238,7 +1064,6 @@ stable_host_id() {
     esac
 }
 
-# shlock ships with macOS and handles a stale pid for us.
 acquire_local_lock() {
     local lockdir holder
     mkdir -p "$STATE_DIR"
@@ -1250,9 +1075,7 @@ acquire_local_lock() {
         lockdir="$STATE_DIR/local.lock.d"
     fi
 
-    # mkdir is the atomic part; the pid inside decides whether it is stale.
-    # (macOS shlock does NOT break stale locks - it refuses even for a
-    # confirmed-dead pid - so relying on it wedged the tool permanently.)
+    # mkdir is the atomic part; the pid decides staleness (macOS shlock never breaks a stale lock).
     if ! mkdir "$lockdir" 2>/dev/null; then
         holder="$(cat "$LOCAL_LOCK_FILE" 2>/dev/null || echo '')"
         case "$holder" in
@@ -1263,10 +1086,7 @@ acquire_local_lock() {
             die $EX_LOCK_LOCAL lock \
                 "another $PROG is already running on this machine (pid $holder) - wait for it to finish"
         fi
-        # A lock directory this new, with no live holder recorded, is most
-        # likely a run between its mkdir and its pid write (the pid file
-        # still names the run before it). Clearing it would let two runs
-        # in at once, so it is refused instead (#151).
+        # A very new lock dir with no live holder is a run between mkdir and pid write: refuse, never clear (#151).
         local lock_mtime
         lock_mtime="$(stat -f%m "$lockdir" 2>/dev/null || echo 0)"
         case "$lock_mtime" in ''|*[!${CH_DIGITS}]*) lock_mtime=0 ;; esac
@@ -1291,20 +1111,7 @@ acquire_local_lock() {
 
 hub_lock_path() { printf '%s/%s' "$(dirname "$CFG_HUB_PATH")" "$LOCK_DIRNAME"; }
 
-# Clear a stale hub lock without removing a lock that is not the one we
-# judged stale. Reading the owner and removing the lock used to be separate
-# steps, so two runs could judge the same lock stale; one cleared it and
-# took a fresh lock, and the other's rm then deleted that fresh lock (#132).
-#
-# Clearers now take a short mutex beside the lock, so only one clears at a
-# time, and re-judge the lock inside it: still the owner nonce that was
-# read, or - for $2 = "-" - still without an owner file AND still older
-# than the TTL (a just-created lock has no owner file for a moment either).
-# Nothing is moved aside, so there is no window in which the lock is
-# missing and a third run could take it. The mutex serialises clearers only:
-# a lock released by its owner and retaken between the re-judgment and the
-# rm, a few syscalls apart, would still be removed - but that needs an owner
-# alive past the TTL, which the TTL already assumes away.
+# Clearers take a mutex beside the lock and re-judge it inside, so a fresh lock is never removed (#132).
 clear_stale_hub_lock() {
     local lock="$1" want="$2" what="$3" out
     out="$(hub_exec_args '
@@ -1361,8 +1168,7 @@ clear_stale_hub_lock() {
     esac
 }
 
-# mkdir is atomic on both HFS+ and APFS, and over ssh it stays atomic because
-# it is a single syscall on the far side.
+# mkdir is atomic on HFS+ and APFS, and over ssh (one syscall on the far side).
 acquire_hub_lock() {
     local lock info out
     # Idempotent: cmd_play runs pull then push in one process.
@@ -1370,10 +1176,7 @@ acquire_hub_lock() {
     lock="$(hub_lock_path)"
     info="$lock/owner"
 
-    # The sentinel comes FIRST so a missing owner file cannot be mistaken for
-    # owner fields. The lock directory's own mtime is reported too, because a
-    # run that died between the mkdir and the owner write leaves a lock with
-    # no owner at all - and that used to be permanently un-clearable.
+    # The sentinel comes first so a missing owner file cannot be mistaken for owner fields.
     out="$(hub_exec_args '
         lock="$1"; info="$lock/owner"
         if mkdir "$lock" 2>/dev/null; then
@@ -1407,8 +1210,7 @@ acquire_hub_lock() {
                 "could not create the hub lock at $lock - $(dirname "$CFG_HUB_PATH") is not writable by $CFG_HUB_USER on $CFG_HUB_HOST" ;;
     esac
 
-    # Backstop: clearing a lock then retrying must terminate no matter what
-    # the far side reports.
+    # Backstop: clear-then-retry must terminate whatever the far side reports.
     HUB_LOCK_TRIES=$((HUB_LOCK_TRIES + 1))
     if [ "$HUB_LOCK_TRIES" -gt 2 ]; then
         die $EX_LOCK_CREATE lock \
@@ -1418,8 +1220,7 @@ acquire_hub_lock() {
     local now
     now="$(hub_clock_epoch)"
 
-    # A lock directory with no owner file: a run died mid-acquire. Nobody
-    # owns it, so nobody can ever claim it. Clear it once it is past the TTL.
+    # No owner file: a run died mid-acquire and nobody can ever claim it, so clear it once past the TTL.
     case "$out" in
         *STS_NO_OWNER*)
             local lock_mtime lock_age
@@ -1456,8 +1257,7 @@ acquire_hub_lock() {
     age=$((now - owner_epoch))
     [ "$age" -lt 0 ] && age=0
 
-    # Prefer the stable id. Fall back to the hostname for a lock written by
-    # a version that predates it, so an upgrade mid-lock still behaves.
+    # Prefer the stable id; fall back to the hostname for a lock written by an older version.
     if [ -n "$owner_id" ]; then
         [ "$owner_id" = "$(stable_host_id)" ] && is_ours=1 || is_ours=0
     else
@@ -1477,9 +1277,7 @@ acquire_hub_lock() {
 
     # Our own lock from a crashed earlier run: clear only past the TTL, loudly.
     if [ "$age" -ge "$CFG_LOCK_TTL_SECONDS" ]; then
-        # Without a nonce the clear cannot tell this lock from a fresh one
-        # whose owner file is not written yet, so it is never automatic -
-        # and it is not announced as cleared either (#151).
+        # Without a nonce a stale lock is indistinguishable from a fresh one: never cleared automatically (#151).
         if [ -z "$owner_nonce" ]; then
             log ERROR lock "stale hub lock at $lock has no nonce; not clearing it automatically"
             die $EX_LOCK_REMOTE lock \
@@ -1504,11 +1302,9 @@ acquire_hub_lock() {
 release_hub_lock() {
     [ "$HELD_HUB_LOCK" -eq 1 ] || return 0
     HELD_HUB_LOCK=0
-    # The path saved at acquire time, not "$(hub_lock_path)": on the way out
-    # after a closed pipe a $(...) can come back polluted (see exit_quietly).
+    # The path saved at acquire time: after a closed pipe a $(...) can come back polluted.
     local lock="$HUB_LOCK_DIR"
-    # Only remove it if it is still OURS. Deleting someone else's lock is
-    # worse than leaking our own.
+    # Only remove it if it is still OURS: deleting someone else's lock is worse than leaking ours.
     hub_exec_args '
         if [ "$(sed -n 5p "$1/owner" 2>/dev/null)" = "$2" ]; then
             rm -rf "$1"
@@ -1518,17 +1314,9 @@ release_hub_lock() {
     log DEBUG lock "hub lock released"
 }
 
-# --------------------------------------------------------------------------
-# Snapshots. Nothing is ever overwritten before the target is snapshotted,
-# and rsync is only allowed --delete once that snapshot exists.
-# --------------------------------------------------------------------------
+# Snapshots: nothing is overwritten before it is snapshotted, and --delete needs that snapshot.
 
-# snapshot_local DIR -> echoes the snapshot path
-#
-# A snapshot that is quietly incomplete is worse than no snapshot, because
-# --delete is gated on it existing. So the file count is asserted, not
-# assumed, and the timestamp directory is created with a plain mkdir so two
-# snapshots in the same second cannot merge into one.
+# A quietly incomplete snapshot is worse than none (--delete is gated on it): the file count is asserted.
 snapshot_local() {
     local dir="$1" stamp snaproot snapdir name partial src_n dst_n suffix
     snaproot="$(dirname "$dir")/$SNAP_DIRNAME"
@@ -1536,11 +1324,7 @@ snapshot_local() {
         "could not create snapshot root $snaproot"
     snaproot="$(cd "$snaproot" && pwd -P)"
 
-    # Built under a hidden .partial- name and renamed only once its file
-    # count is verified, so a snapshot that died part way (refused as
-    # incomplete, or killed mid-copy) never looks like a safety copy that
-    # 'restore' would offer (#90). ls, and so pruning and the list, skip
-    # dot names.
+    # Built under a hidden .partial- name, renamed once verified, so restore never offers a broken one (#90).
     stamp="$(iso_now)"
     name="$stamp"
     suffix=2
@@ -1572,8 +1356,7 @@ snapshot_local() {
     fi
 
     snapdir="$snaproot/$name"
-    # A directory of that name appearing meanwhile would make mv nest the
-    # snapshot inside it.
+    # If that name appeared meanwhile, mv would nest the snapshot inside it.
     [ ! -e "$snapdir" ] && mv "$partial" "$snapdir" || die $EX_SNAPSHOT snapshot \
         "could not finish the snapshot $partial as $snapdir. Refusing to overwrite anything."
 
@@ -1587,9 +1370,7 @@ prune_snapshots_local() {
     [ "$keep" -gt 0 ] || return 0
     [ -d "$snaproot" ] || return 0
 
-    # If the live directory is empty, the snapshots are the only copy left.
-    # Pruning them on a schedule is how a recoverable mistake becomes a
-    # permanent one, so refuse to prune at all in that state.
+    # An empty live directory means the snapshots may be the only copy: never prune then.
     if [ -d "$live" ]; then
         local livecount
         livecount="$(find "$live" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
@@ -1611,10 +1392,7 @@ prune_snapshots_local() {
     return 0
 }
 
-# The hub twin of the above. The remote snippet sets its own pipefail: the
-# script's is not inherited through ssh, and without it a find that dies
-# partway (an unreadable directory) leaves cpio exiting 0 and a partial
-# snapshot reported as a good one.
+# The remote snippet sets its own pipefail (not inherited over ssh), or a partial snapshot passes as good.
 snapshot_hub() {
     local stamp snaproot snapdir out
     stamp="$(iso_now)"
@@ -1670,8 +1448,7 @@ snapshot_hub() {
     case "$out" in
         *STS_SNAP_OK*)
             log INFO snapshot "hub snapshot ok on $CFG_HUB_HOST: $(printf '%s' "$out" | tr '\n' ' ')"
-            # The far side picked the name (a -2 suffix in a busy second)
-            # and resolved the path: report that one, not our guess.
+            # The far side picked the final name; report that one, not our guess.
             snapdir="$(printf '%s\n' "$out" | sed -n 's/^STS_SNAP_OK [0-9]* //p' | tail -1)" ;;
         *STS_SNAP_SHORT*)
             die $EX_SNAPSHOT snapshot \
@@ -1684,23 +1461,10 @@ snapshot_hub() {
     printf '%s' "$snapdir"
 }
 
-# --------------------------------------------------------------------------
-# Transfer. rsync runs into a temp directory on the receiving side and is
-# moved into place only after it exits 0, so a dropped connection leaves the
-# target exactly as it was.
-#
-# Flags are deliberately just -a -c --delete plus excludes. -c compares
-# files of equal size by content: rsync's default quick check (size and
-# whole-second mtime) took a save rewritten at the same size in the same
-# second for unchanged and hard-linked the old copy in (#158) - core.db is
-# always 12288 bytes. No -E: it means
-# --extended-attributes in openrsync but --executability in GNU rsync, and
-# the only xattr these files carry is com.apple.provenance, which is local
-# bookkeeping that should not cross machines.
-# --------------------------------------------------------------------------
+# Transfer: rsync into a temp dir, swapped into place only after it exits 0.
+# -c: the quick check missed same-size same-second rewrites (#158). No -E: openrsync and GNU rsync disagree on it.
 
-# NOTE: callers must expand this with globbing disabled - see run_rsync
-# wrappers below, which set -f around the expansion.
+# Callers must expand this with globbing disabled (set -f).
 rsync_excludes() {
     local out="--exclude=$SNAP_DIRNAME/ --exclude=$LOCK_DIRNAME/" name
     set -f
@@ -1711,7 +1475,6 @@ rsync_excludes() {
     printf '%s' "$out"
 }
 
-# run_rsync STEP ARGS... - surfaces rsync's own exit code and stderr intact.
 run_rsync() {
     local step="$1"; shift
     local err_file out rc
@@ -1753,11 +1516,7 @@ run_rsync() {
     printf '%s' "$out"
 }
 
-# Files in SYNC_EXCLUDE are machine-local by definition: they are never
-# transferred in either direction. But a transfer stages into a temp
-# directory and swaps that whole directory into place, so anything not
-# transferred is simply absent from the replacement - which silently
-# deleted the receiver's own copy. They must be carried across by hand.
+# SYNC_EXCLUDE files are never transferred, so the whole-directory swap would delete them: carry them across.
 preserve_excluded() {
     local live="$1" staged="$2" name f count=0
     [ -d "$live" ] || return 0
@@ -1787,17 +1546,12 @@ preserve_excluded() {
 preserve_excluded_hub() {
     local staged="$1" name
     [ -n "$CFG_SYNC_EXCLUDE" ] || return 0
-    # Build a positional list the way manifest_hub does, rather than joining
-    # into a string. A string has to be expanded unquoted at the call site,
-    # and by then set -f is off again, so a SYNC_EXCLUDE entry containing a
-    # glob would expand against whatever directory sts was invoked from.
+    # Positional list, not a joined string: expanded unquoted later, a glob entry would match the cwd.
     set --
     set -f
     for name in $CFG_SYNC_EXCLUDE; do set -- "$@" "$name"; done
     set +f
-    # The far side reports the first path it could not carry and stops: the
-    # swap would delete it, so the push has to refuse, exactly as
-    # preserve_excluded does when the hub host pushes (#128).
+    # The far side stops at the first path it cannot carry: the swap would delete it, so refuse (#128).
     local out rc
     set +e
     out="$(hub_exec_args '
@@ -1840,12 +1594,7 @@ preserve_excluded_hub() {
         "could not check the hub's excluded files before the swap - refusing to swap, because it could delete them ($out)"
 }
 
-# verify_transfer DIRECTION LOCAL_FP HUB_FP - after a transfer both sides
-# must hold the same saves. If they do not, the sync did not happen, and
-# saying "complete" would let the other Mac carry on with the old saves
-# (#158). The state is already recorded as the two sides really are, so the
-# next decision is DIVERGED_STATE, which every path refuses: nothing syncs
-# on its own until someone looks.
+# Both sides must match after a transfer; the recorded state makes a mismatch DIVERGED_STATE, which refuses (#158).
 verify_transfer() {
     local direction="$1" lfp="$2" hfp="$3"
     [ "$lfp" = "$hfp" ] && return 0
@@ -1854,7 +1603,6 @@ verify_transfer() {
         "the transfer finished but this machine and the hub still hold different saves, so the $direction did not really happen. The side being overwritten was snapshotted first. Nothing will sync on its own until this is resolved - see 'transfer finished but ... different saves' in docs/troubleshooting.md."
 }
 
-# pull_hub_to_local - hub becomes local. Snapshot first, temp dir, then swap.
 pull_hub_to_local() {
     local target="$1" tmp src
     tmp="$(dirname "$target")/.sts-incoming-$$"
@@ -1889,13 +1637,11 @@ pull_hub_to_local() {
     log INFO pull "hub -> local complete"
 }
 
-# push_local_to_hub - local becomes hub. Same shape, temp dir lives on the hub.
 push_local_to_hub() {
     local src="$1" tmp dst
     tmp="$(dirname "$CFG_HUB_PATH")/.sts-incoming-$$"
 
-    # Sweep staging directories left by interrupted pushes. Safe here: we
-    # hold the hub lock, so nothing else is mid-transfer.
+    # Safe to sweep stale staging dirs here: we hold the hub lock.
     hub_exec_args '
         parent="$1"
         now=$(date -u +%s)
@@ -1952,9 +1698,7 @@ swap_into_place() {
     local tmp="$1" target="$2" old
     old="$target.sts-old-$$"
     rm -rf "$old"
-    # Set before the first mv, not after it: an exit between the two would
-    # otherwise find IN_SWAP=0 with $target moved aside, and on_exit would
-    # sweep the staged copy as an ordinary temp dir.
+    # Set before the first mv: an exit between the renames must not let on_exit sweep the staged copy.
     IN_SWAP=1
     if ! mv "$target" "$old"; then
         IN_SWAP=0
@@ -1971,10 +1715,7 @@ swap_into_place() {
     log DEBUG swap "$tmp -> $target"
 }
 
-# --------------------------------------------------------------------------
-# Per-machine state. A missing or corrupt state file means first run. It
-# never means "nothing changed".
-# --------------------------------------------------------------------------
+# Per-machine state: a missing or corrupt state file means first run, never "nothing changed".
 
 state_read() {
     [ -f "$STATE_FILE" ] || { printf 'FIRSTRUN'; return 0; }
@@ -2013,10 +1754,7 @@ PY
     log INFO state "recorded $direction local=$(printf '%s' "$lfp" | cut -c1-12) hub=$(printf '%s' "$hfp" | cut -c1-12)"
 }
 
-# --------------------------------------------------------------------------
-# Conflict detection. Nothing is ever merged and nothing is ever auto-picked.
-# When both sides moved, both sides are described and the run stops.
-# --------------------------------------------------------------------------
+# Conflict detection: nothing is merged or auto-picked; when both sides moved, the run stops.
 
 check_game_not_running() {
     local pids
@@ -2027,8 +1765,7 @@ check_game_not_running() {
     fi
 }
 
-# Clock skew makes mtimes untrustworthy. Fingerprints do not care, so this
-# warns rather than fails, and says which comparison is being relied on.
+# Clock skew only warns: decisions rest on content fingerprints, not mtimes.
 check_clock_skew() {
     [ "$IS_HUB" -eq 1 ] && return 0
     local hub_epoch now diff
@@ -2051,7 +1788,6 @@ human_time() {
     date -r "$epoch" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || printf '%s' "$epoch"
 }
 
-# describe_side LABEL MANIFEST NEWEST_EPOCH
 describe_side() {
     local label="$1" manifest="$2" epoch="$3"
     local total saves newest_save
@@ -2081,19 +1817,8 @@ conflict_report() {
     printf '\nBoth sides are snapshotted before any overwrite, under %s/\n' "$SNAP_DIRNAME" >&2
 }
 
-# --------------------------------------------------------------------------
-# sts doctor
-#
-# Everything else in this script aborts on the first problem, which makes
-# setting up a machine a loop: fix one thing, re-run, discover the next.
-# doctor runs every check, aborts on none, and prints one report.
-#
-# Two rules it does not break:
-#   - read-only unless --fix is given
-#   - --fix only does things that are safe, reversible and idempotent. It
-#     never accepts a host key, changes system settings, or grants
-#     permissions. Those it explains and hands back to you.
-# --------------------------------------------------------------------------
+# sts doctor: runs every check and aborts on none.
+# Read-only unless --fix; --fix never accepts a host key, changes system settings or grants permissions.
 
 DOC_FAIL=0
 DOC_WARN=0
@@ -2111,11 +1836,8 @@ doc_skip() {
     DOC_SKIP=$((DOC_SKIP + 1))
     printf '    --    skipped, needs: %s\n' "$*"
 }
-# The indented remediation under a failure.
 doc_do()   { printf '          %s\n' "$*"; }
 
-# doc_try DESCRIPTION COMMAND... - run a repair only under --fix.
-# Prints what it would do otherwise, so a dry doctor still teaches.
 doc_try() {
     local what="$1"; shift
     if [ "$OPT_FIX" -eq 1 ]; then
@@ -2131,7 +1853,6 @@ doc_try() {
     return 1
 }
 
-# --------------------------------------------------------------------------
 
 doc_environment() {
     doc_section "environment"
@@ -2166,16 +1887,10 @@ doc_environment() {
         esac
     fi
 
-    # ~/bin on PATH. Appending one line to a shell rc is reversible and
-    # idempotent, so --fix will do it - but it shows the exact line first
-    # and keeps a backup, because silently editing someone's shell config
-    # is how installers earn their reputation.
+    # --fix may append the PATH line to ~/.zshrc, but only with a backup.
     case ":$PATH:" in
         *":$HOME/bin:"*) doc_ok "~/bin is on PATH" ;;
         *)
-            # Distinguish "never configured" from "configured, but this
-            # shell started before it" - otherwise doctor tells you to add
-            # a line that is already there.
             if [ -f "$HOME/.zshrc" ] && grep -qF 'HOME/bin' "$HOME/.zshrc" 2>/dev/null; then
                 doc_warn "~/bin is in ~/.zshrc but not in this shell's PATH"
                 doc_do "this shell started before the line was added. Open a new one, or:"
@@ -2228,9 +1943,6 @@ doc_fix_path() {
     doc_do "open a new shell, or: exec zsh"
 }
 
-# Returns 0 when the config is present and usable. Unlike load_config it
-# reports every problem instead of dying on the first, and it never exits -
-# doctor has to keep going and check the rest.
 DOC_CONFIG_OK=0
 
 doc_config() {
@@ -2247,10 +1959,7 @@ doc_config() {
     fi
     doc_ok "$CONFIG_FILE"
 
-    # Ask the real parser whether it would succeed, in a subshell where its
-    # die() ends only that subshell. A hand-rolled mirror of load_config's
-    # checks would silently drift the moment load_config gained a rule, and
-    # doctor would regain the truncated-report bug for good.
+    # Ask the real parser, in a subshell where die() ends only that, so doctor cannot drift from it.
     local lerr lrc
     set +e
     lerr="$( load_config 2>&1 )"
@@ -2266,7 +1975,6 @@ doc_config() {
     # It parses, so this cannot die.
     load_config
 
-    # Placeholders are the single most common half-finished install.
     local k v placeholders=""
     for k in HUB_HOST HUB_USER HUB_PATH BACKUP_VOLUME BACKUP_DEST; do
         eval "v=\${CFG_$k}"
@@ -2297,11 +2005,7 @@ doc_config() {
     fi
     doc_ok "all required keys set"
 
-    # The real validator, not a hand-rolled subset. die() inside $( ) only
-    # ends the subshell, so doctor gets the message and keeps going.
-    # Reimplementing these checks is what let the nesting rule - the one
-    # that stops a push moving the live save directory out from under the
-    # game - go unchecked here in the first place.
+    # The real validator in a subshell, not a hand-rolled subset that could drift.
     local verr vrc
     set +e
     verr="$( validate_config 2>&1 )"
@@ -2334,8 +2038,7 @@ doc_state_dirs() {
         fi
     done
 
-    # A leaked local lock is the one thing that wedges every later run, and
-    # it is trivially safe to clear once its owner is gone.
+    # A leaked local lock wedges every later run, and is safe to clear once its owner is gone.
     local lockdir="$STATE_DIR/local.lock.d" holder
     if [ -d "$lockdir" ]; then
         holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
@@ -2346,9 +2049,7 @@ doc_state_dirs() {
         if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
             doc_note "another sts is running right now (pid $holder)"
         elif [ $(( $(date -u +%s) - lock_mtime )) -lt 10 ]; then
-            # A run between its mkdir and its pid write: the pid file is
-            # empty or still names the run before. Never cleared, as in
-            # acquire_local_lock (#151).
+            # A run between its mkdir and pid write: never cleared, as in acquire_local_lock (#151).
             doc_note "another sts is starting right now"
         else
             doc_warn "a stale local lock is present (owner ${holder:-unknown} is gone)"
@@ -2359,10 +2060,7 @@ doc_state_dirs() {
     fi
 }
 
-# Re-judged immediately before the rm: a run that cleared the same stale
-# lock and took a fresh one since doctor looked has a new pid or a new
-# mtime, and is left alone. Not atomic - the script has no flock - but the
-# window shrinks to the gap between this check and the rm.
+# Re-judged just before the rm, so a lock retaken since doctor looked is left alone.
 doc_clear_local_lock() {
     local lockdir="$1" was="$2" now_holder lock_mtime
     now_holder="$(cat "$STATE_DIR/local.lock" 2>/dev/null || true)"
@@ -2391,8 +2089,7 @@ doc_save_dir() {
     fi
 
     local count
-    # The trailing slash: BSD find does not follow a symlinked starting
-    # point, and would count a symlinked save folder as empty (#168).
+    # The trailing slash: BSD find does not follow a symlinked starting point (#168).
     count="$(find "$p/" -maxdepth 1 -type f 2>/dev/null | grep -c . || true)"
     if [ "${count:-0}" -eq 0 ]; then
         doc_warn "save directory is empty: $p"
@@ -2401,7 +2098,6 @@ doc_save_dir() {
         doc_ok "save directory, ${count} files"
     fi
 
-    # The appid is checkable without launching anything.
     local found=0 lib
     for lib in "$HOME/Library/Application Support/Steam" /Volumes/*/SteamLibrary; do
         [ -f "$lib/steamapps/appmanifest_$CFG_STEAM_APPID.acf" ] && found=1 && break
@@ -2419,14 +2115,7 @@ doc_save_dir() {
 DOC_TS_OK=0
 DOC_IS_HUB=0
 
-# Is a sync in progress on the hub right now?
-#
-# doctor takes no locks - it is meant to be safe to run at any moment - but
-# that means --fix must not create HUB_PATH while a swap has it renamed
-# aside. push_local_to_hub and swap_into_place both leave that path briefly
-# absent, and recreating it there turns the in-flight `mv staged hub` into a
-# move INTO the new empty directory rather than a replacement. mv exits 0,
-# the swap's own check sees success, and the pre-swap copy is then deleted.
+# doctor takes no locks, so --fix must not recreate HUB_PATH mid-swap: the mv would nest, not replace.
 hub_is_busy() {
     local lock; lock="$(hub_lock_path)"
     if [ "$DOC_IS_HUB" -eq 1 ]; then
@@ -2450,8 +2139,6 @@ doc_tailscale() {
     fi
 
     local json state
-    # stdout only, as in ts_status_json: a warning on stderr must not be
-    # read as part of the JSON.
     json="$("$TS_BIN" status --json 2>/dev/null)" || {
         doc_fail "tailscaled is not running"
         doc_do "start the Tailscale app, or: sudo tailscaled install-system-daemon"
@@ -2480,8 +2167,7 @@ doc_tailscale() {
     fi
     doc_ok "running, this machine is '$self'"
 
-    # Is this the hub? Uses the same comparison every other command uses,
-    # so doctor cannot reach a different verdict than push and pull do.
+    # The same comparison every command uses, so doctor cannot disagree with push and pull.
     local self_dns
     self_dns="$(printf '%s' "$json" | python3 -c \
         'import json,sys;print((json.load(sys.stdin).get("Self",{}).get("DNSName") or "").rstrip(".").split(".")[0])' 2>/dev/null || true)"
@@ -2558,9 +2244,7 @@ doc_ssh() {
         fi
     fi
 
-    # Host key. Never accepted automatically - but if the same machine is
-    # already trusted under its other address, that is a comparison we can
-    # do for the user instead of making them eyeball two hashes.
+    # Host keys are never accepted automatically.
     if ssh-keygen -F "$HUB_ENDPOINT" >/dev/null 2>&1; then
         doc_ok "host key for $HUB_ENDPOINT is trusted"
     else
@@ -2598,10 +2282,7 @@ doc_ssh() {
         return 1
     fi
 
-    # Hub directory. Guarded like every other risky substitution here: this
-    # runs ssh, and a connection that drops between the auth probe above and
-    # this line would otherwise kill the whole report - on a machine already
-    # having connectivity trouble, which is exactly when doctor is run.
+    # Guarded: a connection dropping here must not kill the whole report.
     local probe prc
     set +e
     probe="$(hub_exec_args '
@@ -2693,10 +2374,7 @@ cmd_doctor() {
     printf '%s %s - checking this machine\n' "$PROG" "$STS_VERSION"
     [ "$OPT_FIX" -eq 1 ] && printf '(--fix: safe repairs will be applied)\n'
 
-    # Every one of these returns non-zero for ordinary states - no save
-    # directory yet, no ssh yet. Under set -e a bare call aborts the whole
-    # report at the first problem, which is the one thing doctor exists not
-    # to do. The || true is load-bearing, not defensive noise.
+    # The || true is load-bearing: under set -e one failing check would abort the whole report.
     doc_environment || true
 
     if doc_config; then
@@ -2735,18 +2413,9 @@ cmd_doctor() {
     [ "$DOC_FAIL" -eq 0 ]
 }
 
-# --------------------------------------------------------------------------
 # Commands
-# --------------------------------------------------------------------------
 
-# The same facts cmd_status prints, as one JSON object on fd 3, for the
-# app. Values reach python as argv, never interpolated into its source.
-# Fields: version, machine, is_hub, hub{host,path,endpoint_kind},
-# sides.{local,hub}{path,files,campaign_saves,newest,fingerprint},
-# verdict, decision, last_sync{direction,at}|null, hub_lock|null,
-# game_running. verdict says which side is newer; decision is what pull
-# and push would actually do: decide(), behind the same emptied-side
-# guards they apply first, plus LOCAL_EMPTIED. It is what to act on.
+# One JSON object on fd 3 for the app; values reach python as argv. Act on decision, not verdict.
 status_json() {
     local lman="$1" hman="$2" lfp="$3" hfp="$4" lep="$5" hep="$6" state="$7" verdict="$8"
     local lockinfo="$9" gp="${10}" decision="${11}"
@@ -2808,8 +2477,7 @@ cmd_status() {
     hep="$(newest_mtime_hub)"
     state="$(state_read)"
 
-    # One decision, two renderings: the text below and status_json must
-    # never disagree about the verdict.
+    # One decision, two renderings: the text below and status_json must never disagree.
     local verdict
     if [ "$lfp" = "$hfp" ]; then
         verdict="in_sync"
@@ -2825,9 +2493,7 @@ cmd_status() {
         verdict="differ"
     fi
 
-    # What pull and push would decide, from the same function they call.
-    # The verdict above is about timestamps; this is about what changed
-    # since the last sync, which is what a sync acts on.
+    # What a sync acts on (changes since the last sync), from the same function pull and push call.
     local lcount hcount decision
     lcount="$(printf '%s' "$lman" | grep -c . || true)"; lcount="${lcount:-0}"
     hcount="$(printf '%s' "$hman" | grep -c . || true)"; hcount="${hcount:-0}"
@@ -2896,9 +2562,7 @@ cmd_status() {
     log INFO status "local=$(printf '%s' "$lfp" | cut -c1-12) hub=$(printf '%s' "$hfp" | cut -c1-12)"
 }
 
-# Shared decision used by both pull and push.
-# Echoes one of: INSYNC HUB_EMPTY FIRST_SEED FIRSTRUN_CONFLICT
-#                LOCAL_ONLY HUB_ONLY BOTH_CHANGED
+# Echoes INSYNC HUB_EMPTY FIRST_SEED FIRSTRUN_CONFLICT LOCAL_ONLY HUB_ONLY BOTH_CHANGED or DIVERGED_STATE.
 decide() {
     local lfp="$1" hfp="$2" lcount="$3" hcount="$4" state="$5"
 
@@ -2921,15 +2585,11 @@ decide() {
     if [ "$lchanged" -eq 1 ] && [ "$hchanged" -eq 1 ]; then printf 'BOTH_CHANGED'; return 0; fi
     if [ "$lchanged" -eq 1 ]; then printf 'LOCAL_ONLY'; return 0; fi
     if [ "$hchanged" -eq 1 ]; then printf 'HUB_ONLY';   return 0; fi
-    # Neither side changed since the last sync, yet they differ. The recorded
-    # state is inconsistent with reality - usually a sync that was recorded
-    # against a hub another machine changed in the same moment.
+    # Neither side changed yet they differ: the recorded state is inconsistent with reality.
     printf 'DIVERGED_STATE'
 }
 
-# What a sync would actually do: decide(), behind the emptied-side guards
-# that pull and push apply before consulting it. status reports this, and
-# --expect-decision compares against it, so the two cannot disagree.
+# decide() behind the emptied-side guards pull and push apply first; status and --expect-decision use it.
 effective_decision() {
     local lfp="$1" hfp="$2" lcount="$3" hcount="$4" state="$5"
     if [ "$hcount" -eq 0 ] && [ "$lcount" -gt 0 ]; then
@@ -2941,9 +2601,7 @@ effective_decision() {
     fi
 }
 
-# --expect-decision: the caller confirmed an action against a decision it
-# saw earlier. Checked after the hub lock is taken and both sides are read,
-# so nothing can change between this check and the transfer.
+# Checked under the hub lock after both sides are read, so nothing can change before the transfer.
 check_expected_decision() {
     [ -n "$OPT_EXPECT" ] || return 0
     local now
@@ -2992,8 +2650,7 @@ cmd_dry_run_plan() {
 
 cmd_pull() {
     check_game_not_running
-    # Lock BEFORE reading either side, so the verdict cannot be computed
-    # against a hub that another machine is about to change.
+    # Lock BEFORE reading either side, so the verdict cannot be computed against a changing hub.
     acquire_hub_lock
     check_clock_skew
 
@@ -3007,24 +2664,18 @@ cmd_pull() {
     lep="$(newest_mtime_local "$CFG_LOCAL_SAVE_PATH")"; hep="$(newest_mtime_hub)"
     state="$(state_read)"
     verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
-    # The emptied-side guards below act on effective_decision, the same
-    # helper status reports, so the two cannot drift apart (#81).
+    # Emptied-side guards act on effective_decision, as status does, so they cannot drift (#81).
     eff="$(effective_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
     log INFO pull "verdict=$verdict effective=$eff local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
     check_expected_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state"
 
-    # Never let an empty hub empty this machine. Not overridable: there is
-    # no situation where copying nothing over real saves is what you meant.
+    # Never let an empty hub empty this machine. Not overridable.
     if [ "$eff" = HUB_EMPTY ]; then
         die $EX_HUB_EMPTY pull \
             "the hub has 0 files and this machine has $lcount - refusing to empty this machine. If the hub really should be the source of truth, seed it first with '$PROG push --force=local' from the machine that has the saves."
     fi
 
-    # An emptied save folder after a recorded sync looks to decide() like
-    # "only this machine changed" (LOCAL_ONLY). It is not: the saves are
-    # gone. Without this, play skipped the fetch as "ahead of the hub",
-    # launched the game on nothing, and pushed whatever it made over the
-    # Hub afterwards (#126). status already calls this LOCAL_EMPTIED.
+    # An emptied save folder looks like LOCAL_ONLY to decide(), but the saves are gone (#126).
     if [ "$OPT_FORCE" != "hub" ] && [ "$eff" = LOCAL_EMPTIED ]; then
         die $EX_CONFLICT_FIRSTRUN pull \
             "this machine's saves are gone (0 files) while the hub has $hcount - not playing or syncing on nothing. Restore them from the hub with: $PROG pull --force=hub"
@@ -3068,10 +2719,7 @@ cmd_pull() {
             fi
             warn "--force=hub: discarding local changes" ;;
         LOCAL_ONLY)
-            # Before a play, this is not a conflict: the hub has not changed
-            # since the last sync, so there is nothing to fetch, and play
-            # pushes this machine's saves when the game exits. Decided here,
-            # under the hub lock, like every other verdict.
+            # Before a play, LOCAL_ONLY is not a conflict: nothing to fetch, and play pushes after the game exits.
             if [ "$IN_PLAY" -eq 1 ] && [ "$OPT_FORCE" != "hub" ]; then
                 say "this machine is ahead of the hub - nothing to fetch, its saves are sent after you play"
                 log INFO pull "local-only changes before play: not pulling, play continues"
@@ -3116,15 +2764,12 @@ cmd_push() {
     lep="$(newest_mtime_local "$CFG_LOCAL_SAVE_PATH")"; hep="$(newest_mtime_hub)"
     state="$(state_read)"
     verdict="$(decide "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
-    # The emptied-side guards below act on effective_decision, the same
-    # helper status reports, so the two cannot drift apart (#81).
+    # Emptied-side guards act on effective_decision, as status does, so they cannot drift (#81).
     eff="$(effective_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state")"
     log INFO push "verdict=$verdict effective=$eff local=$lcount files hub=$hcount files force='${OPT_FORCE}'"
     check_expected_decision "$lfp" "$hfp" "$lcount" "$hcount" "$state"
 
-    # An emptied hub is a seed situation regardless of the state file. It
-    # used to report "only the HUB changed - pushing would discard those
-    # changes", when there are no changes, only zero files.
+    # An emptied hub is a seed situation regardless of the state file.
     if [ "$eff" = HUB_EMPTY ] && [ "$OPT_FORCE" != "local" ]; then
         printf 'The hub at %s:%s is empty.\n' "$CFG_HUB_HOST" "$CFG_HUB_PATH" >&2
         printf 'This machine has %s files, newest %s.\n\n' "$lcount" "$(human_time "$lep")" >&2
@@ -3135,9 +2780,7 @@ cmd_push() {
         exit $EX_HUB_EMPTY
     fi
 
-    # Symmetric guard: never let an empty local directory wipe the hub -
-    # whether it was emptied after a sync or never had saves (first run).
-    # Not overridable.
+    # Never let an empty local directory wipe the hub, after a sync or on first run. Not overridable.
     if [ "$eff" = LOCAL_EMPTIED ] || [ "$eff" = FIRST_SEED ]; then
         die $EX_CONFLICT_FIRSTRUN push \
             "this machine has 0 files and the hub has $hcount - refusing to empty the hub. If this machine's empty state is correct, delete the hub contents by hand on $CFG_HUB_HOST."
@@ -3212,10 +2855,7 @@ cmd_push() {
     say "push complete - $(printf '%s' "$hman" | grep -c . || echo 0) files on the hub"
 }
 
-# --------------------------------------------------------------------------
-# sts play - pull, launch, wait, push. The hub lock is NOT held while you
-# play; pull and push each take and release it around their own transfer.
-# --------------------------------------------------------------------------
+# sts play: pull, launch, wait, push. The hub lock is NOT held while you play.
 
 cmd_play() {
     check_game_not_running
@@ -3245,8 +2885,7 @@ cmd_play() {
             "'open steam://rungameid/$CFG_STEAM_APPID' failed - is Steam installed?"
     fi
 
-    # Wait for the process to appear. If it never does, the game did not
-    # start, and pushing an unchanged save would be a lie.
+    # If the game never starts, pushing an unchanged save would be a lie.
     local waited=0 pid=""
     while :; do
         pid="$(pgrep -x "$CFG_GAME_PROCESS_NAME" 2>/dev/null | head -1 || true)"
@@ -3271,10 +2910,7 @@ cmd_play() {
     say "game running (pid $pid) - waiting for it to exit. Ctrl-C here does not stop the game."
     log INFO play "game started, pid $pid"
 
-    # Steam sometimes re-execs the game, so one missing poll is not an
-    # exit: it has to stay gone for three polls in a row. Two-second polls
-    # make that six seconds, well past a re-exec gap, and the first miss is
-    # announced so a watcher (the app) can say the game closed.
+    # Steam sometimes re-execs the game: it must stay gone for three 2s polls in a row.
     local gone=0 announced=0
     while :; do
         if pgrep -x "$CFG_GAME_PROCESS_NAME" >/dev/null 2>&1; then
@@ -3290,10 +2926,7 @@ cmd_play() {
         sleep 2
     done
 
-    # Distinguish a clean quit from a crash by looking for a crash report
-    # written after we launched. Either way the save still gets pushed.
-    # ReportCrash writes the .ips after the process is reaped, so give it a
-    # moment rather than racing it.
+    # A crash report newer than the launch means a crash; ReportCrash writes it after reaping, so wait first.
     sleep 3
     local crash="" report mtime
     for report in "$HOME/Library/Logs/DiagnosticReports/$CFG_GAME_PROCESS_NAME"*; do
@@ -3318,11 +2951,7 @@ cmd_play() {
     cmd_push
 }
 
-# --------------------------------------------------------------------------
-# sts backup - hub host only, hub -> external disk, timestamped.
-# This is purely local to the hub, so it deliberately does not require the
-# tailnet: hub identity is decided by hostname here, and that is logged.
-# --------------------------------------------------------------------------
+# sts backup: hub host only, hub -> external disk; needs no tailnet, so hub identity is by hostname.
 
 is_hub_by_hostname() {
     local want h1 h2
@@ -3332,9 +2961,7 @@ is_hub_by_hostname() {
     [ "$want" = "$h1" ] || [ "$want" = "$h2" ]
 }
 
-# An unmounted volume leaves an empty directory at the mount point on the
-# internal disk. Comparing device ids catches that; checking -d does not.
-# Returns 0 when the volume is genuinely mounted, 1 when it is not.
+# An unmounted volume leaves an empty dir on the internal disk: compare device ids, -d is not enough.
 backup_volume_mounted() {
     local vol="$CFG_BACKUP_VOLUME" dev_vol dev_parent
     [ -d "$vol" ] || return 1
@@ -3345,11 +2972,7 @@ backup_volume_mounted() {
     return 0
 }
 
-# A scheduled backup can fire moments after wake, before an external disk
-# has remounted. Failing instantly would lose the whole day's backup over a
-# condition that resolves itself in seconds. Called before the hub lock is
-# taken, so the other machine is not locked out of the hub while this
-# waits for a disk that may never come (#169).
+# Waits before the hub lock is taken, so the other machine is not locked out meanwhile (#169).
 wait_for_backup_volume() {
     local vol="$CFG_BACKUP_VOLUME" waited
     if [ "$CFG_BACKUP_MOUNT_WAIT" -gt 0 ] && ! backup_volume_mounted; then
@@ -3367,8 +2990,7 @@ wait_for_backup_volume() {
     fi
 }
 
-# The volume, checked again under the hub lock: it can go away during the
-# wait.
+# Checked again under the hub lock: the volume can go away during the wait.
 check_backup_volume() {
     local vol="$CFG_BACKUP_VOLUME" dev_vol dev_parent
 
@@ -3386,9 +3008,7 @@ check_backup_volume() {
     log DEBUG backup "volume $vol mounted, device $dev_vol"
 }
 
-# Lists timestamp-shaped backup directories that carry a completion marker,
-# oldest first. Anything else is an interrupted or foreign directory and is
-# neither used as a --link-dest base nor counted for retention.
+# Only timestamp-named dirs with a completion marker count, for --link-dest and for retention.
 list_complete_backups() {
     local cand
     [ -d "$CFG_BACKUP_DEST" ] || return 0
@@ -3405,19 +3025,11 @@ list_complete_backups() {
     return 0
 }
 
-# --------------------------------------------------------------------------
-# restore (#90): put one of this machine's safety copies back. Every pull
-# that overwrote this machine snapshotted it first; this is the way back,
-# through the same staging and swap as a pull, so the saves it replaces are
-# snapshotted too and a restore can itself be undone. Nothing is deleted:
-# the snapshot taken here does not prune, so the copy being restored from
-# (perhaps the oldest one kept) is still there afterwards.
-# --------------------------------------------------------------------------
+# restore (#90): swap a safety copy back like a pull; what it replaces is snapshotted, and nothing is pruned.
 
 local_snaproot() { printf '%s/%s' "$(dirname "$CFG_LOCAL_SAVE_PATH")" "$SNAP_DIRNAME"; }
 
-# One tab-separated line per safety copy, newest first:
-# name, files, campaign saves, newest file mtime (epoch).
+# One tab-separated line per safety copy, newest first: name, files, campaign saves, newest mtime.
 restore_candidates() {
     local root d name files saves newest
     root="$(local_snaproot)"
@@ -3454,8 +3066,7 @@ cmd_restore() {
 
     check_game_not_running
 
-    # Stage first, then snapshot what is here now, then swap: the same
-    # order as a pull, with the copy checked before anything moves.
+    # Stage and verify the copy first, then snapshot what is here, then swap: the same order as a pull.
     tmp="$(dirname "$CFG_LOCAL_SAVE_PATH")/.sts-incoming-$$"
     cleanup_later "$tmp"
     rm -rf "$tmp"; mkdir -p "$tmp"
@@ -3471,14 +3082,11 @@ cmd_restore() {
 
     aside=""
     if [ -n "$(find "$CFG_LOCAL_SAVE_PATH" -type f 2>/dev/null | head -1)" ]; then
-        # No pruning here (see above): CFG_SNAPSHOT_KEEP=0 turns it off.
+        # No pruning here: CFG_SNAPSHOT_KEEP=0 keeps the copy being restored from.
         aside="$(CFG_SNAPSHOT_KEEP=0 snapshot_local "$CFG_LOCAL_SAVE_PATH")"
     fi
 
-    # The snapshot holds its own, older copy of every machine-local
-    # (SYNC_EXCLUDE) file, and preserve_excluded only fills in what the
-    # staged copy lacks. Drop the snapshot's copy of each one this machine
-    # still has, so the live one is what gets carried across.
+    # Drop the snapshot's stale copy of each SYNC_EXCLUDE file still here, so the live one is carried across.
     local name f
     set -f
     for name in $CFG_SYNC_EXCLUDE; do
@@ -3539,10 +3147,7 @@ cmd_backup() {
     fi
     log INFO backup "hub identity confirmed by hostname: $(hostname -s)"
 
-    # The hub is local to us by definition here, so hub_exec stays local and
-    # no tailnet is needed. Taking the hub lock is what stops the other
-    # machine swapping HUB_PATH out from under our rsync mid-traversal - a
-    # torn backup used to join the rotation looking exactly like a good one.
+    # The hub lock stops the other machine swapping HUB_PATH mid-backup, which made torn backups look good.
     IS_HUB=1
     HUB_ENDPOINT_KIND="local"
     wait_for_backup_volume
@@ -3553,9 +3158,7 @@ cmd_backup() {
     [ -d "$CFG_HUB_PATH" ] || die $EX_HUB_PATH_MISSING backup \
         "hub path $CFG_HUB_PATH does not exist on this machine"
 
-    # Never back up an empty hub over a good rotation. Without this, an
-    # emptied hub backed up nightly ages every real backup out within
-    # BACKUP_KEEP days - the backups are the last line of defence.
+    # Never back up an empty hub over a good rotation: it would age every real backup out.
     local src_n
     src_n="$(find "$CFG_HUB_PATH" -type f ! -name "$LOCK_DIRNAME" 2>/dev/null | grep -c . || true)"
     src_n="${src_n:-0}"
@@ -3574,8 +3177,6 @@ cmd_backup() {
     mkdir -p "$CFG_BACKUP_DEST" || die $EX_BACKUP_NOT_MOUNTED backup \
         "could not create $CFG_BACKUP_DEST"
 
-    # Only a directory carrying the completion marker counts as a real
-    # backup, for --link-dest and for retention.
     local prev
     prev="$(list_complete_backups | tail -1)"
 
@@ -3600,8 +3201,7 @@ cmd_backup() {
     mkerr=""
     while :; do
         mkerr="$(mkdir "$dest" 2>&1)" && break
-        # A name collision is expected within the same second; anything else
-        # is a real error and repeating it 50 times only hides it.
+        # Only a same-second name collision is retried; anything else is a real error.
         case "$mkerr" in
             *"File exists"*) ;;
             *)
@@ -3626,8 +3226,7 @@ cmd_backup() {
     say "backing up $CFG_HUB_PATH ($src_n files) -> $dest"
     BACKUP_PENDING="$dest"
     if [ -n "$prev" ] && [ "$can_link" -eq 1 ]; then
-        # -c: without it a same-size save rewritten in the same second as
-        # the previous backup's copy was hard-linked from it (#158).
+        # -c: otherwise a same-size save rewritten in the same second is hard-linked from the old copy (#158).
         run_rsync backup -a -c --link-dest="$CFG_BACKUP_DEST/$prev" \
             "$CFG_HUB_PATH/" "$dest/" >/dev/null
         log INFO backup "hardlinked unchanged files against $prev"
@@ -3671,9 +3270,7 @@ cmd_backup() {
     log INFO backup "complete $dest ($dst_n files)"
 }
 
-# --------------------------------------------------------------------------
 # Usage
-# --------------------------------------------------------------------------
 
 usage() {
 cat <<USAGE_EOF
@@ -3784,9 +3381,7 @@ Full troubleshooting table: docs/troubleshooting.md
 USAGE_EOF
 }
 
-# --------------------------------------------------------------------------
 # Entry point
-# --------------------------------------------------------------------------
 
 parse_args() {
     while [ $# -gt 0 ]; do
@@ -3817,7 +3412,6 @@ parse_args() {
             -h|--help)    usage; exit $EX_OK ;;
             --version)    printf '%s %s\n' "$PROG" "$STS_VERSION"; exit $EX_OK ;;
             [!-]*)
-                # The one positional argument: the safety copy to restore.
                 if [ "$COMMAND" = restore ] && [ -z "$RESTORE_FROM" ]; then
                     RESTORE_FROM="$1"
                 else
@@ -3834,8 +3428,7 @@ parse_args() {
     done
     [ -n "$COMMAND" ] || { usage >&2; exit $EX_USAGE; }
 
-    # Reject an impossible direction up front, not after the hub lock is
-    # taken - and, for play, not after the game session has already ended.
+    # Reject an impossible direction up front, before the hub lock and before a play session.
     case "$COMMAND:$OPT_FORCE" in
         pull:local)
             printf 'error: --force=local makes no sense for "pull" - it would discard the hub.\n' >&2
@@ -3880,22 +3473,17 @@ parse_args() {
 main() {
     parse_args "$@"
 
-    # status --json: stdout carries the JSON object and nothing else. Every
-    # other message this run prints, from any function, goes to stderr, and
-    # status_json writes to the saved stdout on fd 3. A caller can then
-    # parse stdout whenever the exit code is 0, without filtering.
+    # status --json: stdout carries only the JSON (via fd 3); every other message goes to stderr.
     if [ "$OPT_JSON" -eq 1 ]; then
         exec 3>&1 1>&2
     fi
 
-    # doctor runs before every other check, because the things those checks
-    # abort on are exactly what it exists to report.
+    # doctor runs before every other check: what they abort on is what it reports.
     if [ "$COMMAND" = "doctor" ]; then
         cmd_doctor
         exit $?
     fi
 
-    # Cheapest, most fundamental refusals first - these need no config.
     check_not_root
     check_bash_version
     check_tools
@@ -3909,8 +3497,7 @@ main() {
 
     acquire_local_lock
     if [ "$COMMAND" != "backup" ]; then
-        # Only after the local lock: the sweep deletes staging directories,
-        # and before the lock it could delete a running sync's own.
+        # Only after the local lock: before it, the sweep could delete a running sync's staging dir.
         case "$COMMAND" in
             status) recover_orphans check ;;   # report only, never delete
             *)      recover_orphans sweep ;;
@@ -3918,14 +3505,11 @@ main() {
         check_local_save_path
     fi
 
-    # backup is local to the hub and deliberately does not need the tailnet.
     if [ "$COMMAND" = "backup" ]; then
         cmd_backup
         exit $EX_OK
     fi
 
-    # restore only touches this machine's saves, from this machine's own
-    # safety copies: no tailnet, no hub.
     if [ "$COMMAND" = "restore" ]; then
         cmd_restore
         exit $EX_OK
@@ -3940,8 +3524,6 @@ main() {
         fi
     fi
 
-    # --offline-ok only means anything for 'play'. For everything else the
-    # hub is the whole point, so say that instead of ssh-ing to nothing.
     if [ "$HUB_ENDPOINT_KIND" = "offline" ] && [ "$COMMAND" != "play" ]; then
         die $EX_TS_PEER_OFFLINE hub \
             "--offline-ok only applies to '$PROG play'; '$COMMAND' needs the hub, and $CFG_HUB_HOST is offline"
@@ -3952,10 +3534,7 @@ main() {
         exit $EX_OK
     fi
 
-    # The hub directory must exist for everything except a first push, which
-    # is allowed to create it after an explicit --force=local.
-    # push runs it too, so an interrupted hub swap is caught before the seed
-    # path can quietly abandon the parked copy. Only 'missing' is tolerated.
+    # push tolerates a missing hub (first seed) but still catches an interrupted hub swap.
     if [ "$HUB_ENDPOINT_KIND" != "offline" ]; then
         if [ "$COMMAND" = "push" ]; then
             check_hub_path yes

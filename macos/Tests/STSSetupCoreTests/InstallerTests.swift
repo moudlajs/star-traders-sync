@@ -1,8 +1,7 @@
 import XCTest
 @testable import STSSetupCore
 
-/// Every test runs in a throwaway home directory. None of them may touch
-/// the real ~/bin, ~/.config or anything holding saves.
+/// Every test runs in a throwaway home; none may touch the real ~/bin, ~/.config or anything holding saves.
 final class InstallerTests: XCTestCase {
     var home: URL!
     var layout: InstallLayout!
@@ -15,8 +14,7 @@ final class InstallerTests: XCTestCase {
         .deletingLastPathComponent().deletingLastPathComponent()
 
     override func setUpWithError() throws {
-        // Resolve symlinks: /var is one on macOS, and path comparisons
-        // against resolved link targets would otherwise disagree.
+        // Resolve symlinks: /var is one on macOS, so path comparisons would otherwise disagree.
         home = fm.temporaryDirectory.appendingPathComponent("sts-setup-tests-\(UUID().uuidString)")
             .resolvingSymlinksInPath()
         try fm.createDirectory(at: home, withIntermediateDirectories: true)
@@ -36,8 +34,6 @@ final class InstallerTests: XCTestCase {
 
     // MARK: - disconnect (#75)
 
-    /// The app's links go, the config becomes a dated backup with the same
-    /// contents, and nothing that holds saves is touched.
     func testDisconnectUndoesSetupAndNothingElse() throws {
         _ = try install()
         try fm.createDirectory(at: layout.configDir, withIntermediateDirectories: true)
@@ -134,8 +130,7 @@ final class InstallerTests: XCTestCase {
         XCTAssertEqual(Installer.refreshAppScript(bundledScript: nil, bundledExample: nil, layout: layout), .noBundledScript)
     }
 
-    /// A bundle as build-app.sh makes it (#175): the shim, with both
-    /// engines beside it.
+    /// A bundle as build-app.sh makes it (#175): the shim with both engines beside it.
     func makeBundle() throws -> URL {
         let res = home.appendingPathComponent("Bundle/Resources")
         try fm.createDirectory(at: res, withIntermediateDirectories: true)
@@ -157,7 +152,6 @@ final class InstallerTests: XCTestCase {
         }
     }
 
-    /// The shim rarely changes; a new engine behind it must still arrive.
     func testAnEngineChangeAloneIsRefreshed() throws {
         let shim = try makeBundle()
         XCTAssertEqual(Installer.refreshAppScript(bundledScript: shim, bundledExample: example,
@@ -204,7 +198,6 @@ final class InstallerTests: XCTestCase {
         XCTAssertTrue(now.contains("HUB_HOST=new"))
         XCTAssertTrue(now.contains("SNAPSHOT_KEEP=25"))
 
-        // Same values again: nothing to do, no second backup.
         let report = try Installer.writeConfig(v, layout: layout, now: Date(timeIntervalSince1970: 60))
         XCTAssertEqual(report.count, 1)
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: layout.configDir.path)
@@ -228,10 +221,7 @@ final class InstallerTests: XCTestCase {
                        "never installed")
     }
 
-    /// The strongest check available offline: the real script's own
-    /// parser and validator accept what the app writes. Runs `doctor`
-    /// (read-only without --fix) against the sandbox and looks for the
-    /// line that says the config passed validate_config.
+    /// Runs the real script's `doctor` (read-only without --fix) against the sandbox config.
     func testTheScriptAcceptsTheConfigTheAppWrites() throws {
         _ = try install()
         let saves = home.appendingPathComponent("Library/StarTradersFrontiers")

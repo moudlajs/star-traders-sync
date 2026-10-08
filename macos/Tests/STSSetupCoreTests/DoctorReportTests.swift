@@ -2,7 +2,6 @@ import XCTest
 @testable import STSSetupCore
 
 final class DoctorReportTests: XCTestCase {
-    /// Shape copied from a real `sts doctor --fix` run.
     static let sample = """
     star-traders-sync 1.3.0 - checking this machine
     (--fix: safe repairs will be applied)
@@ -76,7 +75,6 @@ final class DoctorReportTests: XCTestCase {
     }
 
     func testSectionsThatNeverRanEndAsNotChecked() {
-        // A broken config: doctor prints "everything else" and stops.
         let r = DoctorReport.parse("x\n\n  environment\n    ok    bash\n\n  config\n    FAIL  no config\n\n  everything else\n    --    skipped, needs: a valid config\n\n  1 problem(s)\n")
         let end = r.rows(revealed: r.sections.count, finished: true)
         XCTAssertEqual(end.map(\.title), DoctorReport.expectedTitles + ["everything else"])

@@ -10,47 +10,32 @@ final class DashboardModel: ObservableObject {
     @Published var status: SyncStatus?
     @Published var problem: SyncProblem?
     @Published var loading = false
-    /// The check now running was asked for (the refresh button, Try
-    /// again). Only then does the toolbar show a spinner: the checks the
-    /// app starts itself, on coming forward and every minute, are silent.
+    /// The running check was asked for (refresh, Try again); only then does the toolbar spin, self-started checks are silent.
     @Published private(set) var manualCheck = false
     @Published var checkedAt: Date?
 
     let doctor = DoctorRun()
 
-    /// The action running now, or the last one until dismissed.
     @Published var run: ActionRun?
-    /// An action waiting for the user to confirm it.
     @Published var pending: ActionButton?
 
     var busy: Bool { run.map { !$0.ended } ?? false }
 
-    /// The green "Synced" moment after a successful action, before Play
-    /// comes back (board F).
     @Published var justSynced: SyncAction?
 
-    /// The health check opens inside the main window, not as a sheet.
     @Published var showingHealth = false
-    /// The Restore previous saves sheet (#90).
     @Published var showingRestore = false
-    /// Set by a restore: the restored saves differ from the Hub (usually
-    /// LOCAL_ONLY), and automatic sync would send them straight over it.
-    /// The user restored on purpose and decides what happens next, so
-    /// nothing automatic runs until they do something themselves. Kept
-    /// across launches: a relaunch, or a launch at login, must not lift it.
+    /// Set by a restore: nothing automatic runs until the user acts, so restored saves are not sent over the Hub; survives relaunch.
     @Published private(set) var autoHeldAfterRestore: Bool = UserDefaults.standard.bool(forKey: DashboardModel.holdKey) {
         didSet { UserDefaults.standard.set(autoHeldAfterRestore, forKey: Self.holdKey) }
     }
     nonisolated static let holdKey = "autoHeldAfterRestore"
     static let holdNotice = "Automatic sync is waiting for you: the restored saves go to the Hub when you Send or Play."
 
-    /// Something worth knowing about a run that otherwise succeeded, such
-    /// as the game crashing (the saves were still sent). Shown under the
-    /// status until dismissed or the next action.
+    /// Something worth knowing about a run that otherwise succeeded, e.g. the game crashing after the saves were sent.
     @Published var notice: String?
 
-    /// #87: sync by itself when that cannot overwrite anything
-    /// unconfirmed (SyncActions.automatic). On unless switched off.
+    /// #87: sync by itself only when that cannot overwrite anything unconfirmed (SyncActions.automatic).
     @Published var autoSync: Bool = UserDefaults.standard.object(forKey: "autoSync") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(autoSync, forKey: "autoSync")
@@ -58,18 +43,13 @@ final class DashboardModel: ObservableObject {
             if autoSync, let s = status { considerAutoSync(s) }
         }
     }
-    /// The situation an automatic sync last failed in, so it is not
-    /// retried against the very same state until something changes.
+    /// The situation an automatic sync last failed in, so it is not retried until something changes.
     private(set) var autoFailedKey: String?
     private var autoFailedAt: Date?
-    /// A failed automatic sync is not retried against the same situation
-    /// for this long; a network blip then heals on its own.
     static let autoRetryAfter: TimeInterval = 600
 
-    // Seams for tests: the script calls and the clock. The app uses the
-    // defaults; DashboardModelTests swap in fakes.
+    // Seams for tests: the script calls and the clock; DashboardModelTests swap in fakes.
     var fetchStatus: (String) -> Result<SyncStatus, SyncProblem> = { StatusClient.fetch(script: $0) }
-    /// sts restore --json: this Mac's safety copies, newest first (#90).
     var fetchSafetyCopies: (String) -> Result<[SafetyCopy], SyncProblem> = { script in
         let r = Shell.run("/bin/bash", [script, "restore", "--json"])
         guard r.ok else { return .failure(SyncProblem.from(code: r.status, stderr: r.stderr)) }
@@ -80,45 +60,35 @@ final class DashboardModel: ObservableObject {
         Shell.stream("/bin/bash", [script] + args, onLine: onLine)
     }
     var now: () -> Date = Date.init
-    /// Keeps the app's script current before each check (#101). Tests make
-    /// it a no-op, so they never touch the real Application Support copy.
+    /// Keeps the app's script current before each check (#101); a no-op in tests, so they never touch the real copy.
     var refreshScript: (InstallLayout) -> Void = { DashboardModel.refreshAppScript(layout: $0, when: "check") }
-    /// A button pressed while a status check was running. Status and every
-    /// action share this Mac's lock, so it runs as soon as the check ends,
-    /// and only if the situation is still the one it was pressed for.
+    /// A press made during a status check; runs when the check ends, only if the situation is still the one it was pressed for.
     private var queued: ActionButton?
     private var activeObserver: NSObjectProtocol?
 
     private var timer: Timer?
 
-    /// The app's own copy, kept current by Installer.refreshAppScript,
-    /// never the ~/bin link, which may be an older repo checkout.
+    /// The app's own copy, never the ~/bin link, which may be an older repo checkout.
     var script: String { layout.installedScript.path }
 
     func start() {
         active = true
         if autoHeldAfterRestore && notice == nil { notice = Self.holdNotice }
         refresh()
-        // Coming back to the app is when the user wants to see, and have,
-        // the latest; do not wait for the next minute tick.
         if activeObserver == nil {
             activeObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.refresh() }
             }
         }
-        // Cheap enough to poll: status is read-only and takes about a
-        // second. Once a minute keeps "last synced" honest without
-        // hammering the hub.
+        // Status is read-only and about a second; once a minute keeps "last synced" honest without hammering the hub.
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
     }
 
-    /// Stops everything that could start a check, or an automatic sync, on
-    /// its own: the minute timer and the came-to-front observer. Setup
-    /// calls this before it rewrites the config and script.
+    /// Stops everything that could start a check or automatic sync on its own; setup calls this before rewriting the config.
     func stop() {
         active = false
         queued = nil
@@ -132,38 +102,28 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    /// Brings the app's copy of the script up to date with the bundled one.
-    /// At launch, and again before every status check, because a launch can
-    /// land while an sts is running, when replacing it is refused.
+    /// Brings the app's script copy up to date; retried before every check, since replacing it is refused while sts runs.
     nonisolated static func refreshAppScript(layout: InstallLayout, when: String) {
         let bundled = WizardModel.locate("star-traders-sync", repoPath: "bin/star-traders-sync")
         let result = Installer.refreshAppScript(bundledScript: bundled,
                                                 bundledExample: WizardModel.locate("config.example", repoPath: "config.example"),
                                                 layout: layout)
-        // Launch always logs; later checks only when something happened.
         if when == "launch" || result != .unchanged {
             SetupLog.write("\(when): app script \(result.logText) (\(bundled?.path ?? "nothing bundled"))")
         }
     }
 
     func refresh(manual: Bool = false) {
-        // While sts runs it holds this Mac's lock, and status would only
-        // report "a sync is already running". The run's own card says more.
-        // Nor while a confirmation is open: the dialog describes the status
-        // it was opened for, and the script is pinned to that decision.
-        // And never while setup is showing (stop() clears active): a run
-        // finishing then must not check a config setup is rewriting.
+        // Not while sts runs (it holds the lock), a confirmation is open (pinned to that status), or setup is showing.
         guard active, !loading, !busy, pending == nil else { return }
         loading = true
         manualCheck = manual
         let script = self.script
         let layout = self.layout
-        // Taken here, called in the detached task: calling the stored
-        // closures through self would run them on the main actor.
+        // Captured here: calling the stored closures through self would run them on the main actor.
         let fetch = self.fetchStatus
         let refreshScript = self.refreshScript
         Task.detached {
-            // Off the main thread: two file reads, and pgrep.
             refreshScript(layout)
             let r = fetch(script)
             await MainActor.run {
@@ -176,9 +136,7 @@ final class DashboardModel: ObservableObject {
                     self.problem = nil
                     if let q = self.queued {
                         self.queued = nil
-                        // Only if the fresh status would still offer this very
-                        // button, unblocked: same decision, and no game or
-                        // other Mac in the way now.
+                        // Only if the fresh status would still offer this very button, unblocked.
                         if SyncActions.stillOffered(q, for: s) {
                             self.tapped(q)
                         } else {
@@ -189,14 +147,12 @@ final class DashboardModel: ObservableObject {
                     }
                 case .failure(let p):
                     if let q = self.queued {
-                        // Dropping it is the safe choice; say so, rather than
-                        // let the press seem to vanish.
+                        // Dropping it is the safe choice; say so, rather than let the press seem to vanish.
                         self.notice = "\(q.label) was not started, because of the problem above."
                     }
                     self.queued = nil
                     self.problem = p
-                    // Keep the last good status on screen for a transient
-                    // refusal, such as another Mac syncing right now.
+                    // Keep the last good status on screen for a transient refusal, such as another Mac syncing.
                     if ![50, 51, 52].contains(p.code) { self.status = nil }
                 }
             }
@@ -205,16 +161,13 @@ final class DashboardModel: ObservableObject {
 
     // MARK: actions
 
-    /// False while setup is showing (AppModel sets it), so a status check
-    /// already in flight when setup opened cannot start a sync.
+    /// False while setup is showing, so a status check already in flight cannot start a sync.
     var active = true
-    /// True while an update installs: nothing may start, because the app
-    /// is about to restart (UpdateModel sets and clears it).
+    /// True while an update installs: nothing may start, the app is about to restart.
     var updating = false
 
     func considerAutoSync(_ s: SyncStatus) {
-        // !loading: a check in flight holds this Mac's lock, and a sync
-        // started now would fail on it and be remembered as a failure.
+        // !loading: a check in flight holds this Mac's lock, and a sync started now would fail and be remembered as a failure.
         guard active, !updating, autoSync, !autoHeldAfterRestore, !loading, !busy, pending == nil, run == nil,
               let b = SyncActions.automatic(for: s) else { return }
         let key = SyncActions.situationKey(s)
@@ -240,15 +193,10 @@ final class DashboardModel: ObservableObject {
 
     func perform(_ button: ActionButton, automatic: Bool = false, situation: String? = nil) {
         let action = button.action
-        // The one gate every action passes: nothing starts while setup is
-        // showing, whatever path led here (a queued press, an automatic
-        // sync, a confirmation answered late).
+        // The one gate every action passes: nothing starts while setup is showing or an update installs.
         guard active, !updating, !busy else { return }
         pending = nil
-        // A restore holds automatic sync from the moment it starts, not
-        // only once it succeeds: one that fails or is cut short may still
-        // have changed the saves here. Anything else the user starts
-        // themselves ends the hold.
+        // A restore holds automatic sync from the moment it starts: a failed or cut-short restore may still have changed the saves.
         if action == .restore { autoHeldAfterRestore = true }
         else if !automatic { autoHeldAfterRestore = false }
         let r = ActionRun(action: action, automatic: automatic)
@@ -258,22 +206,19 @@ final class DashboardModel: ObservableObject {
         let script = self.script
 
         if action == .resetRecord {
-            // resetRecord: the documented manual fix for a diverged state,
-            // under the same local lock the script takes.
+            // resetRecord: the documented manual fix for a diverged state, under the script's own local lock.
             do {
                 if let aside = try SyncRecord.reset(expectedEpoch: .some(button.expectedRecordEpoch)) {
                     SetupLog.write("action: resetRecord moved the record to \(aside.path)")
                     r.finish(status: 0, output: "")
                 } else {
-                    // Not a success: nothing was reset, so say so rather
-                    // than leave the user in the same state with a tick.
+                    // Not a success: nothing was reset, so say so rather than show a tick.
                     let path = SyncRecord.defaultStateDir.appendingPathComponent("last-sync.json").path
                     SetupLog.write("action: resetRecord found no record at \(path)")
                     r.finish(status: 1, output: "error: there is no sync record at \(path) to reset")
                 }
             } catch let e as SyncRecord.ResetError {
-                // 52 is the script's "another sts is running" code, so the
-                // card explains it the same way.
+                // 52 is the script's "another sts is running" code, so the card explains it the same way.
                 switch e {
                 case .busy:    r.finish(status: 52, output: "error: \(e.description)")
                 case .changed: r.finish(status: 64, output: "error: \(e.description)")
@@ -302,11 +247,9 @@ final class DashboardModel: ObservableObject {
             await MainActor.run {
                 SetupLog.write("action: \(action.rawValue) exited \(status)")
                 r.finish(status: status, output: all)
-                // A success needs no card: the status shows the result
-                // ("Last synced just now"). A refusal stays until dismissed.
+                // A success needs no card: the status shows the result; a refusal stays until dismissed.
                 if automatic {
-                    // Remember a failure so the same state is not retried in
-                    // a loop; any change in either side clears it.
+                    // Remember a failure so the same state is not retried in a loop; any change on either side clears it.
                     self.autoFailedKey = status == 0 ? nil : situation
                     self.autoFailedAt = status == 0 ? nil : self.now()
                 }
@@ -366,16 +309,11 @@ struct DashboardView: View {
     @State private var confirmingDisconnect = false
 
     var body: some View {
-        // A fixed-size window. The centre holds the status, or while an
-        // action runs, what is happening and its steps; both sides sit in
-        // a strip at the bottom. The health check replaces all of it, in
-        // the same window, with a Back button.
         Group {
             if d.showingHealth {
                 HealthPage()
             } else {
-                // Fits in the fixed window in every normal state; only an
-                // unusual pile-up of problem cards scrolls.
+                // Fits the fixed window in every normal state; only a pile-up of problem cards scrolls.
                 ViewThatFits(in: .vertical) {
                     main
                     ScrollView { main.frame(minHeight: 420) }
@@ -390,8 +328,6 @@ struct DashboardView: View {
                 UpdateButton(updates: updates)
             }
             ToolbarItem(placement: .primaryAction) {
-                // One control for automatic sync, always in view, state
-                // readable at a glance, like Tailscale's switch (#119).
                 HStack(spacing: 6) {
                     Text("Auto sync").font(.system(size: 11)).foregroundStyle(.secondary)
                     Toggle("Auto sync", isOn: $d.autoSync)
@@ -424,7 +360,6 @@ struct DashboardView: View {
                     Button("Open logs") { d.openLogs() }
                     Divider()
                     Toggle("Show in menu bar", isOn: $showInMenuBar)
-                    // The wizard, pre-filled from the config (#75).
                     Button("Change hub, account or backup disk…") { app.showSetup() }
                         .disabled(d.busy)
                     Button("Disconnect this Mac…") { confirmingDisconnect = true }
@@ -436,9 +371,7 @@ struct DashboardView: View {
                 .help("Settings")
             }
         }
-        // Started here, and not stopped when the window closes: with the
-        // menu bar icon the app keeps checking and syncing without it
-        // (#91). Setup stops it (AppModel.showSetup).
+        // Not stopped when the window closes: with the menu bar icon the app keeps syncing without it (#91).
         .onAppear { d.start() }
         .alert(d.pending?.confirmation?.title ?? "",
                isPresented: Binding(get: { d.pending != nil }, set: { if !$0 { d.pending = nil } }),
@@ -460,10 +393,7 @@ struct DashboardView: View {
 
     var main: some View {
         VStack(spacing: 14) {
-            // A failed run keeps its own card ("Stopped, nothing was lost",
-            // and how far it got). A status refusal shows too, unless it is
-            // the same problem again: a Play that failed because the hub is
-            // offline is followed by a status check failing the same way.
+            // A failed run keeps its own card; a status refusal shows too unless it is the same problem again.
             if let r = d.run, r.ended, r.problem != nil {
                 ActivityCard(run: r)
             }
@@ -537,7 +467,6 @@ struct HealthPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Back, title and Check again on one row.
             ZStack {
                 Text("Health check").font(.headline)
                 HStack {
@@ -554,8 +483,6 @@ struct HealthPage: View {
                         .disabled(d.doctor.running)
                 }
             }
-            // Collapsed sections are one line each, so the whole report
-            // fits without scrolling; an opened problem may scroll.
             ViewThatFits(in: .vertical) {
                 DoctorProgressView(run: d.doctor)
                 ScrollView { DoctorProgressView(run: d.doctor).padding(.trailing, 8) }

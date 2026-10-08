@@ -14,7 +14,6 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
-// A remote hub runs the script's own text, so doctor sends it verbatim.
 func TestDoctorSnippetsMatchTheScript(t *testing.T) {
 	src, err := os.ReadFile("../../bin/star-traders-sync")
 	if err != nil {
@@ -41,9 +40,7 @@ func TestRefusalLines(t *testing.T) {
 	}
 }
 
-// --fix never clears a local lock while a run holds the flock, however
-// stale the script-visible lock looks: the run may be between its stale
-// check and its own mkdir.
+// The run may be between its stale check and its own mkdir, however stale the lock looks.
 func TestDoctorLeavesAFlockedLock(t *testing.T) {
 	state := t.TempDir()
 	fl, err := os.OpenFile(filepath.Join(state, "local.lock.flock"), os.O_CREATE|os.O_RDWR, 0o644)
@@ -74,7 +71,6 @@ func TestDoctorLeavesAFlockedLock(t *testing.T) {
 	}
 }
 
-// When the flock cannot be taken, --fix clears nothing and says so.
 func TestDoctorNeedsTheFlockToClear(t *testing.T) {
 	state := t.TempDir()
 	dir := filepath.Join(state, "local.lock.d")

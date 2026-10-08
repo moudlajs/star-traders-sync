@@ -1,6 +1,4 @@
-// Package exitcode is the exit code table, the documented interface of the
-// tool. The numbers are the bash script's, exactly (bin/star-traders-sync,
-// docs/troubleshooting.md); a test reads the script and fails on any drift.
+// Package exitcode is the exit code table, the tool's documented interface; the numbers are the bash script's.
 package exitcode
 
 // Code is a process exit status from the table.
@@ -51,8 +49,7 @@ const (
 	BackupNotHub     Code = 71 // sts backup run off the hub host
 )
 
-// ByScriptName maps the bash script's readonly EX_ names to the codes
-// here, so the parity test can compare the two tables entry by entry.
+// ByScriptName maps the bash script's EX_ names to codes, for the parity test.
 var ByScriptName = map[string]Code{
 	"EX_OK": OK, "EX_USAGE": Usage,
 	"EX_CONFIG_MISSING": ConfigMissing, "EX_CONFIG_MALFORMED": ConfigMalformed,

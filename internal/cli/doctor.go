@@ -22,21 +22,14 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/tailscale"
 )
 
-// Hub-side snippets doctor sends, verbatim from the script (pinned by
-// TestDoctorSnippetsMatchTheScript).
+// Hub-side snippets doctor sends, verbatim from the script (TestDoctorSnippetsMatchTheScript).
 const (
 	doctorProbeScript = "\n        d=\"$1\"\n        [ -e \"$d\" ] || { echo NOENT; exit 0; }\n        [ -d \"$d\" ] || { echo NOTDIR; exit 0; }\n        [ -w \"$d\" ] || { echo NOWRITE; exit 0; }\n        echo OK\n    "
 	doctorBusyScript  = `[ -d "$1" ]`
 	doctorMkdirScript = `mkdir -p "$1"`
 )
 
-// doctor is cmd_doctor: every check, none of them aborting, one report. It
-// prints what the script prints, line for line: the app reads this text
-// (DoctorReport.swift), and tests/parity.sh diffs the two.
-//
-// Read-only unless --fix, and --fix only does what is safe, reversible and
-// idempotent. It never accepts a host key, changes system settings, or
-// grants permissions.
+// doctor is cmd_doctor; --fix only does safe, reversible, idempotent repairs and never accepts a host key.
 type doctor struct {
 	env Env
 	out io.Writer
@@ -67,11 +60,9 @@ func (d *doctor) fixed(format string, a ...any) {
 }
 func (d *doctor) skip(what string) { d.nSkip++; d.line("    --    skipped, needs: %s", what) }
 
-// do is the indented remediation under a finding.
 func (d *doctor) do(format string, a ...any) { d.line("          "+format, a...) }
 
-// try is doc_try: run a repair only under --fix, and otherwise say what
-// --fix would do, so a dry doctor still teaches.
+// try is doc_try: repair only under --fix, otherwise say what --fix would do.
 func (d *doctor) try(what string, repair func() bool) bool {
 	if d.fix {
 		if repair() {
@@ -105,17 +96,14 @@ func isFile(p string) bool {
 }
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
-// runOK runs a command for its exit status only.
 func runOK(name string, args ...string) bool { return exec.Command(name, args...).Run() == nil }
 
-// fileMentions is grep -qF.
 func fileMentions(path, s string) bool {
 	b, err := os.ReadFile(path)
 	return err == nil && strings.Contains(string(b), s)
 }
 
-// countFiles is "find DIR/ -maxdepth 1 -type f | grep -c .": regular files
-// directly inside, a symlinked directory followed.
+// countFiles is find DIR/ -maxdepth 1 -type f: regular files directly inside, a symlinked dir followed.
 func countFiles(dir string) int {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -130,8 +118,6 @@ func countFiles(dir string) int {
 	return n
 }
 
-// runDoctor is main()'s doctor branch: it runs before every other check,
-// because the things those checks abort on are what it exists to report.
 func runDoctor(env Env, o Options, p paths, log *logx.Logger) int {
 	d := &doctor{env: env, out: env.Stdout, fix: o.Fix, p: p, log: log}
 	d.line("%s %s - checking this machine", prog, Version)
@@ -194,8 +180,6 @@ func (d *doctor) environment() {
 		d.ok("running as %s, not root", whoami())
 	}
 
-	// The hub side runs the script's snippets under bash, here too when
-	// this machine is the hub.
 	out, err := exec.Command(platform.Shell, "-c",
 		`printf '%s %s %s' "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "$BASH_VERSION"`).Output()
 	f := strings.Fields(string(out))
@@ -231,8 +215,7 @@ func (d *doctor) environment() {
 	if strings.Contains(":"+d.env.Getenv("PATH")+":", ":"+home+"/bin:") {
 		d.ok("~/bin is on PATH")
 	} else if isFile(zshrc) && fileMentions(zshrc, "HOME/bin") {
-		// Configured, but this shell started before it: telling them to
-		// add the line again would be wrong.
+		// Configured, but this shell predates it: do not tell them to add the line again.
 		d.warn("~/bin is in ~/.zshrc but not in this shell's PATH")
 		d.do("this shell started before the line was added. Open a new one, or:")
 		d.do("    exec zsh")
@@ -266,8 +249,7 @@ func (d *doctor) environment() {
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
-// fixPath appends one line to ~/.zshrc, keeping a backup and showing it:
-// reversible and idempotent, so --fix may do it.
+// fixPath appends one line to ~/.zshrc, keeping a backup: reversible and idempotent, so --fix may do it.
 func (d *doctor) fixPath(rc string) {
 	if isFile(rc) && fileMentions(rc, "HOME/bin") {
 		d.note("~/.zshrc already mentions ~/bin; not adding it twice")
@@ -299,8 +281,6 @@ func (d *doctor) fixPath(rc string) {
 	d.do("open a new shell, or: exec zsh")
 }
 
-// refusalLines is a refusal as die prints it, less its "exit code" line
-// and "error: " prefixes: what doctor shows under the finding.
 func refusalLines(f *fail.Failure) []string {
 	lines := f.Lines
 	if lines == nil {
@@ -315,8 +295,7 @@ func refusalLines(f *fail.Failure) []string {
 	return out
 }
 
-// config is doc_config. It asks the real parser and validator rather than
-// mirroring their rules, so doctor cannot pass a config push would refuse.
+// config is doc_config, asking the real parser and validator so doctor cannot pass a config push refuses.
 func (d *doctor) config() bool {
 	d.section("config")
 	file := d.p.configFile
@@ -345,7 +324,6 @@ func (d *doctor) config() bool {
 	d.log.Level = cfg.Get("LOG_LEVEL")
 	d.log.Log("DEBUG", "config", "loaded %s", file)
 
-	// Placeholders are the single most common half-finished install.
 	var placeholders string
 	for _, k := range []string{"HUB_HOST", "HUB_USER", "HUB_PATH", "BACKUP_VOLUME", "BACKUP_DEST"} {
 		if isPlaceholder(cfg.Get(k)) {
@@ -387,7 +365,6 @@ func (d *doctor) config() bool {
 	return true
 }
 
-// isPlaceholder: still what config.example or install.sh ships.
 func isPlaceholder(v string) bool {
 	for _, p := range []string{"my-mac-mini", "my-macbook", "youruser", "YourDisk", "tailnet-name"} {
 		if strings.Contains(v, p) {
@@ -417,16 +394,13 @@ func (d *doctor) stateDirs() {
 		}
 	}
 
-	// A leaked local lock wedges every later run, and is safe to clear
-	// once its owner is gone.
 	lockDir := filepath.Join(d.p.stateDir, "local.lock.d")
 	pidFile := filepath.Join(d.p.stateDir, "local.lock")
 	if !isDir(lockDir) {
 		d.ok("no stale local lock")
 		return
 	}
-	// Judged and cleared under the flock a Go run holds, so no run can take
-	// the lock between the checks below and the removal.
+	// Judged and cleared under the run flock, so no run can take the lock in between.
 	release, busy, ferr := lock.HoldLocal(d.p.stateDir, d.fix)
 	defer release()
 	b, _ := os.ReadFile(pidFile)
@@ -442,9 +416,7 @@ func (d *doctor) stateDirs() {
 		d.note("another sts is starting right now")
 		return
 	}
-	// A run between its mkdir and its pid write: the pid file is empty or
-	// still names the run before. Never cleared, as lock.AcquireLocal
-	// refuses it too (#151).
+	// A run between its mkdir and pid write: never cleared, as lock.AcquireLocal refuses it too (#151).
 	if st, err := os.Stat(lockDir); err == nil && time.Since(st.ModTime()) < 10*time.Second {
 		d.note("another sts is starting right now")
 		return
@@ -455,7 +427,6 @@ func (d *doctor) stateDirs() {
 	}
 	d.warn("a stale local lock is present (owner %s is gone)", owner)
 	if ferr != nil {
-		// Without the flock a run could take the lock mid-clear.
 		d.fail("could not take the run lock in %s, so the stale lock was not cleared", d.p.stateDir)
 		return
 	}
@@ -494,7 +465,6 @@ func (d *doctor) saveDir() {
 		d.ok("save directory, %d files", n)
 	}
 
-	// The appid is checkable without launching anything.
 	appid := d.cfg.Get("STEAM_APPID")
 	found := false
 	for _, lib := range platform.SteamLibraries(d.env.Getenv("HOME")) {
@@ -512,7 +482,6 @@ func (d *doctor) saveDir() {
 	}
 }
 
-// hubExec runs a snippet where the hub lives.
 func (d *doctor) hubExec() hubexec.Exec {
 	if d.isHub {
 		return hubexec.Local{}
@@ -531,10 +500,7 @@ func (d *doctor) reproCmd() string {
 		d.cfg.Get("SSH_EXTRA_OPTS")) + " " + d.target()
 }
 
-// hubBusy is hub_is_busy: is a sync in progress on the hub? doctor takes no
-// locks, so --fix must not create HUB_PATH while a swap has it renamed
-// aside: the swap's "mv staged hub" would then move INTO the new empty
-// directory, exit 0, and the pre-swap copy would be deleted.
+// hubBusy is hub_is_busy: --fix must not create HUB_PATH mid-swap, or the swap's mv would move into it.
 func (d *doctor) hubBusy() bool {
 	l := (&lock.Hub{HubPath: d.cfg.Get("HUB_PATH")}).Path()
 	if d.isHub {
@@ -544,8 +510,6 @@ func (d *doctor) hubBusy() bool {
 	return err == nil
 }
 
-// tsJSON is the slice of tailscale status --json doctor reads, decoded the
-// way the script's python does.
 type tsJSON struct {
 	BackendState string
 	Self         *struct{ HostName, DNSName string }
@@ -592,8 +556,7 @@ func (d *doctor) tailscale() bool {
 	}
 	d.ok("running, this machine is '%s'", j.Self.HostName)
 
-	// The same comparison every other command uses, so doctor cannot reach
-	// a different verdict than push and pull do.
+	// The same comparison every command uses, so doctor cannot disagree with push and pull.
 	st := &tailscale.Status{}
 	_ = json.Unmarshal(raw, st)
 	if self, _ := tailscale.HubIsSelf(st, d.cfg.Get("HUB_HOST")); self {
@@ -665,8 +628,7 @@ func (d *doctor) ssh() {
 		}
 	}
 
-	// Never accepted automatically - but if the same machine is already
-	// trusted under its other address, the comparison is done for them.
+	// Never accepted automatically; if the other address is already trusted, compare the keys for them.
 	if runOK("ssh-keygen", "-F", d.endpoint) {
 		d.ok("host key for %s is trusted", d.endpoint)
 	} else {
@@ -704,8 +666,7 @@ func (d *doctor) ssh() {
 		return
 	}
 
-	// A connection that drops between the auth probe and this one must not
-	// end the report: that is exactly when doctor gets run.
+	// A connection that drops after the auth probe must not end the report.
 	hubPath := d.cfg.Get("HUB_PATH")
 	probe, err := d.hubExec().Run(doctorProbeScript, hubPath)
 	if err != nil {

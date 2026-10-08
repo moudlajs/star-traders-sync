@@ -44,15 +44,12 @@ public enum UpdateFeed {
     public static let dmgName = "Star-Traders-Sync.dmg"
     public static let signatureName = "Star-Traders-Sync.dmg.sig"
 
-    /// The feed to use: STS_UPDATE_FEED if set (tests, or trying an update
-    /// against a local feed), else GitHub.
+    /// The feed to use: STS_UPDATE_FEED if set (tests, local feeds), else GitHub.
     public static func url(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         environment["STS_UPDATE_FEED"].flatMap(URL.init(string:)) ?? defaultURL
     }
 
-    /// Parses a releases/latest response. The dmg must carry a sha256
-    /// digest: without one there is nothing to verify the download
-    /// against, and an unverifiable update is not installed.
+    /// Parses a releases/latest response; a dmg without a sha256 digest is unverifiable and never installed.
     public static func parse(_ data: Data) throws -> Release {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw UpdateError.badFeed("not JSON")
@@ -69,8 +66,7 @@ public enum UpdateFeed {
               digest.count == "sha256:".count + 64 else {
             throw UpdateError.badFeed("no sha256 digest for \(dmgName)")
         }
-        // Unsigned releases (everything before #108) are not offered: the
-        // signature is the check that does not rest on the GitHub account.
+        // Unsigned releases (before #108) are not offered: the signature is the check that does not rest on the GitHub account.
         guard let sig = assets.first(where: { $0["name"] as? String == signatureName }),
               let sigString = sig["browser_download_url"] as? String, let sigURL = URL(string: sigString) else {
             throw UpdateError.badFeed("no \(signatureName) in release \(tag)")
@@ -83,11 +79,7 @@ public enum UpdateFeed {
                        signatureURL: sigURL)
     }
 
-    /// The only place a real update may come from: this repository's own
-    /// release downloads, over HTTPS. With ad-hoc signing there is no team
-    /// identity to pin (#61), so the root of trust is the repository and
-    /// TLS; a feed pointing anywhere else is not followed. A test feed set
-    /// through STS_UPDATE_FEED may use local files.
+    /// The only place a real update may come from: this repository's release downloads over HTTPS (#61).
     public static func isTrustedDownload(_ url: URL) -> Bool {
         url.scheme == "https"
             && url.host == "github.com"
@@ -109,11 +101,7 @@ public enum UpdateFeed {
     }
 }
 
-/// Ed25519 release signatures (#108). release.yml signs the dmg with a key
-/// held only as a CI secret; the app checks it against this public key.
-/// Unlike the sha256 digest, which comes from the same API as the file, a
-/// valid signature cannot be made by someone who only controls the GitHub
-/// account or the download. Signed with macos/scripts/release-sign.swift.
+/// Ed25519 release signatures (#108), signed by a CI-only key, so control of the GitHub account alone cannot forge one.
 public enum ReleaseSignature {
     public static let publicKeyBase64 = "poTNTzOoOIh0yTrGPkkn3BjRWAmCbK6nnWjmO41Xw0M="
 
@@ -147,8 +135,7 @@ public enum UpdateInstaller {
         guard got == expected.lowercased() else { throw UpdateError.checksumMismatch(expected: expected, got: got) }
     }
 
-    /// Whether the app at `bundle` can be replaced in place: its folder is
-    /// writable, and it is not running from a mounted disk image.
+    /// Why the app at `bundle` cannot be replaced in place (read-only folder, mounted disk image), or nil.
     public static func canReplace(_ bundle: URL) -> String? {
         let parent = bundle.deletingLastPathComponent().path
         if parent.hasPrefix("/Volumes/") { return "it is running from a disk image" }
@@ -156,9 +143,7 @@ public enum UpdateInstaller {
         return nil
     }
 
-    /// Mounts the dmg read-only, checks the app inside, and swaps it in for
-    /// `target` atomically. Nothing at `target` changes unless every check
-    /// passes; a failure leaves the current app exactly as it was.
+    /// Checks the app inside the dmg and swaps it in atomically; any failed check leaves the current app untouched.
     public static func install(dmg: URL, expectedVersion: String, bundleID: String, over target: URL,
                                run: (String, [String]) -> CommandResult = { Shell.run($0, $1) },
                                sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) throws {
@@ -187,8 +172,7 @@ public enum UpdateInstaller {
         }
         try verifySignature(new, run: run)
 
-        // Copy beside the target first (same volume, so the swap is a
-        // rename), check the copy, then swap.
+        // Copy beside the target (same volume, so the swap is a rename), check the copy, then swap.
         let staged = target.deletingLastPathComponent()
             .appendingPathComponent(".\(appName).update-\(getpid())")
         try? fm.removeItem(at: staged)
@@ -203,12 +187,7 @@ public enum UpdateInstaller {
         }
     }
 
-    /// The pauses between attach attempts. `hdiutil attach` can fail with
-    /// EAGAIN ("Resource temporarily unavailable") while diskarbitrationd is
-    /// busy with another image. That is not a bad download, so it is retried
-    /// before it becomes a refusal; any other failure is final at once.
-    /// About 30 s in all: CI once saw the busy spell outlast 7.5 s (#124),
-    /// and a user waiting on an update is better off waiting than refused.
+    // hdiutil attach can fail with EAGAIN while diskarbitrationd is busy (#124): retried for about 30 s before refusing.
     static let attachBackoff: [TimeInterval] = [0.5, 1, 2, 4, 8, 15]
 
     static func attachWithRetry(dmg: URL, at mount: URL, run: (String, [String]) -> CommandResult,

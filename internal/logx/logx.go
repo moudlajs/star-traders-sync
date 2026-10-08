@@ -1,6 +1,4 @@
-// Package logx writes the log the bash script writes: one line per event,
-// "<UTC time> <LEVEL> <step> <message>", in the same file, rotated by the
-// same LOG_MAX_BYTES and LOG_KEEP. stdout stays short; detail goes here.
+// Package logx writes the bash script's log: "<UTC time> <LEVEL> <step> <message>", same file and rotation.
 package logx
 
 import (
@@ -11,8 +9,7 @@ import (
 	"time"
 )
 
-// Logger appends to File. Every error writing the log is ignored, as in
-// the script: a log that cannot be written never stops a sync.
+// Logger appends to File; write errors are ignored, since a log that cannot be written never stops a sync.
 type Logger struct {
 	File     string
 	Level    string // DEBUG, INFO, WARN or ERROR
@@ -55,8 +52,6 @@ func (l *Logger) Log(level, step, format string, a ...any) {
 	}
 }
 
-// rotate: log -> log.1 -> ... -> log.Keep, the oldest dropped, once the
-// log reaches MaxBytes.
 func (l *Logger) rotate() {
 	st, err := os.Stat(l.File)
 	if err != nil || l.MaxBytes <= 0 || st.Size() < l.MaxBytes {

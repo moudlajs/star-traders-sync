@@ -25,15 +25,13 @@ func ShortHostname() string {
 	return strings.TrimSpace(string(out))
 }
 
-// LocalHostName is the Bonjour name (scutil --get LocalHostName), the other
-// name a hub host may go by.
+// LocalHostName is the Bonjour name (scutil --get LocalHostName), the other name a hub host may go by.
 func LocalHostName() string {
 	out, _ := exec.Command("scutil", "--get", "LocalHostName").Output()
 	return strings.TrimSpace(string(out))
 }
 
-// ProcessIDs is "pgrep -x NAME": the pids of processes with exactly that
-// name, in pgrep's order.
+// ProcessIDs is "pgrep -x NAME": pids of processes with exactly that name, in pgrep's order.
 func ProcessIDs(name string) []string {
 	out, _ := exec.Command("pgrep", "-x", name).Output()
 	return strings.Fields(string(out))
@@ -65,8 +63,7 @@ func LogDir(home, prog string) string { return filepath.Join(home, "Library/Logs
 // TailscaleAppPath is the App Store build's CLI, preferred over PATH.
 const TailscaleAppPath = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
-// PingArgs is one ping with a two-second wait: does the name resolve and
-// answer.
+// PingArgs is one ping with a two-second wait.
 func PingArgs(host string) []string { return []string{"-c1", "-t2", host} }
 
 // SteamLibraries are where a Steam app manifest may be.
@@ -75,8 +72,7 @@ func SteamLibraries(home string) []string {
 	return append([]string{home + "/Library/Application Support/Steam"}, vols...)
 }
 
-// FullCopyVolume: the volume's filesystem has no hard links, so every
-// backup is a full copy (exFAT, FAT).
+// FullCopyVolume reports a filesystem without hard links (exFAT, FAT): every backup is a full copy.
 func FullCopyVolume(vol string) bool {
 	info, _ := exec.Command("diskutil", "info", vol).Output()
 	var fs []string
@@ -122,7 +118,6 @@ var (
 	ToolsHint = []string{"these ship with macOS; python3 needs the Xcode command line tools:", "    xcode-select --install"}
 	// FindSavesHint helps find the game's save directory.
 	FindSavesHint = "    ls -la ~/Library | grep -i star"
-	// PlaceholderPrefixes are path defaults that config.example and
-	// install.sh ship, so a config still holding one was never edited.
+	// PlaceholderPrefixes are path defaults config.example and install.sh ship.
 	PlaceholderPrefixes = []string{"/Volumes/Backup"}
 )

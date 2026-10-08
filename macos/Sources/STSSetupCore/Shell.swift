@@ -12,11 +12,7 @@ public struct CommandResult {
     }
 }
 
-/// Runs processes with the environment a login shell would have.
-///
-/// An app launched from Finder inherits launchd's minimal PATH, which has
-/// neither ~/bin nor Homebrew. Every child gets a PATH that does, so `sts`
-/// finds a Homebrew tailscale exactly as it does from Terminal.
+/// Runs processes with a login shell's PATH (~/bin, Homebrew), which a Finder-launched app lacks.
 public enum Shell {
     public static func searchPath(home: String = NSHomeDirectory()) -> String {
         ["\(home)/bin", "/opt/homebrew/bin", "/usr/local/bin",
@@ -55,8 +51,7 @@ public enum Shell {
             try? inPipe.fileHandleForWriting.close()
         }
 
-        // Drain both pipes concurrently: a child that fills one while we
-        // block on the other would deadlock.
+        // Drain both pipes concurrently: a child that fills one while we block on the other would deadlock.
         var outData = Data(), errData = Data()
         let group = DispatchGroup()
         group.enter()
@@ -74,8 +69,7 @@ public enum Shell {
                                  .trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// Runs to completion, handing every output line (stdout and stderr
-    /// interleaved) to `onLine` as it arrives. Returns the exit status.
+    /// Runs to completion, handing each output line to `onLine` as it arrives; returns the exit status.
     public static func stream(_ executable: String, _ arguments: [String],
                               env extra: [String: String] = [:],
                               onLine: @escaping (String) -> Void) -> Int32 {

@@ -25,8 +25,7 @@ public struct SyncStatus: Decodable, Equatable {
     }
 
     public struct LastSync: Decodable, Equatable {
-        /// "push" or "pull": which way this Mac last synced. The script
-        /// records the direction, not which machine was on the other end.
+        /// "push" or "pull": the direction recorded, not which machine was on the other end.
         public let direction: String
         public let at: Int
         public var date: Date { Date(timeIntervalSince1970: TimeInterval(at)) }
@@ -41,8 +40,7 @@ public struct SyncStatus: Decodable, Equatable {
         case differ
     }
 
-    /// What pull and push would do, from the script's decide(). This, not
-    /// the timestamp verdict, is what the app acts on and promises.
+    /// What pull and push would do (the script's decide()); this, not the timestamps, is what the app acts on.
     public enum Decision: String, Decodable {
         case inSync = "INSYNC"
         case hubOnly = "HUB_ONLY"
@@ -77,9 +75,7 @@ public struct SyncStatus: Decodable, Equatable {
     }
 }
 
-/// What a refusal means to someone who has never seen an exit code.
-/// The codes are the script's (docs/troubleshooting.md); the wording is
-/// for the app. Anything unmapped falls back to the script's own message.
+/// A script refusal explained for someone who has never seen an exit code.
 public struct SyncProblem: Error, Equatable {
     public let code: Int32
     public let title: String
@@ -139,17 +135,13 @@ public struct SyncProblem: Error, Equatable {
         return SyncProblem(code: code, title: title, advice: advice, detail: detail)
     }
 
-    /// Whether a status refusal is worth its own card next to a failed
-    /// run's. Not when it is the same problem again: a Play that failed
-    /// because the hub is offline is followed by a status check that fails
-    /// the same way, and a second card would only repeat the first.
+    /// Whether a status refusal deserves its own card, i.e. it is not the failed run's problem again.
     public static func showStatusProblem(_ statusProblem: SyncProblem?, besideRunProblem run: SyncProblem?) -> Bool {
         guard let statusProblem else { return false }
         return statusProblem.code != run?.code
     }
 
-    /// The machine holding the hub lock, from status's hub_lock ("host pid
-    /// ..."), for saying who is syncing rather than "another Mac".
+    /// The machine holding the hub lock, from status's hub_lock.
     public static func lockHolder(_ hubLock: String?) -> String? {
         hubLock?.split(separator: " ").first.map(String.init)
     }

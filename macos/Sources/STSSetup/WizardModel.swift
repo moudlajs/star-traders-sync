@@ -53,26 +53,22 @@ final class WizardModel: ObservableObject {
 
     @Published var step: Step = .welcome
     @Published var existingConfig: SetupValues?
-    /// The save folder sts will actually use: the existing config's
-    /// LOCAL_SAVE_PATH if it has one, else the default a new config gets.
+    /// The save folder sts will actually use: the config's LOCAL_SAVE_PATH, else the default.
     var localSavePath = ConfigFile.defaultSavePath
 
-    // Tailscale
     @Published var tsStatus: TailscaleStatus?
     @Published var tsError: String?
     @Published var tsChecking = false
 
-    // Role
     @Published var role: Role = .client
     @Published var selectedHubID: String?
     @Published var hubUser = NSUserName()
     @Published var hubPath = ""
     @Published var hubPathEdited = false
-    @Published var backupVolume: String?          // nil = no backup disk
+    @Published var backupVolume: String?
     @Published var volumes: [String] = []
     @Published var remoteLoginOn = false
 
-    // Connect
     @Published var keyReady = false
     @Published var scanned: SSHSetup.ScannedKey?
     @Published var scanError: String?
@@ -83,12 +79,10 @@ final class WizardModel: ObservableObject {
     @Published var connectMessage: String?
     @Published var connectBusy = false
 
-    // Install / check
     @Published var stages: [InstallStage] = []
     @Published var installError: String?
     @Published var installed = false
-    /// What was installed, so going back and changing anything makes
-    /// Install run again instead of keeping a stale "done".
+    /// What was installed, so changing anything afterwards makes Install run again.
     var installedValues: SetupValues?
     var installedRole: Role?
     @Published var installBusy = false
@@ -115,8 +109,7 @@ final class WizardModel: ObservableObject {
 
     // MARK: resources
 
-    /// In the .app the script is a bundle resource. Run with `swift run`
-    /// from the repo, it is found relative to this source file.
+    /// In the .app the script is a bundle resource; under `swift run` it is found relative to this source file.
     nonisolated static func locate(_ name: String, repoPath: String) -> URL? {
         if let url = Bundle.main.url(forResource: name, withExtension: nil) { return url }
         let repo = URL(fileURLWithPath: #filePath)
@@ -241,8 +234,7 @@ final class WizardModel: ObservableObject {
         }
     }
 
-    /// Mounted volumes plus the configured one, so a backup disk that is
-    /// unplugged right now still shows as selected instead of vanishing.
+    /// Mounted volumes plus the configured one, so an unplugged backup disk still shows as selected.
     var volumeChoices: [String] {
         guard let current = backupVolume, !volumes.contains(current) else { return volumes }
         return [current] + volumes
@@ -263,9 +255,7 @@ final class WizardModel: ObservableObject {
                                hubPath: hubPath, backupVolume: backupVolume)
         case .client:
             guard let hub = selectedHub else { return nil }
-            // A client never backs up, but a disk already configured here is
-            // kept rather than overwritten with the sentinel: it costs
-            // nothing, and the machine may be switched back to hub later.
+            // A client never backs up, but a disk already configured here is kept rather than replaced with the sentinel.
             return SetupValues(hubHost: hub.nodeName, hubUser: hubUser,
                                hubPath: hubPath, backupVolume: existingConfig?.backupVolume)
         }
@@ -359,9 +349,7 @@ final class WizardModel: ObservableObject {
         installError = nil
     }
 
-    /// Runs the stages in order, one visibly after another. The work is
-    /// real; each stage is only held on screen for a moment so the
-    /// sequence can be followed instead of arriving as one block.
+    /// Runs the stages in order; the work is real, each stage is only held on screen briefly so it can be followed.
     func install() {
         guard let script = bundledScript, let v = values else { return }
         resetStages()
@@ -392,8 +380,6 @@ final class WizardModel: ObservableObject {
                     case .settings:
                         details = try Installer.writeConfig(v, layout: layout)
                     case .hubFolder:
-                        // What doctor --fix would do; doing it here means
-                        // the check step starts green.
                         if FileManager.default.fileExists(atPath: hubPath) {
                             details = ["\(hubPath) already exists"]
                         } else {

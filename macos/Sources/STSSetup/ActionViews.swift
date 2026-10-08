@@ -5,12 +5,10 @@ import SwiftUI
 @MainActor
 final class ActionRun: ObservableObject, Identifiable {
     let action: SyncAction
-    /// Started by the app itself (#87), not by a button.
     let automatic: Bool
     @Published private(set) var progress: ActionProgress
     @Published private(set) var ended = false
     @Published private(set) var problem: SyncProblem?
-    /// When the game started (play's third stage), for the in-game clock.
     @Published private(set) var playStartedAt: Date?
 
     init(action: SyncAction, automatic: Bool = false) {
@@ -36,8 +34,7 @@ final class ActionRun: ObservableObject, Identifiable {
     }
 }
 
-/// Live progress of the running action, one row per stage, following the
-/// script's own progress lines.
+/// Live progress of the running action, one row per stage.
 struct ActivityCard: View {
     @EnvironmentObject var d: DashboardModel
     @ObservedObject var run: ActionRun
@@ -84,10 +81,7 @@ struct ActivityCard: View {
         .animation(.easeOut(duration: 0.2), value: run.progress)
     }
 
-    /// This card is only shown for a run that ended with a refusal; a
-    /// success clears itself and the status says the result. Every refusal
-    /// in the script happens before anything is overwritten, which is what
-    /// makes this title true.
+    // Every refusal in the script happens before anything is overwritten, which is what makes this title true.
     var title: String { "Stopped, nothing was lost" }
 
     func state(_ i: Int) -> InstallStage.State {

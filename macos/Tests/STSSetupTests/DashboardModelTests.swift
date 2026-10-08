@@ -2,12 +2,10 @@ import XCTest
 @testable import STSSetup
 @testable import STSSetupCore
 
-/// DashboardModel's state machine: what starts, and what must not, with
-/// the script and the clock replaced by fakes. Each case is one of the
-/// timing bugs found in review of #95, so it cannot come back unnoticed.
+/// DashboardModel's state machine, with the script and clock replaced by fakes.
 @MainActor
 final class DashboardModelTests: XCTestCase {
-    /// Records every script call. Called from a background task.
+    /// Records every script call; called from a background task.
     final class Calls: @unchecked Sendable {
         private let lock = NSLock()
         private var list: [[String]] = []
@@ -45,8 +43,7 @@ final class DashboardModelTests: XCTestCase {
         SetupLog.enabled = true
     }
 
-    /// Feeds these statuses to successive checks (the last repeats), and
-    /// answers every script call with `exit`.
+    /// Feeds these statuses to successive checks (the last repeats), and answers every script call with `exit`.
     func fake(_ statuses: [SyncStatus], exit: Int32 = 0) {
         var queue = statuses
         let lock = NSLock()
@@ -95,8 +92,6 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertTrue(calls.all.isEmpty)
     }
 
-    /// A failure is not retried against the same situation in a loop, but
-    /// is retried once enough time has passed (a network blip heals).
     func testAFailedAutomaticSyncIsNotRetriedUntilItExpires() async throws {
         fake([try Self.status("HUB_ONLY")], exit: 25)
         d.refresh()
@@ -114,10 +109,7 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertEqual(calls.all.count, 2, "retried after the back-off")
     }
 
-    /// The #95 review sequence: a press queued during a check, then setup
-    /// opens (stop) before the check returns. Nothing may start.
-    /// #90: a restore runs exactly `sts restore NAME`, and a restore with
-    /// no copy chosen runs nothing - never the reset-record path.
+    /// #90: a restore with no copy chosen runs nothing, never the reset-record path.
     func testARestoreRunsTheScriptWithTheChosenCopy() async throws {
         fake([try Self.status("INSYNC")])
         d.start()
@@ -137,9 +129,7 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertEqual(d.run?.problem?.code, 2)
     }
 
-    /// #143 review: after a restore the saves differ from the Hub
-    /// (LOCAL_ONLY), and automatic sync must not send them on its own.
-    /// It waits until the user does something themselves.
+    /// #143: restored saves differ from the Hub, and automatic sync must not send them on its own.
     func testAutomaticSyncWaitsForTheUserAfterARestore() async throws {
         fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")])
         d.start()
@@ -160,8 +150,7 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertFalse(d.autoHeldAfterRestore, "and ends the hold")
     }
 
-    /// #143 review: a restore that fails still holds automatic sync; it
-    /// may have changed the saves before it stopped.
+    /// #143: a failed restore may still have changed the saves.
     func testAFailedRestoreStillHoldsAutomaticSync() async throws {
         fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")], exit: 63)
         d.start()
@@ -175,7 +164,7 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertEqual(calls.all, [["restore", "2026-10-06T12:00:00Z"]], "nothing automatic after the failure")
     }
 
-    /// #143 review: the hold survives a relaunch (or a launch at login).
+    /// #143
     func testTheHoldAfterARestoreSurvivesARelaunch() async throws {
         UserDefaults.standard.removeObject(forKey: DashboardModel.holdKey)
         fake([try Self.status("INSYNC"), try Self.status("LOCAL_ONLY")])
@@ -186,7 +175,6 @@ final class DashboardModelTests: XCTestCase {
         await settle { self.d.autoHeldAfterRestore }
         d.stop()
 
-        // A fresh app: same defaults, a LOCAL_ONLY status, auto sync on.
         let fresh = DashboardModel()
         fresh.autoSync = true
         fresh.refreshScript = { _ in }
@@ -201,8 +189,6 @@ final class DashboardModelTests: XCTestCase {
         fresh.stop()
     }
 
-    /// Restore is only ever started from the sheet: never planned, never
-    /// automatic, whatever the situation.
     func testRestoreIsNeverOfferedOrAutomatic() throws {
         for decision in ["INSYNC", "HUB_ONLY", "LOCAL_ONLY", "BOTH_CHANGED", "FIRSTRUN_CONFLICT",
                          "FIRST_SEED", "HUB_EMPTY", "DIVERGED_STATE", "LOCAL_EMPTIED"] {
@@ -226,11 +212,8 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertNil(d.run)
     }
 
-    /// #107 review: while an update installs, the app is about to restart,
-    /// so nothing may start, automatic or pressed.
+    /// #107
     func testNothingStartsWhileAnUpdateInstalls() async throws {
-        // Two checks see the hub ahead (one while updating, one after);
-        // once fetched, the hub and this Mac agree.
         fake([try Self.status("HUB_ONLY"), try Self.status("HUB_ONLY"), try Self.status("INSYNC")])
         d.updating = true
         d.refresh()
@@ -247,8 +230,7 @@ final class DashboardModelTests: XCTestCase {
         XCTAssertEqual(calls.all.count, 1, "and it resumes afterwards")
     }
 
-    /// #119: the checks the app starts itself show no spinner; only a
-    /// check the user asked for does.
+    /// #119
     func testOnlyARequestedCheckShowsTheSpinner() async throws {
         let gate = DispatchSemaphore(value: 0)
         d.autoSync = false

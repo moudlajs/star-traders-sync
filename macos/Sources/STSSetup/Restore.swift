@@ -1,9 +1,7 @@
 import STSSetupCore
 import SwiftUI
 
-/// Restore previous saves (#90): this Mac's safety copies, newest first.
-/// Restoring runs `sts restore NAME` like any other action, so the saves
-/// here now are snapshotted first and the restore can itself be undone.
+/// Restore previous saves (#90); the saves here now are snapshotted first, so a restore can itself be undone.
 struct RestoreSheet: View {
     @EnvironmentObject var d: DashboardModel
     @Environment(\.dismiss) private var dismiss
@@ -70,8 +68,7 @@ struct RestoreSheet: View {
             Button(b.confirmation?.button ?? "Restore") {
                 confirming = nil
                 dismiss()
-                // A sync that started meanwhile would make perform drop it
-                // without a word.
+                // A sync that started meanwhile would make perform drop it without a word.
                 if d.busy {
                     d.notice = "Restore not started: a sync was running. Try again when it is done."
                 } else {

@@ -1,11 +1,6 @@
 import Foundation
 
-/// The client side of "this Mac can ssh to the hub without a password".
-///
-/// Two rules carried over from the script: a host key is never trusted
-/// without a human comparing it, and the hub password is never stored. It
-/// reaches ssh-copy-id through SSH_ASKPASS reading an environment variable,
-/// so it is not in argv (visible to `ps`) and not on disk.
+/// The client side of passwordless ssh to the hub. Host keys are never trusted unseen; the password is never stored.
 public struct SSHSetup {
     public let home: URL
     public let user: String
@@ -21,9 +16,7 @@ public struct SSHSetup {
     public var keyPath: URL { sshDir.appendingPathComponent("id_ed25519") }
     var knownHosts: URL { sshDir.appendingPathComponent("known_hosts") }
 
-    /// The tailnet IP always works; MagicDNS does not resolve with a
-    /// Homebrew tailscaled. sts picks whichever works at run time, so both
-    /// names are trusted and every connection here goes to the IP.
+    /// The tailnet IP: MagicDNS does not resolve with a Homebrew tailscaled.
     public var endpoint: String { hub.ip }
     public var target: String { "\(user)@\(endpoint)" }
     var trustedNames: [String] { [hub.ip, hub.dnsName].filter { !$0.isEmpty } }
@@ -80,9 +73,7 @@ public struct SSHSetup {
         return .success(ScannedKey(key: key, fingerprint: fingerprint))
     }
 
-    /// Adds the scanned key under the IP and the MagicDNS name. Only names
-    /// that are not already known are added; a name that is known with a
-    /// different key is left for ssh to refuse, loudly.
+    /// Trusts the scanned key under the IP and MagicDNS name; a name known with a different key is left for ssh to refuse.
     public func trust(_ scanned: ScannedKey) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: sshDir, withIntermediateDirectories: true,
@@ -123,8 +114,7 @@ public struct SSHSetup {
         Shell.run("/usr/bin/ssh", ["-o", "BatchMode=yes"] + Self.sshOpts + [target, "echo STS_OK"])
     }
 
-    /// Puts our public key in the hub's authorized_keys, using the hub
-    /// account's password once.
+    /// Puts our public key in the hub's authorized_keys; the password is used once and never saved.
     public func copyKey(password: String) -> CommandResult {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("sts-setup-\(UUID().uuidString)")
@@ -133,7 +123,7 @@ public struct SSHSetup {
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true,
                                    attributes: [.posixPermissions: 0o700])
-            // The script holds no secret; it echoes one from its environment.
+            // The askpass script holds no secret: it echoes one from its environment, so it is not in argv or on disk.
             try "#!/bin/sh\nprintf '%s\\n' \"$STS_SETUP_PASSWORD\"\n"
                 .write(to: askpass, atomically: true, encoding: .utf8)
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: askpass.path)
@@ -156,8 +146,7 @@ public struct SSHSetup {
     public func explain(_ r: CommandResult) -> String {
         let s = r.combined
         if s.contains("Permission denied") {
-            // Name the account: a wrong account name (#178) looks exactly
-            // like a wrong password from here.
+            // Name the account: a wrong account name (#178) looks exactly like a wrong password.
             return "The hub refused the password for the account \"\(user)\". Check the account name first: it must be the account on the hub Mac, whose home folder is /Users/name there, and that is often not this Mac's name. Go Back to change it. Then check the password is that account's password on the hub Mac."
         }
         if s.contains("Connection refused") {

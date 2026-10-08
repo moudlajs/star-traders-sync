@@ -11,9 +11,7 @@ permissions:
 
 jobs:
   check:
-    # macOS: the tool is macOS-only until #1, and it depends on BSD
-    # behaviour (stat -f, BSD find, openrsync, cpio). Linux runners would
-    # pass while the real target broke.
+    # macOS, not Linux: the tool depends on BSD stat/find, openrsync and cpio.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,9 +30,7 @@ jobs:
 
       - name: No bash 4+ features
         run: |
-          # These would work on the runner's newer bash but fail on a real Mac.
-          # Comments are stripped first, so a comment naming a forbidden
-          # construct does not trip the check.
+          # Comments are stripped first so one naming a forbidden construct passes.
           for f in bin/star-traders-sync install.sh tests/regression.sh; do
             if sed 's/[[:space:]]*#.*$//' "$f" \
                | grep -nE '\$\{[A-Za-z_]+\^\^|\$\{[A-Za-z_]+,,|mapfile |readarray |declare -A|local -A|&>>|\|&'; then
@@ -55,16 +51,12 @@ jobs:
 
       - name: Every exit code in the script is documented
         run: |
-          # The table lives in docs/troubleshooting.md. If it moves again,
-          # this path must move with it or the check silently passes on
-          # nothing.
+          # If the table moves, update this path or the check passes on nothing.
           TABLE=docs/troubleshooting.md
           [ -f "$TABLE" ] || { echo "$TABLE is missing"; exit 1; }
           grep -oE '^readonly EX_[A-Z_]+=[0-9]+' bin/star-traders-sync \
             | grep -oE '[0-9]+$' | sort -un > /tmp/codes
           [ -s /tmp/codes ] || { echo "found no exit codes to check"; exit 1; }
-          # --help lists them too (the script's header promises it, and
-          # 65 once shipped without it).
           bin/star-traders-sync --help > /tmp/help
           missing=0
           while read -r c; do
@@ -78,8 +70,7 @@ jobs:
         run: ./tests/regression.sh -v
 
   go:
-    # The Go build (v2.0, #19). Not shipped until #26: until then it is
-    # held to the bash script, which stays the reference, by parity.sh.
+    # The bash script stays the reference; parity.sh holds the Go build to it.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,8 +87,7 @@ jobs:
         run: go vet ./...
 
       - name: Builds for every OS (#24)
-        # Only internal/platform may be OS-specific, so the rest must compile
-        # everywhere; the ports (#1, #3) then add a file there, not edits.
+        # Only internal/platform may be OS-specific; everything else must compile everywhere.
         run: |
           GOOS=linux go vet ./...
           GOOS=windows go vet ./...
@@ -109,17 +99,12 @@ jobs:
         run: tests/parity.sh
 
       - name: The regression suite, against the Go build (#25)
-        # Every section of the script's own suite, run against the Go
-        # binary, none skipped.
         run: |
           go build -o "$RUNNER_TEMP/sts-go" ./cmd/sts
           STS_BIN="$RUNNER_TEMP/sts-go" ./tests/regression.sh -v
 
   setup-app:
-    # The macOS app (macos/). Builds the real universal .app and .dmg,
-    # not just the package, so a packaging break shows up here rather than
-    # on release day. Its tests include one that runs the script's own
-    # validator against the config the app writes.
+    # Builds the real .app and .dmg so a packaging break shows up here, not on release day.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -146,9 +131,7 @@ jobs:
           done
 
   conventions:
-    # PR title becomes the squash commit subject, so it is the thing that
-    # actually has to follow Conventional Commits. Branch naming is checked
-    # alongside it. Both are documented in CONTRIBUTING.md.
+    # The PR title becomes the squash commit subject, so it is what must be conventional.
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -198,8 +181,7 @@ jobs:
 
   shellcheck:
     runs-on: ubuntu-latest
-    # Advisory for now: the script predates shellcheck and has a backlog.
-    # Kept visible rather than silenced, and not a merge gate yet - see #4.
+    # Advisory, not a merge gate yet: the script has a shellcheck backlog (#4).
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

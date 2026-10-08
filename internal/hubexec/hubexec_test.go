@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// Quote must read back as the same single word in a shell, whatever it
-// holds - it is what keeps a config value from becoming code on the hub.
+// Quote is what keeps a config value from becoming code on the hub.
 func TestQuoteRoundTrips(t *testing.T) {
 	for _, s := range []string{"", "plain", "a b", "it's", "''", "$(rm -rf /)", "`x`", "a\nb", `back\slash`, "%s", "*", `"dq"`} {
 		out, err := exec.Command("/bin/sh", "-c", "printf '%s' "+Quote(s)).Output()

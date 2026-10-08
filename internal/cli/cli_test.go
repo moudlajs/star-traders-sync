@@ -18,7 +18,6 @@ func script(t *testing.T) string {
 	return string(b)
 }
 
-// A release bump has to change both while both exist.
 func TestVersionMatchesTheBashScript(t *testing.T) {
 	m := regexp.MustCompile(`(?m)^readonly STS_VERSION="([^"]+)"`).FindStringSubmatch(script(t))
 	if m == nil || m[1] != Version {
@@ -82,8 +81,7 @@ func TestArgumentRefusals(t *testing.T) {
 	}
 }
 
-// A refused status still releases the local lock (a deferred release once
-// bound the nil lock it saw before prepare took one).
+// A refused status still releases the local lock it took in prepare.
 func TestARefusedRunLeavesNoLocalLock(t *testing.T) {
 	home := t.TempDir()
 	cfgDir := filepath.Join(home, ".config", "star-traders-sync")

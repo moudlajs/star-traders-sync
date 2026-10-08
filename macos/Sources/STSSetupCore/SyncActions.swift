@@ -1,8 +1,6 @@
 import Foundation
 
-/// Something the user can ask the app to do. Each maps to exactly one
-/// script invocation (or, for resetRecord, the documented manual fix), so
-/// the app never does anything the CLI would not.
+/// Something the user can ask for; each maps to exactly one script invocation, so the app never exceeds the CLI.
 public enum SyncAction: String, CaseIterable, Identifiable {
     case play
     case pull
@@ -11,21 +9,14 @@ public enum SyncAction: String, CaseIterable, Identifiable {
     case keepHub
     /// push --force=local: the hub takes this Mac's saves.
     case keepLocal
-    /// Diverged sync state: move this Mac's sync record aside, so the next
-    /// sync is a first run and asks which saves to keep (troubleshooting
-    /// row 46). No save file is touched.
+    /// Move this Mac's sync record aside so the next sync asks which saves to keep; no save file is touched.
     case resetRecord
-    /// sts restore NAME: put one of this Mac's safety copies back (#90).
-    /// Only ever offered by the Restore sheet, never planned or automatic.
+    /// sts restore NAME (#90): only ever offered by the Restore sheet, never planned or automatic.
     case restore
 
     public var id: String { rawValue }
 
-    /// Arguments for the script, pinned to the decision the user saw: the
-    /// script re-checks it under the hub lock and refuses (64) if another
-    /// Mac changed things in the meantime. Play has no such flag; its pull
-    /// never forces, so it cannot overwrite anything unconfirmed. nil for
-    /// resetRecord, which is not a script command.
+    /// Script arguments pinned to the decision the user saw (--expect-decision); nil for resetRecord.
     public func arguments(expecting decision: SyncStatus.Decision) -> [String]? {
         guard let base = arguments else { return nil }
         return self == .play ? base : base + ["--expect-decision=\(decision.rawValue)"]
@@ -39,7 +30,7 @@ public enum SyncAction: String, CaseIterable, Identifiable {
         case .keepHub:     return ["pull", "--force=hub"]
         case .keepLocal:   return ["push", "--force=local"]
         case .resetRecord: return nil
-        case .restore:     return nil   // needs the copy's name: ActionButton.scriptArguments
+        case .restore:     return nil
         }
     }
 
@@ -63,11 +54,9 @@ public enum SyncAction: String, CaseIterable, Identifiable {
 /// A button on the status card.
 public struct ActionButton: Equatable, Identifiable {
     public let action: SyncAction
-    /// The decision this button was offered for. Running it passes this as
-    /// --expect-decision, so a stale choice can never run.
+    /// The decision this was offered for, passed as --expect-decision so a stale choice can never run.
     public var expected: SyncStatus.Decision = .inSync
-    /// For resetRecord: the record's epoch as shown (nil for none), so the
-    /// reset refuses if a sync happened since.
+    /// For resetRecord: the record's epoch as shown, so the reset refuses if a sync happened since.
     public var expectedRecordEpoch: Int?
     public let label: String
     public let prominent: Bool
@@ -77,8 +66,7 @@ public struct ActionButton: Equatable, Identifiable {
     public var restoreName: String?
     public var id: String { action.rawValue + label + (restoreName ?? "") }
 
-    /// What the script is run with; nil only for resetRecord, which is
-    /// not a script command, and for a restore with no copy chosen.
+    /// What the script is run with; nil for resetRecord and for a restore with no copy chosen.
     public var scriptArguments: [String]? {
         if action == .restore { return restoreName.map { ["restore", $0] } }
         return action.arguments(expecting: expected)
@@ -98,8 +86,7 @@ public struct ActionPlan: Equatable {
 }
 
 public enum SyncActions {
-    /// The Restore sheet's button for one safety copy. Its confirmation
-    /// says what happens to the saves here now.
+    /// The Restore sheet's button for one safety copy.
     public static func restore(_ copy: SafetyCopy) -> ActionButton {
         var b = ActionButton(
             action: .restore, label: "Restore", prominent: true,
@@ -111,8 +98,7 @@ public enum SyncActions {
         return b
     }
 
-    /// The buttons for a status. Every button is one the script accepts in
-    /// that state: a plain pull where pull would refuse is never offered.
+    /// The buttons for a status; only ones the script accepts in that state are offered.
     public static func plan(for s: SyncStatus) -> ActionPlan {
         var plan = ActionPlan()
         let hubName = s.isHub ? "the Hub" : s.hub.host
@@ -158,12 +144,7 @@ public enum SyncActions {
                     message: "This Mac's save folder is empty. The Hub's saves (\(hub)) are copied here.",
                     button: "Restore"))]
         case .bothChanged, .firstRunConflict:
-            // #89: recommend the side played more recently, first and
-            // prominent; the other stays one click away. Both confirm, and
-            // the confirmation names both sides' last-played times.
-            // The times are file mtimes from two Macs, so only a clear gap
-            // earns a recommendation: a near tie, or a side with no
-            // timestamp, gets two neutral buttons named by side.
+            // #89: recommend the more recently played side only on a clear gap; mtimes from two Macs drift.
             let h = s.sides.hub.newest, l = s.sides.local.newest
             if h > 0, l > 0, abs(h - l) >= recommendAfter {
                 let hubNewer = h > l
@@ -198,11 +179,7 @@ public enum SyncActions {
         return plan
     }
 
-    /// What the app may do on its own (#87), or nil. Only the two moves
-    /// that cannot overwrite anything unconfirmed: fetch when only the hub
-    /// changed (or this Mac has no saves yet), send when only this Mac
-    /// changed. Never a --force, never while the game runs or another Mac
-    /// holds the hub lock, and always pinned to the decision seen.
+    /// What the app may do on its own (#87): an unforced fetch or send, never while the game runs or the hub is locked.
     public static func automatic(for s: SyncStatus) -> ActionButton? {
         guard !s.gameRunning, s.hubLock == nil else { return nil }
         let action: SyncAction
@@ -218,9 +195,7 @@ public enum SyncActions {
         return b
     }
 
-    /// Whether a button pressed earlier may still run against a fresh
-    /// status: the decision is the one it was pressed for, nothing blocks
-    /// it (game, another Mac), and the fresh plan still offers that action.
+    /// Whether a button pressed earlier may still run against a fresh status.
     public static func stillOffered(_ button: ActionButton, for s: SyncStatus) -> Bool {
         let plan = plan(for: s)
         return button.expected == s.decision
@@ -228,15 +203,12 @@ public enum SyncActions {
             && plan.buttons.contains { $0.action == button.action }
     }
 
-    /// A key for "the same situation", so a failed automatic sync is not
-    /// retried against it over and over: decision plus both fingerprints.
+    /// A key for "the same situation", so a failed automatic sync is not retried against it.
     public static func situationKey(_ s: SyncStatus) -> String {
         "\(s.decision.rawValue):\(s.sides.local.fingerprint):\(s.sides.hub.fingerprint)"
     }
 
-    /// The gap in last-played times, in seconds, below which neither side
-    /// is called "newer": clocks on two Macs drift, and a file touched
-    /// without play moves its mtime.
+    /// The last-played gap below which neither side is called newer: clocks drift and mtimes move without play.
     public static let recommendAfter = 30 * 60
 
     static func describe(_ side: SyncStatus.Side) -> String {
@@ -249,16 +221,14 @@ public enum SyncActions {
     }
 }
 
-/// Follows a running action's output and says which stage it is in. The
-/// markers are the script's own progress lines (its say() calls).
+/// Tracks a running action's stage from the script's own progress lines.
 public struct ActionProgress: Equatable {
     public let action: SyncAction
     /// Index of the stage in progress; stages before it are done.
     public private(set) var current = 0
     public private(set) var finished = false
     public private(set) var gameCrashed = false
-    /// The script noticed the game is gone and is making sure it stays
-    /// gone (a few seconds) before it sends the saves.
+    /// The game is gone and the script is confirming it stays gone before sending the saves.
     public private(set) var gameClosed = false
 
     public init(action: SyncAction) {

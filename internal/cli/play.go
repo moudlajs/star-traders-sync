@@ -9,9 +9,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
-// play is cmd_play: pull, launch the game, wait for it to exit, push. The
-// hub lock is never held while the game runs (pull releases it), or the
-// other Mac would be blocked for the whole session.
+// play is cmd_play; the hub lock is never held while the game runs.
 func (s *syncer) play() *fail.Failure {
 	if f := s.checkGameNotRunning(); f != nil {
 		return f
@@ -73,8 +71,7 @@ func (s *syncer) play() *fail.Failure {
 
 	s.say("game running (pid %s) - waiting for it to exit. Ctrl-C here does not stop the game.", pid)
 	s.log.Log("INFO", "play", "game started, pid %s", pid)
-	// Steam sometimes re-execs the game, so one missing poll is not an
-	// exit: three in a row, six seconds, is.
+	// Steam sometimes re-execs the game: only three missed polls in a row (six seconds) is an exit.
 	for gone, announced := 0, false; ; {
 		if firstPid(name) != "" {
 			gone = 0
@@ -109,7 +106,6 @@ func (s *syncer) play() *fail.Failure {
 	return s.push()
 }
 
-// firstPid is pgrep -x NAME | head -1.
 func firstPid(name string) string {
 	if ids := platform.ProcessIDs(name); len(ids) > 0 {
 		return ids[0]

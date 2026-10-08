@@ -6,9 +6,7 @@ final class ConfigFileTests: XCTestCase {
     let hub = SetupValues(hubHost: "hubmac", hubUser: "dan", hubPath: "/Users/dan/star-traders-sync-hub",
                           backupVolume: "/Volumes/T9")
 
-    /// A path, not text: the Hub capitalisation sweep once turned it into
-    /// star-traders-sync-Hub, which on a case-sensitive volume is another,
-    /// empty folder. Pinned to what every install and the docs use.
+    /// A path, not text: a capitalised Hub folder is another, empty folder on a case-sensitive volume.
     func testDefaultHubPathIsTheExistingOne() throws {
         XCTAssertEqual(ConfigFile.defaultHubPath(user: "dan"), "/Users/dan/star-traders-sync-hub")
         let docs = try String(contentsOf: InstallerTests.repo.appendingPathComponent("config.example"), encoding: .utf8)
@@ -25,8 +23,6 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertEqual(c["STEAM_APPID"], "335620")
     }
 
-    /// doctor fails any value matching its placeholder patterns (#53).
-    /// The app must never write one itself.
     func testRenderNeverWritesADoctorPlaceholder() {
         for v in [client, hub] {
             let c = ConfigFile.parse(ConfigFile.render(v, examplePath: "/x"))
@@ -84,14 +80,11 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertEqual(ConfigFile.values(from: ConfigFile.render(hub, examplePath: "/x")), hub)
     }
 
-    /// Re-running the app on a hub must never switch off a working
-    /// backup because the disk's name looked like a placeholder.
     func testRealBackupDiskIsNeverDroppedOnPrefill() {
         for vol in ["/Volumes/Backup", "/Volumes/BackupDrive", "/Volumes/Backup-SSD", "/Volumes/T9"] {
             let text = "HUB_HOST=h\nHUB_USER=u\nHUB_PATH=/Users/u/hub\nBACKUP_VOLUME=\(vol)\nBACKUP_DEST=\(vol)/b\n"
             let v = ConfigFile.values(from: text)
             XCTAssertEqual(v?.backupVolume, vol)
-            // And writing those values back keeps the volume.
             XCTAssertEqual(ConfigFile.parse(ConfigFile.update(text, with: v!))["BACKUP_VOLUME"], vol)
         }
     }
@@ -111,14 +104,12 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertEqual(problems("/Users/dan/Library/StarTradersFrontiersHub"), [], "prefix is not nesting")
         XCTAssertFalse(problems("/x", user: "dan smith").isEmpty)
 
-        // A trailing slash on a ~/ save path is the same folder, and must
-        // get the "same folder" message, not the nesting one.
+        // A trailing slash on a ~/ save path is the same folder, and must get the "same folder" message.
         let same = ConfigFile.problems(
             SetupValues(hubHost: "h", hubUser: "dan", hubPath: "/Users/dan/Library/StarTradersFrontiers"),
             localSavePath: "~/Library/StarTradersFrontiers/", home: "/Users/dan")
         XCTAssertEqual(same, ["The hub folder cannot be the game's own save folder."])
 
-        // A customised save folder is checked, not the default one.
         let custom = SetupValues(hubHost: "h", hubUser: "dan", hubPath: "/Volumes/Games/hub")
         XCTAssertFalse(ConfigFile.problems(custom, localSavePath: "/Volumes/Games/hub/saves",
                                            home: "/Users/dan").isEmpty)
