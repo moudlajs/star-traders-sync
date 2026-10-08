@@ -692,6 +692,13 @@ mv "$SHIMDIR/star-traders-sync-go" "$SHIMDIR/gone"
 check "go chosen but missing: the script runs"           0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" 
 check "  and it says why"                                0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "the Go build .* is missing"' _ "$CASE/home/bin/sts"
 check "  the same with no engine chosen"                 0 sh -c 'rm -f "$2"; "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" "$ENGINE_FILE"
+# Present but unable to run - a truncated binary from an interrupted
+# install. A failed exec ends a bash script; the shim must fall back.
+printf '\317\372\355\376\0\0\0truncated' > "$SHIMDIR/star-traders-sync-go"
+chmod 755 "$SHIMDIR/star-traders-sync-go"
+check "a Go build that cannot run: the script runs"      0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts"
+check "  and it says so"                                 0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "could not run"' _ "$CASE/home/bin/sts"
+rm -f "$SHIMDIR/star-traders-sync-go"
 mv "$SHIMDIR/gone" "$SHIMDIR/star-traders-sync-go"
 check "the shim carries the version the app reads"       0 grep -qx 'readonly STS_VERSION="9.9.9"' "$SHIMDIR/star-traders-sync"
 

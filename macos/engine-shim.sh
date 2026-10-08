@@ -33,12 +33,18 @@ if [ -z "$engine" ]; then
     { read -r engine _ < "$from"; } 2>/dev/null || true
 fi
 
+# A failed exec would otherwise end the shell here: with execfail it
+# returns, and a Go build that is present but cannot run (truncated by an
+# interrupted install, wrong architecture) falls back like a missing one.
+shopt -s execfail
 case "$engine" in
     ""|go)
         if [ -x "$dir/star-traders-sync-go" ]; then
             exec -a "$0" "$dir/star-traders-sync-go" "$@"
-        fi
-        printf 'warning: the Go build %s is missing - running the script\n' "$dir/star-traders-sync-go" >&2 ;;
+            printf 'warning: the Go build %s could not run - running the script\n' "$dir/star-traders-sync-go" >&2
+        else
+            printf 'warning: the Go build %s is missing - running the script\n' "$dir/star-traders-sync-go" >&2
+        fi ;;
     bash) ;;
     *)
         # Most likely a rollback typed slightly wrong: the script is the
