@@ -698,6 +698,8 @@ printf '\317\372\355\376\0\0\0truncated' > "$SHIMDIR/star-traders-sync-go"
 chmod 755 "$SHIMDIR/star-traders-sync-go"
 check "a Go build that cannot run: the script runs"      0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts"
 check "  and it says so"                                 0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "could not run"' _ "$CASE/home/bin/sts"
+: > "$SHIMDIR/star-traders-sync-go"          # a zero-byte one, from a failed copy
+check "  a zero-byte Go build falls back too"            0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts"
 rm -f "$SHIMDIR/star-traders-sync-go"
 mv "$SHIMDIR/gone" "$SHIMDIR/star-traders-sync-go"
 check "the shim carries the version the app reads"       0 grep -qx 'readonly STS_VERSION="9.9.9"' "$SHIMDIR/star-traders-sync"
