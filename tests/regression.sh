@@ -682,6 +682,12 @@ check "  STS_ENGINE=bash overrides the file"             0 shim_says "bash engin
 echo "bash # rolled back" > "$ENGINE_FILE"
 check "rollback: the first word decides"                 0 shim_says "bash engine: status"
 check "  STS_ENGINE=go overrides the file"               0 shim_says "go engine: status" STS_ENGINE=go
+echo Bash > "$ENGINE_FILE"
+check "an unknown engine runs the script"                0 sh -c '"$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts"
+check "  and warns, naming the file"                     0 sh -c '"$1" status 2>&1 >/dev/null | grep -q "engine \"Bash\" is not go or bash (from .*/engine)"' _ "$CASE/home/bin/sts"
+check "  or naming STS_ENGINE"                          0 sh -c 'STS_ENGINE=script "$1" status 2>&1 >/dev/null | grep -q "engine \"script\" is not go or bash (from STS_ENGINE)"' _ "$CASE/home/bin/sts"
+: > "$ENGINE_FILE"
+check "an empty engine file is no choice: Go"            0 shim_says "go engine: status"
 mv "$SHIMDIR/star-traders-sync-go" "$SHIMDIR/gone"
 check "go chosen but missing: the script runs"           0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" 
 check "  and it says why"                                0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "the Go build .* is missing"' _ "$CASE/home/bin/sts"

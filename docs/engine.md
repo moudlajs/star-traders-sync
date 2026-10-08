@@ -26,8 +26,10 @@ echo bash > ~/.config/star-traders-sync/engine   # use the script
 sts --version                                    # same version either way
 ```
 
-The launcher reads the first word of that file: exactly `bash`, lower case,
-runs the script, and anything else, or no file at all, runs the Go build. `STS_ENGINE=bash` or
+The launcher reads the first word of that file: `go` runs the Go build and
+`bash` runs the script. No file, or an empty one, means the Go build. Any
+other word runs the script with a warning naming the file, since it is most
+likely `bash` mistyped. `STS_ENGINE=bash` or
 `STS_ENGINE=go` in the environment overrides it for one command:
 
 ```bash
