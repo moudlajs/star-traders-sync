@@ -41,10 +41,27 @@ $EDITOR ~/.config/star-traders-sync/config
 sts status
 ```
 
-`install.sh` symlinks `star-traders-sync` and the short alias `sts` into
-`~/bin`, creates the config directory, and copies `config.example` into
-place **only if no config exists** — it never overwrites one. If `~/bin`
-is not on your `PATH` it warns and carries on rather than failing.
+`install.sh` sets up the same engine launcher the app installs
+([engine.md](engine.md)), in `build/bin/` inside the checkout:
+
+- the Go build: `go build` when Go is installed, otherwise the release
+  binary for this version, refused unless it matches the release's
+  `.sha256`. That catches a corrupt or truncated download; it comes from the
+  same place as the binary, so it is not proof of origin. For that, the
+  release's `.sig` is signed with the app's release key (see
+  [engine.md](engine.md)).
+- the bash script as fallback, linked rather than copied, so `git pull`
+  keeps it current
+- `star-traders-sync` and the short alias `sts` in `~/bin`, pointing at
+  the launcher
+
+Re-run `./install.sh` after every `git pull`, so the Go build matches the
+checkout. `./install.sh --script` links `~/bin` straight to the script
+instead, as before 1.8.0.
+
+It also creates the config directory and writes a short starting config
+**only if no config exists**; it never overwrites one. If `~/bin` is not on
+your `PATH` it warns and carries on rather than failing.
 
 Every config key is described in [configuration.md](configuration.md).
 The game's save directory is usually `~/Library/StarTradersFrontiers`;

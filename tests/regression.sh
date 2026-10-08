@@ -739,6 +739,76 @@ else
 fi
 
 # --------------------------------------------------------------------------
+section "install.sh (#183)"
+# A checkout install gets the app's layout: the launcher, the script as
+# fallback, and the Go build. STS_INSTALL_DIR keeps it out of the repo.
+newcase install_sh
+INST="$CASE/inst"
+inst() { env HOME="$CASE/home" STS_INSTALL_DIR="$INST" "$@" "$REPO/install.sh" ${INST_ARGS:-} >"$CASE/inst.out" 2>&1; }
+runs_go() {   # the launcher's exec line names the Go build
+    local trace   # captured first: grep -q closing the pipe is a SIGPIPE under pipefail
+    trace="$(STS_ENGINE= bash -x "$CASE/home/bin/sts" --version 2>&1)"
+    printf '%s\n' "$trace" | grep -q "^+ exec -a .*star-traders-sync-go"
+}
+WANT="$("$BASH_STS" --version)"
+INST_ARGS=--script
+check "--script: links the script, as before"           0 inst
+check "  sts is the script"                              0 test "$(readlink "$CASE/home/bin/sts")" = "$REPO/bin/star-traders-sync"
+INST_ARGS=
+if command -v go >/dev/null 2>&1; then
+    check "with Go: builds and installs the launcher"    0 inst
+    check "  sts points at the launcher"                 0 test "$(readlink "$CASE/home/bin/sts")" = "$INST/star-traders-sync"
+    check "  which runs the Go build"                    0 runs_go
+    check "  and reports this version"                   0 test "$("$CASE/home/bin/sts" --version)" = "$WANT"
+    check "  the fallback is the repo's script, linked"  0 test "$(readlink "$INST/star-traders-sync.bash")" = "$REPO/bin/star-traders-sync"
+    check "  the launcher carries the version"           0 grep -q "^readonly STS_VERSION=\"${WANT#star-traders-sync }\"" "$INST/star-traders-sync"
+
+    # Without Go: the release binary, accepted only with a matching
+    # checksum. A local "release" stands in for GitHub.
+    REL="$CASE/rel/v${WANT#star-traders-sync }"
+    mkdir -p "$REL"
+    cp "$INST/star-traders-sync-go" "$REL/star-traders-sync-go-darwin-universal"
+    (cd "$REL" && shasum -a 256 star-traders-sync-go-darwin-universal > star-traders-sync-go-darwin-universal.sha256)
+    rm -f "$INST/star-traders-sync-go"
+    check "without Go: downloads the release build"      0 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/rel"
+    check "  which runs"                                 0 runs_go
+
+    inst_sums() { shasum -a 256 "$INST/star-traders-sync" "$INST/star-traders-sync-go" 2>&1; }
+    BEFORE_INST="$(inst_sums)"
+    INST_ARGS=--script; inst; INST_ARGS=
+    printf '0000  star-traders-sync-go-darwin-universal\n' > "$REL/star-traders-sync-go-darwin-universal.sha256"
+    check "a checksum mismatch is refused"               1 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/rel"
+    check "  saying so"                                  0 grep -q "does not match its checksum" "$CASE/inst.out"
+    check "  and ~/bin is left as it was"                0 test "$(readlink "$CASE/home/bin/sts")" = "$REPO/bin/star-traders-sync"
+    check "  and the installed engines are untouched"    0 test "$(inst_sums)" = "$BEFORE_INST"
+    check "a missing release is refused, saying why"     1 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/nowhere"
+    check "  and points at --script"                     0 grep -q -- "--script" "$CASE/inst.out"
+    # A build of the wrong version: runs, but is not this checkout.
+    printf '#!/bin/sh\necho "star-traders-sync 0.0.1"\n' > "$REL/star-traders-sync-go-darwin-universal"
+    (cd "$REL" && shasum -a 256 star-traders-sync-go-darwin-universal > star-traders-sync-go-darwin-universal.sha256)
+    check "a build of another version is refused"        1 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/rel"
+    check "  saying so"                                  0 grep -q "is not version" "$CASE/inst.out"
+    check "  with the engines and ~/bin untouched"       0 test "$(inst_sums)" = "$BEFORE_INST" -a "$(readlink "$CASE/home/bin/sts")" = "$REPO/bin/star-traders-sync"
+
+    # go build failing: a stub go ahead of the real one.
+    mkdir -p "$CASE/fakego"
+    printf '#!/bin/sh\n[ "$1" = version ] && { echo "go version go0.0 stub"; exit 0; }\necho "stub: build broken" >&2; exit 1\n' > "$CASE/fakego/go"
+    chmod 755 "$CASE/fakego/go"
+    check "a failed go build is refused"                 1 inst PATH="$CASE/fakego:$PATH"
+    check "  pointing at --script"                       0 grep -q "go build failed.*--script" "$CASE/inst.out"
+    check "  with the engines and ~/bin untouched"       0 test "$(inst_sums)" = "$BEFORE_INST" -a "$(readlink "$CASE/home/bin/sts")" = "$REPO/bin/star-traders-sync"
+
+    check "no staging directory is left behind"          0 test -z "$(ls -A "$INST" | grep '^\.stage')"
+else
+    printf '  skip the Go install cases (no Go here)\n'
+fi
+check "an unknown argument is refused"                   1 env HOME="$CASE/home" STS_INSTALL_DIR="$INST" "$REPO/install.sh" --nope
+# A real file in ~/bin is never replaced, and is caught before any work.
+rm -f "$CASE/home/bin/sts"; : > "$CASE/home/bin/sts"
+check "a real file at ~/bin/sts is refused"              1 env HOME="$CASE/home" STS_INSTALL_DIR="$CASE/inst2" "$REPO/install.sh"
+check "  before anything is staged"                      1 test -e "$CASE/inst2"
+
+# --------------------------------------------------------------------------
 section "status --json"
 # jget PATH: run status --json with stderr discarded, so this also proves
 # stdout carries only the JSON, then print one dotted field.
