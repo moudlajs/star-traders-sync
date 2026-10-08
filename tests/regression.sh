@@ -773,11 +773,14 @@ if command -v go >/dev/null 2>&1; then
     check "without Go: downloads the release build"      0 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/rel"
     check "  which runs"                                 0 runs_go
 
+    inst_sums() { shasum -a 256 "$INST/star-traders-sync" "$INST/star-traders-sync-go" 2>&1; }
+    BEFORE_INST="$(inst_sums)"
     INST_ARGS=--script; inst; INST_ARGS=
     printf '0000  star-traders-sync-go-darwin-universal\n' > "$REL/star-traders-sync-go-darwin-universal.sha256"
     check "a checksum mismatch is refused"               1 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/rel"
     check "  saying so"                                  0 grep -q "does not match its checksum" "$CASE/inst.out"
     check "  and ~/bin is left as it was"                0 test "$(readlink "$CASE/home/bin/sts")" = "$REPO/bin/star-traders-sync"
+    check "  and the installed engines are untouched"    0 test "$(inst_sums)" = "$BEFORE_INST"
     check "a missing release is refused, saying why"     1 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/nowhere"
     check "  and points at --script"                     0 grep -q -- "--script" "$CASE/inst.out"
     check "no staging directory is left behind"          0 test -z "$(ls -A "$INST" | grep '^\.stage')"
@@ -785,6 +788,10 @@ else
     printf '  skip the Go install cases (no Go here)\n'
 fi
 check "an unknown argument is refused"                   1 env HOME="$CASE/home" STS_INSTALL_DIR="$INST" "$REPO/install.sh" --nope
+# A real file in ~/bin is never replaced, and is caught before any work.
+rm -f "$CASE/home/bin/sts"; : > "$CASE/home/bin/sts"
+check "a real file at ~/bin/sts is refused"              1 env HOME="$CASE/home" STS_INSTALL_DIR="$CASE/inst2" "$REPO/install.sh"
+check "  before anything is staged"                      1 test -e "$CASE/inst2"
 
 # --------------------------------------------------------------------------
 section "status --json"

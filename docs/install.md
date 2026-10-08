@@ -45,7 +45,11 @@ sts status
 ([engine.md](engine.md)), in `build/bin/` inside the checkout:
 
 - the Go build: `go build` when Go is installed, otherwise the release
-  binary for this version, refused unless its checksum matches
+  binary for this version, refused unless it matches the release's
+  `.sha256`. That catches a corrupt or truncated download; it comes from the
+  same place as the binary, so it is not proof of origin. For that, the
+  release's `.sig` is signed with the app's release key (see
+  [engine.md](engine.md)).
 - the bash script as fallback, linked rather than copied, so `git pull`
   keeps it current
 - `star-traders-sync` and the short alias `sts` in `~/bin`, pointing at
