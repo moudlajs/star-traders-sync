@@ -5,8 +5,9 @@
 is not about bash itself, and prints the same text. It is the base for the
 Linux and Windows ports.
 
-The app installs both, and a small launcher picks one. **The script is the
-default.** The Go build runs only when you choose it.
+The app installs both, and a small launcher picks one. **The Go build is
+the default** (since 1.8.0). The script stays installed as the fallback,
+one command away.
 
 ## Where it lives
 
@@ -21,15 +22,16 @@ The app keeps the tool in `~/Library/Application Support/star-traders-sync/bin/`
 ## Choosing the engine
 
 ```bash
-echo go > ~/.config/star-traders-sync/engine     # use the Go build
+echo bash > ~/.config/star-traders-sync/engine   # use the script
 sts --version                                    # same version either way
 ```
 
-The launcher reads the first word of that file. `STS_ENGINE=go` or
-`STS_ENGINE=bash` in the environment overrides it for one command:
+The launcher reads the first word of that file: `bash` runs the script, and
+anything else, or no file at all, runs the Go build. `STS_ENGINE=bash` or
+`STS_ENGINE=go` in the environment overrides it for one command:
 
 ```bash
-STS_ENGINE=go sts status
+STS_ENGINE=bash sts status
 ```
 
 Choose the same engine on both Macs. The two are compatible, because they
@@ -42,10 +44,10 @@ just makes it clear which one a problem came from.
 echo bash > ~/.config/star-traders-sync/engine
 ```
 
-Or delete the file. Nothing else changes: the config, the state file, the
-hub and the safety copies are the same for both engines. If `go` is chosen
-but the Go build is missing, the launcher runs the script and says so on
-stderr.
+Nothing else changes: the config, the state file, the hub and the safety
+copies are the same for both engines. Deleting the file goes back to the
+default, the Go build. If the Go build is ever missing, the launcher runs
+the script and says so on stderr.
 
 ## The nightly backup job
 

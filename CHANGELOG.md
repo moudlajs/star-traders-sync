@@ -13,6 +13,14 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Changed
+
+- The Go build is now the default engine ([#26]). Nothing changes for a Mac
+  that already chose `go`. To keep the script:
+  `echo bash > ~/.config/star-traders-sync/engine`. The script stays
+  installed as the fallback, and the launcher still runs it, saying so,
+  if the Go build is ever missing.
+
 ### Fixed
 
 - Setup: when the Hub Mac's account name differs from this Mac's, the
@@ -461,3 +469,4 @@ of those findings has a case in `tests/regression.sh`.
 [#169]: https://github.com/moudlajs/star-traders-sync/issues/169
 [#175]: https://github.com/moudlajs/star-traders-sync/issues/175
 [#178]: https://github.com/moudlajs/star-traders-sync/issues/178
+[#26]: https://github.com/moudlajs/star-traders-sync/issues/26

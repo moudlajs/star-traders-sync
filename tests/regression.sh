@@ -672,9 +672,12 @@ shim_says() {   # shim_says EXPECTED [env assignments...] - run ~/bin/sts status
     [ "$out" = "$want" ] || { printf '      got: %s\n' "$out"; return 1; }
 }
 rm -f "$ENGINE_FILE"
-check "no engine chosen: the script runs"                0 shim_says "bash engine: status"
+check "no engine chosen: the Go build runs (#26)"       0 shim_says "go engine: status"
 echo go > "$ENGINE_FILE"
 check "engine file says go: the Go build runs"           0 shim_says "go engine: status"
+echo bash > "$ENGINE_FILE"
+check "engine file says bash: the script runs"         0 shim_says "bash engine: status"
+echo go > "$ENGINE_FILE"
 check "  STS_ENGINE=bash overrides the file"             0 shim_says "bash engine: status" STS_ENGINE=bash
 echo "bash # rolled back" > "$ENGINE_FILE"
 check "rollback: the first word decides"                 0 shim_says "bash engine: status"

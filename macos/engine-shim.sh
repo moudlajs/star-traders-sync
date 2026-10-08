@@ -6,8 +6,9 @@
 # launcher as the responsible process for its Full Disk Access grant.
 #
 # The engine: $STS_ENGINE, else the first word of
-# ~/.config/star-traders-sync/engine, else bash. "go" runs the Go build
-# beside this file; anything else runs the script. Roll back with:
+# ~/.config/star-traders-sync/engine. "bash" runs the script; anything else,
+# including no choice at all, runs the Go build beside this file (#26). Go
+# back to the script with:
 #     echo bash > ~/.config/star-traders-sync/engine
 #
 # build-app.sh stamps the version below, which the app reads.
@@ -30,7 +31,7 @@ if [ -z "$engine" ]; then
     { read -r engine _ < "${XDG_CONFIG_HOME:-$HOME/.config}/star-traders-sync/engine"; } 2>/dev/null || true
 fi
 
-if [ "$engine" = "go" ]; then
+if [ "$engine" != "bash" ]; then
     if [ -x "$dir/star-traders-sync-go" ]; then
         exec -a "$0" "$dir/star-traders-sync-go" "$@"
     fi
