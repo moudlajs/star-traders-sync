@@ -684,7 +684,8 @@ check "rollback: the first word decides"                 0 shim_says "bash engin
 check "  STS_ENGINE=go overrides the file"               0 shim_says "go engine: status" STS_ENGINE=go
 mv "$SHIMDIR/star-traders-sync-go" "$SHIMDIR/gone"
 check "go chosen but missing: the script runs"           0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" 
-check "  and it says why"                                0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "engine is go, but .* is missing"' _ "$CASE/home/bin/sts"
+check "  and it says why"                                0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "the Go build .* is missing"' _ "$CASE/home/bin/sts"
+check "  the same with no engine chosen"                 0 sh -c 'rm -f "$2"; "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" "$ENGINE_FILE"
 mv "$SHIMDIR/gone" "$SHIMDIR/star-traders-sync-go"
 check "the shim carries the version the app reads"       0 grep -qx 'readonly STS_VERSION="9.9.9"' "$SHIMDIR/star-traders-sync"
 

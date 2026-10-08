@@ -6,7 +6,7 @@
 # launcher as the responsible process for its Full Disk Access grant.
 #
 # The engine: $STS_ENGINE, else the first word of
-# ~/.config/star-traders-sync/engine. "bash" runs the script; anything else,
+# ~/.config/star-traders-sync/engine. "bash" (exactly) runs the script; anything else,
 # including no choice at all, runs the Go build beside this file (#26). Go
 # back to the script with:
 #     echo bash > ~/.config/star-traders-sync/engine
@@ -35,6 +35,6 @@ if [ "$engine" != "bash" ]; then
     if [ -x "$dir/star-traders-sync-go" ]; then
         exec -a "$0" "$dir/star-traders-sync-go" "$@"
     fi
-    printf 'warning: engine is go, but %s is missing - running the script\n' "$dir/star-traders-sync-go" >&2
+    printf 'warning: the Go build %s is missing - running the script\n' "$dir/star-traders-sync-go" >&2
 fi
 exec -a "$0" /bin/bash "$dir/star-traders-sync.bash" "$@"
