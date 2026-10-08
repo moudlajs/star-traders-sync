@@ -57,8 +57,7 @@ jobs:
         run: |
           dmg=macos/build/Star-Traders-Sync.dmg
           swift macos/scripts/release-sign.swift sign "$dmg" > "$dmg.sig"
-          # Verify against the key the app has built in, not the secret: a
-          # secret that does not match would ship a release no app accepts.
+          # Verify against the app's built-in key, not the secret: a mismatch would ship a release no app accepts.
           pub="$(grep -oE 'publicKeyBase64 = "[^"]+"' macos/Sources/STSSetupCore/Updater.swift | cut -d'"' -f2 || true)"
           [ -n "$pub" ] || { echo "no public key found in Updater.swift"; exit 1; }
           swift macos/scripts/release-sign.swift verify "$dmg" "$dmg.sig" "$pub"

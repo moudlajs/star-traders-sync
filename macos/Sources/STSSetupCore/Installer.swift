@@ -12,9 +12,7 @@ public struct InstallLayout {
     public var installedScript: URL { supportDir.appendingPathComponent("bin/star-traders-sync") }
     public var installedExample: URL { supportDir.appendingPathComponent("config.example") }
     public var binDir: URL { home.appendingPathComponent("bin") }
-    /// The script honours XDG_CONFIG_HOME, but an app launched from Finder
-    /// never has it set, and neither does a default Terminal. This is the
-    /// path both of them use.
+    /// The XDG_CONFIG_HOME default path: a Finder-launched app never has XDG_CONFIG_HOME set, nor does Terminal.
     public var configDir: URL { home.appendingPathComponent(".config/star-traders-sync") }
     public var configFile: URL { configDir.appendingPathComponent("config") }
     public var linkNames: [String] { ["star-traders-sync", "sts"] }
@@ -35,18 +33,13 @@ public enum InstallError: Error, CustomStringConvertible {
 }
 
 public enum Installer {
-    /// Is any star-traders-sync process alive? Replacing the script under a
-    /// running bash is how you make it execute garbage (see CLAUDE.md).
-    /// The install below replaces by rename, which is safe for a running
-    /// bash, but a user mid-`sts play` should not be reconfigured anyway.
+    /// Is any star-traders-sync process alive? Never reconfigure while sts is running.
     public static func scriptIsRunning() -> Bool {
         // Matches both names, since `sts play` shows up as .../bin/sts.
         Shell.run("/usr/bin/pgrep", ["-f", "bin/(star-traders-sync|sts)( |$)"]).ok
     }
 
-    /// Copies the bundled script and config.example into Application
-    /// Support, then links `sts` and `star-traders-sync` in ~/bin.
-    /// Returns one human-readable line per thing it did.
+    /// Installs the bundled tool into Application Support and links `sts` in ~/bin; returns one line per step.
     public static func installScript(bundledScript: URL, bundledExample: URL?,
                                      layout: InstallLayout,
                                      fileManager fm: FileManager = .default) throws -> [String] {
@@ -55,13 +48,10 @@ public enum Installer {
             + linkCommands(layout: layout, fileManager: fm)
     }
 
-    /// The engines the bundled tool runs (#175): files beside it in the
-    /// bundle, installed beside it. A bundle without them - a checkout's
-    /// bare script - installs just the one file, as before.
+    /// The engines the bundled tool runs (#175), installed beside it when the bundle has them.
     public static let engineNames = ["star-traders-sync.bash", "star-traders-sync-go"]
 
-    /// Every file to install, engines first: the shim that picks one goes
-    /// last, so it never points at an engine not yet in place.
+    // Engines first, shim last, so the shim never points at an engine not yet in place.
     static func toolFiles(bundledScript: URL, layout: InstallLayout,
                           fm: FileManager) -> [(src: URL, dst: URL)] {
         let dir = layout.installedScript.deletingLastPathComponent()
@@ -90,12 +80,7 @@ public enum Installer {
         return ["installed in \(tilde(layout.installedScript.path, layout))"]
     }
 
-    /// Keeps the app's own copy of the script in step with the one bundled
-    /// in the app, so the app never talks to a script older than itself.
-    /// `sts` in ~/bin may point at a repo checkout the user maintains; that
-    /// is theirs, and the app neither follows nor replaces it.
-    /// Skipped while any sts is running, and then worth retrying: the app
-    /// calls it again before every status check.
+    /// Result of refreshAppScript, which keeps the app's tool copy in step with the bundle; skipped while sts runs.
     public enum RefreshResult: Equatable {
         case refreshed, unchanged, skippedWhileRunning, noBundledScript, failed(String)
 
@@ -131,11 +116,7 @@ public enum Installer {
         }
     }
 
-    /// Step two: `sts` and `star-traders-sync` in ~/bin.
-    ///
-    /// Mirrors install.sh's rules: a real file in ~/bin is never replaced.
-    /// It adds one: a link that already points at a working script (a repo
-    /// checkout) is left alone, so a developer's install is not hijacked.
+    /// Links `sts` and `star-traders-sync` in ~/bin; never replaces a real file or a link to a working checkout.
     public static func linkCommands(layout: InstallLayout,
                                     fileManager fm: FileManager = .default) throws -> [String] {
         var report: [String] = []
@@ -166,18 +147,14 @@ public enum Installer {
         return report
     }
 
-    /// Does a finished install still describe what the user has chosen?
-    /// False once they go back and change the hub, the account, the hub
-    /// folder, the backup disk or the role, so Install runs again rather
-    /// than showing done for values that were never written.
+    /// Does a finished install still match what the user has chosen? False once any installed value changes.
     public static func installStillValid(installed: SetupValues?, installedAsHub: Bool?,
                                          current: SetupValues?, currentIsHub: Bool) -> Bool {
         guard let installed, let installedAsHub, let current else { return false }
         return installed == current && installedAsHub == currentIsHub
     }
 
-    /// Writes the config. An existing one is backed up next to itself and
-    /// then updated in place, so every tunable the user set survives.
+    /// Writes the config; an existing one is backed up beside itself, then updated in place.
     public static func writeConfig(_ values: SetupValues, layout: InstallLayout,
                                    now: Date = Date(),
                                    fileManager fm: FileManager = .default) throws -> [String] {
@@ -204,17 +181,11 @@ public enum Installer {
         return ["wrote \(shown)"]
     }
 
-    /// Disconnect this Mac (#75): undo what setup did to this Mac's command
-    /// line and config, and nothing else. The ~/bin links go only if they
-    /// point at the app's own copy (never a link to a repo checkout, never
-    /// a real file). The config is renamed to a dated backup, not deleted.
-    /// Saves, safety copies, the sync record and the hub are not touched;
-    /// running setup again brings it all back.
+    /// Disconnect this Mac (#75): remove the app's own ~/bin links and set the config aside; saves are never touched.
     public static func disconnect(layout: InstallLayout, now: Date = Date(),
                                   isRunning: () -> Bool = scriptIsRunning,
                                   fileManager fm: FileManager = .default) throws -> [String] {
-        // The script reads its config as it goes: never pull it out from
-        // under a running sync.
+        // Never pull the config out from under a running sync.
         if isRunning() { throw InstallError.scriptRunning }
         var report: [String] = []
         for name in layout.linkNames {
@@ -248,9 +219,7 @@ public enum Installer {
 
     // MARK: - helpers
 
-    /// Write to a temp file beside the target, then rename over it. A
-    /// running bash keeps reading the old inode, so it never sees a
-    /// half-written script.
+    // Temp file then rename: a running bash keeps reading the old inode, never a half-written script.
     static func atomicCopy(_ src: URL, to dst: URL, mode: Int, fm: FileManager) throws {
         let data = try Data(contentsOf: src)
         try atomicWrite(data, to: dst, mode: mode, fm: fm)

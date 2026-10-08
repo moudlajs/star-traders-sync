@@ -1,15 +1,7 @@
 #!/bin/bash
-#
-# Builds "Star Traders Sync.app" and a .dmg around it, with the
-# current bin/star-traders-sync and the Go build bundled inside, behind
-# the engine shim (#175).
-#
+# Builds "Star Traders Sync.app" and its .dmg into macos/build/, bundling the script and Go build behind the engine shim.
 #   macos/build-app.sh            universal (arm64 + x86_64), needs Xcode and Go
-#   macos/build-app.sh --native   this Mac's architecture only, faster; needs
-#                                 Go and the Command Line Tools, not Xcode
-#
-# Output goes to macos/build/. The app is ad-hoc signed, not notarized
-# (#61), so the first launch needs Privacy & Security > Open Anyway.
+#   macos/build-app.sh --native   this Mac's architecture only; needs Go and the Command Line Tools, not Xcode
 
 set -euo pipefail
 
@@ -23,15 +15,13 @@ DMG="$OUT/Star-Traders-Sync.dmg"
 ARCHS=(--arch arm64 --arch x86_64)
 [ "${1:-}" = "--native" ] && ARCHS=()
 
-# Say what is missing before a toolchain says it less clearly (#180).
-# Nobody needs to build to use the app: the release has the dmg.
 need() {
     printf 'error: %s\n' "$1" >&2
     printf 'To just install the app, no build is needed: download Star-Traders-Sync.dmg from\n' >&2
     printf '  https://github.com/moudlajs/star-traders-sync/releases/latest\n' >&2
     exit 1
 }
-# A universal build goes through xcbuild, which ships only with Xcode.
+# A universal build needs xcbuild, which ships only with Xcode.
 case "${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || true)}" in
     *CommandLineTools*)
         [ ${#ARCHS[@]} -eq 0 ] || need "a universal build needs Xcode, and this Mac has only the Command Line Tools.
@@ -39,8 +29,7 @@ Build for this Mac only instead:  $0 --native" ;;
 esac
 command -v go >/dev/null 2>&1 || need "Go is needed to build the Go engine (brew install go)."
 
-# `|| true`: under pipefail a failed grep would abort here, before the
-# friendlier message below could say what went wrong.
+# `|| true`: under pipefail a failed grep would abort before the message below.
 VERSION="$(grep -oE '^readonly STS_VERSION="[^"]+"' "$REPO/bin/star-traders-sync" | cut -d'"' -f2 || true)"
 [ -n "$VERSION" ] || { echo "error: could not read STS_VERSION" >&2; exit 1; }
 
@@ -51,13 +40,9 @@ BIN_DIR="$(swift build -c release --package-path "$HERE" ${ARCHS[@]+"${ARCHS[@]}
 rm -rf "$APP" "$DMG"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# The icon is drawn by code (macos/icon/make-icon.swift) on every build,
-# so there is no binary design file to drift from the source.
 swift "$HERE/icon/make-icon.swift" "$OUT/icon" >/dev/null
 cp "$OUT/icon/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN_DIR/STSSetup" "$APP/Contents/MacOS/STSSetup"
-# The tool is three files (#175): the engine shim every caller runs by its
-# old name, the script, and the Go build. The shim picks one.
 RES="$APP/Contents/Resources"
 sed "s/@STS_VERSION@/$VERSION/" "$HERE/engine-shim.sh" > "$RES/star-traders-sync"
 cp "$REPO/bin/star-traders-sync" "$RES/star-traders-sync.bash"
@@ -96,8 +81,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc: required for arm64 to run at all, and seals the bundled script
-# so a modified copy is refused rather than run.
+# Ad-hoc signing: arm64 won't run unsigned, and the seal refuses a modified bundled script.
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 

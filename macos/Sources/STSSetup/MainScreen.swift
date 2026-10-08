@@ -1,13 +1,9 @@
 import STSSetupCore
 import SwiftUI
 
-// The main window as designed on the canvas (board F): every state fills
-// the same slots, top to bottom: face, headline, one status line, the
-// action slot, and the This Mac | Hub strip. Nothing appears or vanishes;
-// only what is inside a slot changes.
+// The main window: every state fills the same slots (face, headline, status line, action slot, sides strip).
 
-/// What the window is showing right now, from the run, the brief "synced"
-/// moment, or the status.
+/// What the window is showing right now.
 enum Screen {
     case running(ActionRun)
     case justSynced(SyncAction)
@@ -187,8 +183,7 @@ extension SyncStatus.Decision {
 
 // MARK: - the pieces
 
-/// Buttons, when there is something to do: one big main button, and at
-/// most one secondary capsule beside it.
+/// One big main button and at most one secondary capsule.
 struct SlotButtons: View {
     @EnvironmentObject var d: DashboardModel
     let plan: ActionPlan
@@ -279,8 +274,6 @@ struct InGamePill: View {
 
 /// The big symbol at the top, with its motion.
 enum Face: Equatable {
-    /// celebrate: the pop-and-draw entrance, only right after a sync. The
-    /// quiet state shows the tick still, however often the window redraws.
     case tick(celebrate: Bool)
     case fetching, sending, playing, warning
     case arrow(up: Bool)
@@ -300,7 +293,7 @@ struct FaceView: View {
             case .arrow(let up): ArrowFace(up: up)
             }
         }
-        // A new identity per face, so each one's entrance plays again.
+        // A new identity per face, so each one's entrance animation plays again.
         .id(String(describing: face))
         .transition(.opacity)
     }

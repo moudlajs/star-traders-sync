@@ -2,7 +2,6 @@ import XCTest
 @testable import STSSetupCore
 
 final class SyncStatusTests: XCTestCase {
-    /// Captured from `sts status --json` on a real hub.
     static let sample = """
     {
       "version": "1.3.0", "machine": "NebulaPlex01", "is_hub": true,
@@ -45,10 +44,7 @@ final class SyncStatusTests: XCTestCase {
         }
     }
 
-    /// Every decision the script can report must be one the app knows, or
-    /// the whole status fails to decode. Read from the script itself: every
-    /// value printed by decide() and effective_decision(), the two
-    /// functions that produce a decision.
+    /// Reads every value printed by the script's decide() and effective_decision(); an unknown one fails decoding.
     func testDecisionsMatchTheScriptsDecide() throws {
         let script = InstallerTests.repo.appendingPathComponent("bin/star-traders-sync")
         let text = try String(contentsOf: script, encoding: .utf8)
@@ -94,8 +90,7 @@ final class SyncStatusTests: XCTestCase {
     }
 
     func testAnOlderScriptWithoutJSONIsExplained() {
-        // v1.2.0 rejects --json as an unknown argument (exit 2); an even
-        // older or broken one could print text with exit 0.
+        // v1.2.0 rejects --json (exit 2); an older or broken script could print text with exit 0.
         let r = StatusClient.fetch(script: "/x") { _, _ in CommandResult(status: 0, stdout: "star-traders-sync status", stderr: "") }
         guard case .failure(let p) = r else { return XCTFail() }
         XCTAssertEqual(p.code, -1)
@@ -120,8 +115,6 @@ final class SyncStatusTests: XCTestCase {
         for c: Int32 in [25, 40, 52] { XCTAssertFalse(SyncProblem.from(code: c, stderr: "").needsChoice) }
     }
 
-    /// Every code the script can exit with gets a real title, not the
-    /// generic fallback. Reads the codes straight from the script.
     func testEveryScriptExitCodeHasAMessage() throws {
         let script = InstallerTests.repo.appendingPathComponent("bin/star-traders-sync")
         let text = try String(contentsOf: script, encoding: .utf8)

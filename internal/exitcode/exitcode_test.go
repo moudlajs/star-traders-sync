@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// The bash script is the reference until the cutover (#26): every code it
-// defines must exist here with the same number, and nothing extra.
 func TestMatchesTheBashScript(t *testing.T) {
 	src, err := os.ReadFile("../../bin/star-traders-sync")
 	if err != nil {

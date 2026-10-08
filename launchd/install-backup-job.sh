@@ -1,11 +1,5 @@
 #!/bin/bash
-#
-# Installs the daily `sts backup` LaunchAgent on the hub host.
-#
-# The plist is generated from your config rather than shipped, because it
-# has to carry absolute paths and this repository is public. Re-run it after
-# changing HUB_PATH, BACKUP_VOLUME or BACKUP_DEST.
-#
+# Installs the daily `sts backup` LaunchAgent on the hub host; re-run after changing HUB_PATH or BACKUP_*.
 #   ./launchd/install-backup-job.sh            install and test
 #   ./launchd/install-backup-job.sh --uninstall
 
@@ -22,7 +16,6 @@ MINUTE=0
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 note() { printf '  %s\n' "$*"; }
 
-# --------------------------------------------------------------------------
 if [ "${1:-}" = "--uninstall" ]; then
     if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
         launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
@@ -36,8 +29,7 @@ fi
 [ "$(id -u)" -ne 0 ] || fail "do not run this as root - a LaunchAgent belongs to your user"
 [ -f "$CONFIG" ] || fail "no config at $CONFIG - run ./install.sh first"
 
-# Read the handful of values we need. The config is KEY=value and is parsed,
-# never sourced, exactly as the tool itself does it.
+# The config is parsed, never sourced.
 cfg() { grep -E "^$1=" "$CONFIG" | tail -1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
 
 HUB_HOST="$(cfg HUB_HOST)"
@@ -48,8 +40,6 @@ BACKUP_DEST="$(cfg BACKUP_DEST)"
 [ -n "$BACKUP_VOLUME" ] || fail "BACKUP_VOLUME is not set in $CONFIG"
 [ -n "$BACKUP_DEST" ]   || fail "BACKUP_DEST is not set in $CONFIG"
 
-# `sts backup` refuses to run anywhere but the hub, so installing the job
-# elsewhere would only schedule a nightly exit 71.
 THIS_HOST="$(hostname -s | tr '[:upper:]' '[:lower:]')"
 THIS_LOCAL="$(scutil --get LocalHostName 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
 WANT="$(printf '%s' "$HUB_HOST" | tr '[:upper:]' '[:lower:]')"
@@ -60,11 +50,7 @@ fi
 STS="$HOME/bin/$PROG"
 [ -x "$STS" ] || fail "$STS not found or not executable - run ./install.sh first"
 
-# A launchd job that runs a shell script is, to macOS privacy protection,
-# just /bin/bash - so granting it access to a removable volume grants it to
-# every shell script on the machine. Build a small launcher binary instead,
-# so the grant lands on one ad-hoc-signed executable that does nothing but
-# start this script.
+# A launcher binary, so the Full Disk Access grant lands on it rather than on /bin/bash (every shell script).
 SUPPORT="$HOME/Library/Application Support/$PROG"
 LAUNCHER="$SUPPORT/sts-backup-launcher"
 SRC="$(cd "$(dirname "$0")" && pwd)/backup-launcher.c"
@@ -91,8 +77,7 @@ fi
 
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 
-# BACKUP_MOUNT_WAIT matters for a scheduled run: the job can fire moments
-# after wake, before an external disk has remounted.
+# A scheduled run can fire just after wake, before the external disk has remounted.
 if grep -qE '^BACKUP_MOUNT_WAIT=' "$CONFIG"; then
     current="$(cfg BACKUP_MOUNT_WAIT)"
     if [ "${current:-0}" -lt 60 ]; then
@@ -105,11 +90,7 @@ else
     note "added BACKUP_MOUNT_WAIT=180 to $CONFIG"
 fi
 
-# --------------------------------------------------------------------------
-# launchd does not read your shell profile, so everything the script resolves
-# from the environment is pinned here. In particular XDG_* must match what an
-# interactive shell uses, or the job and your terminal would compute
-# different lock paths and the mutual exclusion would silently disappear.
+# launchd skips the shell profile: XDG_* must match the terminal's, or the two compute different lock paths.
 cat > "$PLIST" <<PEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -170,7 +151,6 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 note "job loaded, scheduled daily at $(printf '%02d:%02d' "$HOUR" "$MINUTE")"
 
 printf '\nRunning it once now to prove it works under launchd, not just in your shell:\n\n'
-# Truncate first, so what is shown below is this run and not a previous one.
 : > "$LOG_DIR/backup.launchd.out"
 : > "$LOG_DIR/backup.launchd.err"
 launchctl kickstart -k "gui/$(id -u)/$LABEL"

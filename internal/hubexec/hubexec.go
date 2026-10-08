@@ -1,11 +1,5 @@
-// Package hubexec runs a shell snippet where the hub lives: on this
-// machine when it is the hub host, over ssh otherwise - the script's
-// hub_exec_args. Values always travel as positional parameters, never
-// spliced into the script text.
-//
-// For macOS parity (v2.0) the hub runs the same snippets the bash script
-// sends. A hub without bash (Windows, v2.1) gets another implementation
-// behind the same interface.
+// Package hubexec runs a shell snippet where the hub lives, locally or over ssh (hub_exec_args).
+// Values always travel as positional parameters, never spliced into the script text.
 package hubexec
 
 import (
@@ -19,11 +13,9 @@ import (
 
 // Exec runs script with args as $1..$n.
 type Exec interface {
-	// Run returns stdout and stderr together (the script's 2>&1), and a
-	// non-nil error on a non-zero exit.
+	// Run returns stdout and stderr together (2>&1), and an error on a non-zero exit.
 	Run(script string, args ...string) (string, error)
-	// Output returns stdout only; stderr goes to errw, as the script's
-	// calls without 2>&1 let it through to the terminal.
+	// Output returns stdout only; stderr goes to errw.
 	Output(errw io.Writer, script string, args ...string) (string, error)
 }
 
@@ -46,26 +38,20 @@ func (l Local) Output(errw io.Writer, script string, args ...string) (string, er
 	return string(out), err
 }
 
-// SSH runs on the hub over ssh: "bash -s -- 'arg'..." with the script on
-// stdin, so its text never passes through the remote shell's parser.
+// SSH runs on the hub as "bash -s" with the script on stdin, so the remote shell never parses its text.
 type SSH struct {
-	Opts   []string // the script's SSH_OPTS, word-split
-	Target string   // user@endpoint
+	Opts   []string
+	Target string
 }
 
-// Options is ssh_opts: BatchMode, timeout and StrictHostKeyChecking are
-// fixed on purpose - an unknown or changed host key must fail loudly, never
-// be accepted. SSH_EXTRA_OPTS is split on whitespace, never globbed.
+// Options is ssh_opts: BatchMode and StrictHostKeyChecking are fixed, so an unknown host key fails, never accepted.
 func Options(connectTimeout, port, extra string) []string {
 	o := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=" + connectTimeout,
 		"-o", "StrictHostKeyChecking=yes", "-p", port}
 	return append(o, strings.Fields(extra)...)
 }
 
-// OptionsText is the script's $SSH_OPTS as one string, for the commands it
-// prints: "ssh $(ssh_opts) ..." keeps the space before an empty
-// SSH_EXTRA_OPTS, and the printed text has to be the script's, byte for
-// byte (tests/parity.sh).
+// OptionsText is $SSH_OPTS as one string, byte for byte the script's, for printed commands.
 func OptionsText(connectTimeout, port, extra string) string {
 	return "-o BatchMode=yes -o ConnectTimeout=" + connectTimeout +
 		" -o StrictHostKeyChecking=yes -p " + port + " " + extra

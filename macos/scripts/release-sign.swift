@@ -1,12 +1,5 @@
-// Ed25519 release signing (#108), Sparkle-style and with no paid Apple
-// account. The app embeds the public key and refuses an update whose dmg
-// does not verify against it.
-//
-//   swift release-sign.swift keygen PRIVATE_KEY_FILE   prints the public key
-//   swift release-sign.swift sign FILE                 key from $STS_RELEASE_SIGNING_KEY
-//   swift release-sign.swift verify FILE SIG_FILE PUBLIC_KEY
-//
-// Keys and signatures are base64 of CryptoKit's raw representation.
+// Ed25519 release signing (#108): the app refuses an update whose dmg does not verify against the embedded key.
+// Usage: keygen PRIVATE_KEY_FILE | sign FILE (key in $STS_RELEASE_SIGNING_KEY) | verify FILE SIG_FILE PUBLIC_KEY
 import CryptoKit
 import Foundation
 

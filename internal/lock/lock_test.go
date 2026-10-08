@@ -57,8 +57,7 @@ func (f *fixture) hub(id string) *Hub {
 
 func (f *fixture) lock() string { return filepath.Join(f.root, DirName) }
 
-// writeOwner leaves a lock as a run would have: host, pid, iso, epoch,
-// nonce, stable id.
+// writeOwner writes an owner record: host, pid, iso, epoch, nonce, stable id.
 func (f *fixture) writeOwner(lines ...string) {
 	f.t.Helper()
 	if err := os.MkdirAll(f.lock(), 0o755); err != nil {
@@ -273,8 +272,7 @@ func TestLocalLock(t *testing.T) {
 	}
 }
 
-// The lock sits beside HUB_PATH however it is written: dirname(1), not
-// filepath.Dir, which keeps a trailing slash's last element.
+// dirname(1), not filepath.Dir, which keeps a trailing slash's last element.
 func TestThePathIsBesideTheHub(t *testing.T) {
 	for in, want := range map[string]string{
 		"/a/hub": "/a/.sts-lock", "/a/hub/": "/a/.sts-lock", "/a/hub//": "/a/.sts-lock", "/hub": "/.sts-lock",
@@ -301,8 +299,7 @@ func TestAnEmptyNonceNeverTakesOrReleases(t *testing.T) {
 	}
 }
 
-// Runs racing over one stale leftover: exactly one gets in. Repeated, since
-// one round of a race proves little either way.
+// Repeated, since one round of a race proves little.
 func TestRacingOverAStaleLocalLockLetsOneIn(t *testing.T) {
 	for round := 0; round < 20; round++ {
 		dir := t.TempDir()

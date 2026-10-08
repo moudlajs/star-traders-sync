@@ -2,7 +2,6 @@ import XCTest
 @testable import STSSetupCore
 
 final class SafetyCopyTests: XCTestCase {
-    /// The shape `sts restore --json` prints (see tests/regression.sh).
     static let json = #"{"snapshots": [{"name": "2026-10-06T19:21:52Z-2", "files": 5, "campaign_saves": 1, "newest": 1791313300}, {"name": "2026-10-06T19:21:52Z", "files": 6, "campaign_saves": 2, "newest": 0}]}"#
 
     func testParsesTheScriptsList() throws {

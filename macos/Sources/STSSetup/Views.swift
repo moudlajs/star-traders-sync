@@ -1,9 +1,7 @@
 import STSSetupCore
 import SwiftUI
 
-/// Decides which of the two faces the app shows: the setup wizard on a
-/// Mac that has no config (or when asked to redo setup), the main window
-/// otherwise.
+/// Shows the setup wizard on a Mac without a config (or when asked), the main window otherwise.
 @MainActor
 final class AppModel: ObservableObject {
     @Published var showingSetup: Bool
@@ -18,8 +16,7 @@ final class AppModel: ObservableObject {
         let layout = InstallLayout()
         let configured = FileManager.default.fileExists(atPath: layout.configFile.path)
         if configured {
-            // Includes a Mac set up from the command line, which has a
-            // config but no app copy of the script yet.
+            // Includes a Mac set up from the command line, which has a config but no app copy of the script yet.
             DashboardModel.refreshAppScript(layout: layout, when: "launch")
         }
         showingSetup = !configured || !FileManager.default.isExecutableFile(atPath: layout.installedScript.path)
@@ -36,9 +33,7 @@ final class AppModel: ObservableObject {
         showingSetup = false
     }
 
-    /// Disconnect this Mac (#75): the ~/bin links and the config go (the
-    /// config as a dated backup), then setup shows, as on a new Mac.
-    /// Saves, safety copies and the Hub are never touched.
+    /// Disconnect this Mac (#75): links and config go, then setup shows; saves, safety copies and the Hub are never touched.
     func disconnect() {
         guard !dashboard.busy else { return }
         dashboard.stop()
@@ -62,18 +57,12 @@ final class AppModel: ObservableObject {
     }
 }
 
-/// Guards quitting while an action runs. The script is a child of this
-/// app: quitting closes its output pipe, and it dies at its next line of
-/// output. During Play that line is "pushing after play", so the saves
-/// would silently never reach the hub.
+/// Guards quitting while an action runs: the child script dies with our pipe, so a Play's saves would never reach the hub.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static weak var dashboard: DashboardModel?
     @MainActor static weak var app: AppModel?
 
-    /// With the menu bar icon showing, closing the window keeps the app,
-    /// and automatic sync, running (#91). Without it - turned off, or
-    /// hidden because setup is showing - closing the window quits, through
-    /// the guard below. Never a process left with nothing to click.
+    // With the menu bar icon showing, closing the window keeps the app (and auto sync) running (#91); otherwise it quits.
     @MainActor
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         !(MenuBarPreference.shown && Self.app?.showingSetup == false)
@@ -111,8 +100,7 @@ struct StarTradersSyncApp: App {
     }
 
     var body: some Scene {
-        // One window, not a group: the menu bar's Open brings this one back
-        // instead of making another.
+        // One window, not a group: the menu bar's Open brings this one back instead of making another.
         Window("Star Traders Sync", id: "main") {
             RootView()
                 .environmentObject(app)
@@ -142,8 +130,6 @@ struct RootView: View {
             ContentView().environmentObject(app.wizard)
                 .frame(minWidth: 760, minHeight: 540)
         } else {
-            // Compact: one status, one button. Grows for details and the
-            // activity card, and can be widened, never needs to be tall.
             // Fixed width, height taken from the content (see DashboardView).
             DashboardView()
         }
@@ -206,7 +192,6 @@ struct Sidebar: View {
             }
             Spacer()
             if m.existingConfig != nil && m.step != .done {
-                // Setup reopened from the main window: leave it unchanged.
                 Button("Cancel") { app.finishSetup() }
                     .disabled(m.installBusy)
                     .padding(.bottom, 6)
@@ -523,8 +508,7 @@ struct ConnectPage: View {
             Text("The password of **\(m.hubUser)** on the Hub Mac. It is used once to install this Mac's key, and is not saved anywhere.")
                 .fixedSize(horizontal: false, vertical: true)
             if m.hubUser == NSUserName() {
-                // The default is this Mac's own name: right only when both
-                // Macs use the same one (#178).
+                // The default is this Mac's own name: right only when both Macs use the same one (#178).
                 Text("**\(m.hubUser)** is this Mac's account name. If the Hub Mac's account is named differently, go Back and change it first: no password will work for an account that does not exist there.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

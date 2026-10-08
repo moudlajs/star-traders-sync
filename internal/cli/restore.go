@@ -18,9 +18,6 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/transfer"
 )
 
-// prepareLocal is main() for the commands that only touch this machine
-// (restore): the local lock, orphan recovery and the save folder - no
-// tailnet, no hub.
 func (r *run) prepareLocal(now time.Time) *fail.Failure {
 	l, f := lock.AcquireLocal(r.p.stateDir, false, r.pid, now, r.log)
 	if f != nil {
@@ -49,8 +46,7 @@ type safetyCopy struct {
 	newest       int64
 }
 
-// candidates is restore_candidates: every listed snapshot (dot names - a
-// partial one - left out), newest first.
+// candidates is restore_candidates: listed snapshots, partial (dot) ones left out, newest first.
 func (r *run) candidates() []safetyCopy {
 	entries, _ := os.ReadDir(r.snapRoot())
 	var names []string
@@ -81,7 +77,7 @@ func (r *run) candidates() []safetyCopy {
 	return out
 }
 
-// restoreList is cmd_restore_list, the JSON in json.dumps' own spacing.
+// restoreList is cmd_restore_list, in json.dumps' own spacing.
 func (r *run) restoreList() {
 	cs := r.candidates()
 	if r.opt.JSON {
@@ -105,10 +101,7 @@ func (r *run) restoreList() {
 	r.say("restore one with: %s restore NAME", prog)
 }
 
-// restore is cmd_restore: put one of this machine's safety copies back,
-// through the same staging and swap as a pull. What is here now is
-// snapshotted first - without pruning, so the copy restored from survives -
-// and the live machine-local files are carried across, not the copy's.
+// restore is cmd_restore; the current saves are snapshotted first, unpruned, so the source copy survives.
 func (r *run) restore() *fail.Failure {
 	if r.opt.RestoreFrom == "" {
 		r.restoreList()
@@ -164,8 +157,7 @@ func (r *run) restore() *fail.Failure {
 		}
 		aside = a
 	}
-	// The copy's machine-local files are older than the live ones: drop
-	// them where this machine still has its own, so those are carried.
+	// The copy's machine-local files are stale: drop those this machine still has, so the live ones are carried.
 	for _, pat := range r.cfg.Exclude() {
 		for _, live := range transfer.GlobNames(r.local, pat) {
 			_ = os.RemoveAll(filepath.Join(tmp, filepath.Base(live)))

@@ -1,14 +1,7 @@
 #!/bin/bash
-#
-# Installs star-traders-sync into ~/bin and writes a working config.
-# Safe to re-run: symlinks are refreshed, an existing config is never touched.
-#
-#   ./install.sh            the Go build behind the engine launcher, as the
-#                           app installs it (#183). Re-run after git pull.
-#   ./install.sh --script   a plain link to the bash script, as before
-#
-# The Go build comes from `go build` when Go is installed, otherwise from
-# the release matching this checkout, refused unless its checksum matches.
+# Installs star-traders-sync into ~/bin and writes a starting config; safe to re-run, never touches an existing config.
+#   ./install.sh            the Go build behind the engine launcher (re-run after git pull)
+#   ./install.sh --script   a plain link to the bash script
 
 set -euo pipefail
 
@@ -28,7 +21,6 @@ case "${1:-}" in
     --script) MODE=script ;;
     *)        fail "unknown argument '$1' - use --script, or nothing" ;;
 esac
-# Overridable for the regression suite, which must not write into the repo.
 INSTALL_DIR="${STS_INSTALL_DIR:-$REPO_DIR/build/bin}"
 RELEASE_URL="${STS_RELEASE_URL:-https://github.com/moudlajs/star-traders-sync/releases/download}"
 GO_ASSET="star-traders-sync-go-darwin-universal"
@@ -47,9 +39,7 @@ for name in "$PROG" sts; do
     fi
 done
 
-# The Go build and the launcher, staged beside their final place and moved
-# in only once the binary has proved it runs and is this version. Any
-# failure stops here, before ~/bin is touched.
+# Staged, and moved in only once the binary runs and is this version; any failure stops before ~/bin is touched.
 install_go() {
     local version go
     version="$(grep -oE '^readonly STS_VERSION="[^"]+"' "$SRC" | cut -d'"' -f2 || true)"
@@ -80,8 +70,7 @@ install_go() {
 
     sed "s/@STS_VERSION@/$version/" "$REPO_DIR/macos/engine-shim.sh" > "$STAGE/$PROG"
     chmod 755 "$STAGE/$PROG"
-    # The script itself is linked, not copied: git pull keeps the fallback
-    # current. Engines first, the launcher last.
+    # Engines first, the launcher last.
     ln -sfn "$SRC" "$INSTALL_DIR/$PROG.bash"
     mv -f "$go" "$INSTALL_DIR/$PROG-go"
     mv -f "$STAGE/$PROG" "$INSTALL_DIR/$PROG"
@@ -101,10 +90,6 @@ CONFIG_CREATED=0
 if [ -e "$CONFIG_FILE" ]; then
     printf '  config already present, left untouched\n'
 else
-    # A short starting config, not the 100-line annotated reference.
-    # Only the four HUB_/BACKUP_ values need changing; LOCAL_SAVE_PATH uses
-    # ~/ so it expands per-user, and the game values are already correct.
-    # config.example documents every tunable and its default.
     cat > "$CONFIG_FILE" <<CFGEOF
 # star-traders-sync config.
 # Every option, explained, with defaults:

@@ -1,15 +1,12 @@
 #!/bin/bash
 #
-# Runs bin/star-traders-sync and the Go build (cmd/sts) side by side on the
-# same arguments and configs, and diffs exit code, stdout and stderr. While
-# both exist the bash script is the reference: the Go build must refuse the
-# same things with the same codes and the same words (#20, #25).
+# Runs bin/star-traders-sync and the Go build (cmd/sts) on the same arguments and
+# configs, and diffs exit code, stdout and stderr (#20, #25).
 #
 #   tests/parity.sh            build the Go binary, then compare
 #   STS_GO=/path/sts tests/parity.sh
 #
-# Never touches a real config: HOME, XDG_CONFIG_HOME and XDG_STATE_HOME
-# all point into a throwaway sandbox.
+# Never touches a real config: HOME and the XDG dirs point into a throwaway sandbox.
 
 set -uo pipefail
 
@@ -47,8 +44,7 @@ compare() {
     fi
 }
 
-# accepted NAME - a config both accept: neither gives a config code
-# (10-12), and both stop at the same next check with the same words.
+# accepted NAME - a config both accept: no config code (10-12), same next check and words.
 accepted() {
     local name="$1"
     compare "$name" status
@@ -129,13 +125,11 @@ config "${GOOD%\\n}";                           accepted "no newline at the end"
 with 'HUB_PATH=~/hub\n';                        accepted "HUB_PATH with ~, expanded before the absolute check"
 
 # --------------------------------------------------------------------------
-# status: both read the same sandbox through a tailscale stub, and must
-# print the same text and the same JSON.
+# status: both read the same sandbox through a tailscale stub.
 echo "status"
 ME="$(hostname -s | tr '[:upper:]' '[:lower:]')"
 mkdir -p "$SB/stub"
-# TS_MODE picks what the stub says: hub (this Mac is the hub), down,
-# notjson, missing (hub not in the tailnet), offline, pingfail.
+# The stub's mode: hub (this Mac), down, notjson, missing (not in the tailnet), offline, pingfail, peer.
 cat > "$SB/stub/tailscale" <<STUB
 #!/bin/bash
 mode="\$(cat "$SB/stub/mode" 2>/dev/null || echo hub)"
@@ -204,9 +198,7 @@ tsmode pingfail;                                         compare "tailscale ping
 tsmode hub
 
 # --------------------------------------------------------------------------
-# doctor: the app parses this text (DoctorReport.swift), so it must match
-# line for line. --fix changes things, so each binary gets a fresh copy of
-# the state: fixboth SETUP ARGS... runs SETUP before each.
+# doctor: the app parses this text (DoctorReport.swift). fixboth NAME SETUP ARGS... runs SETUP before each binary.
 echo "doctor"
 # --fix appends to ~/.zshrc: each run starts without one.
 rcreset() { chmod -R u+w "$HOME/.zshrc.sts-backup" 2>/dev/null; rm -rf "$HOME/.zshrc" "$HOME/.zshrc.sts-backup"; }
@@ -256,9 +248,7 @@ busy() { fresh; rm -rf "$S/hub"; mkdir "$S/.sts-lock"; }
 fixboth "no hub folder mid-sync, --fix" busy doctor --fix
 fresh; rm -rf "$S/.sts-lock"
 
-# The ssh path, from a machine that is not the hub. ssh-keygen -F and ssh
-# are stubbed: SSH_MODE untrusted, denied, or ok (ssh then runs the hub
-# snippet here, on the sandbox's hub folder).
+# The ssh path from a non-hub: ssh-keygen and ssh stubbed, sshmode untrusted, denied or ok.
 cat > "$SB/stub/ssh-keygen" <<STUB
 #!/bin/bash
 [ "\$(cat "$SB/stub/sshmode")" = untrusted ] && exit 1

@@ -10,8 +10,7 @@ import (
 	"testing"
 )
 
-// The script's own MANIFEST_SCRIPT, run by bash on the same tree, is the
-// reference: the Go manifest must be byte-identical to it.
+// bashManifest runs the script's own MANIFEST_SCRIPT on the same tree, the byte-for-byte reference.
 func bashManifest(t *testing.T, dir string, exclude []string) string {
 	t.Helper()
 	src, err := os.ReadFile("../../bin/star-traders-sync")
@@ -51,8 +50,7 @@ func TestByteIdenticalToTheScript(t *testing.T) {
 		"core.db": "core", "game_1.db": "g1", "map_1.db": "m1", "template_1.json": "{}",
 		"empty.db": "", "a b.db": "space", "a/b.db": "slash sorts after space",
 		".hidden": "dot", "sub/deep/x.db": "deep", "ünï.db": "utf-8",
-		// excluded: data.db anywhere by name; *.bak by name and any
-		// directory matching it, at any depth (find's -path with fnmatch).
+		// excluded: data.db by name anywhere; *.bak by name and as a directory at any depth.
 		"data.db": "static", "sub/data.db": "static too",
 		"old.bak": "b", "keep/x.bak/inner.db": "under a *.bak dir, deep",
 		"x.bak/top.db":                  "under a top-level *.bak dir",
@@ -101,8 +99,7 @@ func TestUnhashableFilesAreReportedInPlace(t *testing.T) {
 	}
 }
 
-// fnmatch's * matches a newline; without (?s) Go's . would not, and a file
-// named "x\n.bak" would slip past an exclude of *.bak.
+// Without (?s), a file named "x\n.bak" would slip past an exclude of *.bak.
 func TestAStarMatchesANewlineToo(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "x\n.bak", "excluded")
@@ -156,8 +153,7 @@ func TestNothingUnreadableIsSkippedSilently(t *testing.T) {
 	}
 }
 
-// A symlinked save dir or hub (~/star-traders-sync-hub -> /Volumes/...)
-// must list its files, as the script's cd does - not read as empty.
+// A symlinked save dir or hub must list its files, as the script's cd does.
 func TestASymlinkedDirIsFollowed(t *testing.T) {
 	real := t.TempDir()
 	write(t, real, "game_1.db", "g")
@@ -178,8 +174,6 @@ func TestASymlinkedDirIsFollowed(t *testing.T) {
 	}
 }
 
-// Only "does not exist" is empty. Anything else that stops the read is an
-// error, never "no files".
 func TestOnlyAMissingDirIsEmpty(t *testing.T) {
 	base := t.TempDir()
 	file := filepath.Join(base, "a-file")
@@ -212,8 +206,7 @@ func fp(t *testing.T, m Manifest) string {
 	return f
 }
 
-// The same path unreadable on both sides must never compare equal: there
-// is no fingerprint at all, so no decision (INSYNC) can be made on it.
+// The same unreadable path on both sides must never compare equal (INSYNC).
 func TestAnUnhashableManifestHasNoFingerprint(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads everything")

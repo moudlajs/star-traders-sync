@@ -1,7 +1,4 @@
-// Package saves is this machine's save directory before anything reads it:
-// it exists and is usable (check_local_save_path), and nothing an earlier,
-// interrupted run left behind is mistaken for an empty save folder
-// (recover_orphans).
+// Package saves checks this machine's save directory before anything reads it and recovers interrupted runs.
 package saves
 
 import (
@@ -17,9 +14,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/logx"
 )
 
-// CheckPath returns the directory to operate on: LOCAL_SAVE_PATH, or the
-// target of a symlink there (said out loud), refusing (13) unless it
-// exists, is a directory and can be read.
+// CheckPath returns LOCAL_SAVE_PATH or its symlink target, refusing (13) unless it is a readable directory.
 func CheckPath(p string, log *logx.Logger, stderr io.Writer) (string, *fail.Failure) {
 	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		real, err := filepath.EvalSymlinks(p)
@@ -45,9 +40,7 @@ func CheckPath(p string, log *logx.Logger, stderr io.Writer) (string, *fail.Fail
 	return p, nil
 }
 
-// globEscape makes a path literal in a glob pattern, as the script's quoted
-// "$path".sts-old-* is: config validation keeps *, ? and [ out of paths
-// today, but this must not depend on it.
+// globEscape makes a path literal in a glob, rather than rely on config validation keeping *?[ out.
 func globEscape(p string) string {
 	var b strings.Builder
 	for _, r := range p {
@@ -59,12 +52,7 @@ func globEscape(p string) string {
 	return b.String()
 }
 
-// RecoverOrphans looks for what an interrupted run left beside the save
-// directory. A missing save directory with a parked .sts-old copy is an
-// interrupted swap: the saves are intact there, and nothing runs until
-// they are moved back, so an empty directory is never made on top of
-// them. Staging directories are swept once they are clearly stale
-// (sweep); status only reports them (sweep false).
+// RecoverOrphans: a parked .sts-old copy blocks every run until moved back; stale staging is swept if sweep.
 func RecoverOrphans(savePath string, sweep bool, now time.Time, log *logx.Logger) *fail.Failure {
 	if st, err := os.Stat(savePath); err != nil || !st.IsDir() {
 		if parked, _ := filepath.Glob(globEscape(savePath) + ".sts-old-*"); len(parked) > 0 {
@@ -82,8 +70,7 @@ func RecoverOrphans(savePath string, sweep bool, now time.Time, log *logx.Logger
 		}
 	}
 
-	// A staging directory younger than this may belong to a run that is
-	// still going; the cost of waiting is nil, of deleting live data total.
+	// A younger staging directory may be a live run's: waiting costs nothing, deleting could lose saves.
 	incoming, _ := filepath.Glob(filepath.Join(globEscape(filepath.Dir(savePath)), ".sts-incoming-*"))
 	for _, d := range incoming {
 		st, err := os.Stat(d)

@@ -1,7 +1,4 @@
-// Package cli is the command line: arguments, the startup checks and the
-// dispatch, in the bash script's order and with its messages, so that the
-// two can be run side by side and diffed (tests/parity.sh) until the Go
-// build replaces the script (#26).
+// Package cli is the command line: arguments, startup checks and dispatch, in the bash script's order and wording.
 package cli
 
 import (
@@ -22,14 +19,12 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
-// Version must equal STS_VERSION in bin/star-traders-sync while both
-// exist; a test enforces it, so a release bump that misses one fails CI.
+// Version must equal STS_VERSION in bin/star-traders-sync; a test enforces it.
 const Version = "1.8.0"
 
 const prog = "star-traders-sync"
 
-// Env is everything Main reads from the outside world, so tests can run
-// it in a sandbox.
+// Env is everything Main reads from the outside world, so tests can sandbox it.
 type Env struct {
 	Stdout, Stderr io.Writer
 	Getenv         func(string) string
@@ -83,7 +78,6 @@ func usage(p paths) string {
 	).Replace(usageTemplate)
 }
 
-// exit is how parseArgs stops: a code and what to print first.
 type exit struct {
 	code   exitcode.Code
 	stdout string
@@ -131,7 +125,6 @@ func parseArgs(args []string, p paths) (Options, *exit) {
 		case a == "--version":
 			return o, &exit{code: exitcode.OK, stdout: fmt.Sprintf("%s %s\n", prog, Version)}
 		case a != "" && !strings.HasPrefix(a, "-") && o.Command == "restore" && o.RestoreFrom == "":
-			// The one positional argument: the safety copy to restore.
 			o.RestoreFrom = a
 		default:
 			return o, usageErr(fmt.Sprintf(`error: unknown argument "%s"`, a), fmt.Sprintf("run '%s --help'", prog))
@@ -180,8 +173,6 @@ func Main(args []string, env Env) int {
 		return int(stop.code)
 	}
 
-	// Every command past --help and --version needs this OS's platform
-	// implementation; until the port exists, say so rather than half-work.
 	if !platform.Supported {
 		fmt.Fprintf(env.Stderr, "error: %s does not run on %s yet - Linux is #1, Windows is #3\n", prog, runtime.GOOS)
 		return 1
@@ -198,13 +189,11 @@ func Main(args []string, env Env) int {
 		return int(code)
 	}
 
-	// doctor runs before every other check, because the things those
-	// checks abort on are exactly what it exists to report.
+	// doctor runs before every other check: it exists to report what those checks abort on.
 	if o.Command == "doctor" {
 		return runDoctor(env, o, p, log)
 	}
 
-	// Cheapest, most fundamental refusals first - these need no config.
 	if env.Geteuid() == 0 {
 		return die(exitcode.Root, "preflight",
 			"refusing to run as root - saves belong to your user and root would leave files your user cannot rewrite")
@@ -247,18 +236,14 @@ func Main(args []string, env Env) int {
 	defer stopSignals()
 	defer r.ex.finish() // runs first: an interrupt mid-release finishes before Main returns
 	if o.JSON {
-		// stdout carries the JSON (status's object, restore's list) and
-		// nothing else; every other
-		// message goes to stderr, so a caller can parse stdout on exit 0.
+		// stdout carries only the JSON; every other message goes to stderr, so callers can parse stdout.
 		r.out, r.json = env.Stderr, env.Stdout
 	}
-	// A closure: r.lockLoc is set later, in prepare, and a plain
-	// "defer r.lockLoc.Release()" would bind the nil it holds now.
-	defer func() { r.lockLoc.Release() }() // status takes no hub lock
+	// A closure: r.lockLoc is set later in prepare, and a plain defer would bind the nil it holds now.
+	defer func() { r.lockLoc.Release() }()
 	now := time.Now()
 	if o.Command == "backup" {
-		// backup is local to the hub and does not need the tailnet; its own
-		// lock, so a nightly run is not cancelled by an interactive one.
+		// backup takes its own lock, so a nightly run is not cancelled by an interactive one.
 		l, lf := lock.AcquireLocal(p.stateDir, true, r.pid, now, log)
 		if f = lf; f == nil {
 			r.lockLoc = l
@@ -271,7 +256,6 @@ func Main(args []string, env Env) int {
 		return 0
 	}
 	if o.Command == "restore" {
-		// restore touches only this machine's saves: no tailnet, no hub.
 		if f = r.prepareLocal(now); f == nil {
 			f = r.restore()
 		}
@@ -311,8 +295,6 @@ func Main(args []string, env Env) int {
 	return 0
 }
 
-// report prints a refusal the way the script does: die's two lines, or the
-// refusal's own lines verbatim.
 func report(env Env, log *logx.Logger, p paths, f *fail.Failure) int {
 	if f.Lines != nil {
 		for _, l := range f.Lines {

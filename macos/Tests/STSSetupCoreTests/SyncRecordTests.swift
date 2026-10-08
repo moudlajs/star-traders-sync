@@ -68,8 +68,6 @@ final class SyncRecordTests: XCTestCase {
                        "/x/state/star-traders-sync")
     }
 
-    /// The lock paths must be the script's, or the two would not exclude
-    /// each other at all.
     func testUsesTheScriptsLockPaths() throws {
         let script = try String(contentsOf: InstallerTests.repo.appendingPathComponent("bin/star-traders-sync"), encoding: .utf8)
         XCTAssertTrue(script.contains(#"LOCAL_LOCK_FILE="$STATE_DIR/local.lock""#))

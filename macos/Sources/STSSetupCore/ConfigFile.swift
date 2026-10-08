@@ -1,7 +1,6 @@
 import Foundation
 
-/// The values the setup app decides. Everything else in the config keeps
-/// the script's defaults, or whatever the user already had.
+/// The config values the setup app decides; every other line keeps the script's defaults or the user's own.
 public struct SetupValues: Equatable {
     public var hubHost: String
     public var hubUser: String
@@ -24,24 +23,17 @@ public struct SetupValues: Equatable {
 public enum ConfigFile {
     public static let defaultSavePath = "~/Library/StarTradersFrontiers"
 
-    /// The Hub folder a new setup suggests. A path, never display text: it
-    /// must match every existing install, docs and the script's examples
-    /// exactly, lower case included.
+    /// The Hub folder a new setup suggests: a path that must match existing installs exactly, lower case included.
     public static func defaultHubPath(user: String) -> String {
         "/Users/\(user)/star-traders-sync-hub"
     }
 
-    /// The script requires BACKUP_VOLUME and BACKUP_DEST on every machine,
-    /// even one that never runs `sts backup` (#53). Until that is fixed a
-    /// machine without a disk gets a value that says so plainly and that
-    /// doctor's placeholder check does not flag.
+    /// Sentinel for a Mac without a backup disk: the script requires BACKUP_VOLUME everywhere (#53).
     public static let noBackupVolume = "/Volumes/sts-no-backup-disk"
 
-    /// Keys the app owns. When updating an existing config these are
-    /// rewritten; every other line is kept exactly as it was.
+    // Keys the app owns: rewritten on update, while every other line is kept exactly as it was.
     static let managedKeys = ["HUB_HOST", "HUB_USER", "HUB_PATH", "BACKUP_VOLUME", "BACKUP_DEST"]
 
-    /// What a fresh config gets beyond the managed keys.
     static let requiredDefaults: [(String, String)] = [
         ("LOCAL_SAVE_PATH", defaultSavePath),
         ("SYNC_EXCLUDE", "data.db steam_autocloud.vdf"),
@@ -49,9 +41,7 @@ public enum ConfigFile {
         ("GAME_PROCESS_NAME", "StarTradersFrontiers"),
     ]
 
-    /// The subset validate_config refuses to run without. Only these are
-    /// added to an existing config: SYNC_EXCLUDE is optional, and adding it
-    /// behind the user's back would change which files a sync moves.
+    // Only these are added to an existing config: adding SYNC_EXCLUDE would change which files a sync moves.
     static var scriptRequired: [(String, String)] {
         requiredDefaults.filter { $0.0 != "SYNC_EXCLUDE" }
     }
@@ -63,8 +53,7 @@ public enum ConfigFile {
                 ("BACKUP_VOLUME", volume), ("BACKUP_DEST", dest)]
     }
 
-    /// Parses KEY=value the way the script does: comments and blank lines
-    /// skipped, surrounding whitespace trimmed, last occurrence wins.
+    /// Parses KEY=value the way the script does: comments skipped, values trimmed, last occurrence wins.
     public static func parse(_ text: String) -> [String: String] {
         var out: [String: String] = [:]
         for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -107,15 +96,12 @@ public enum ConfigFile {
         return s
     }
 
-    /// Rewrites the managed keys of an existing config in place, keeping
-    /// comments, order and every tunable the user set. Missing managed and
-    /// required keys are appended.
+    /// Rewrites the managed keys in place, keeping comments, order and every tunable the user set.
     public static func update(_ existing: String, with v: SetupValues) -> String {
         let managed = managedValues(v)
         let wanted = Dictionary(uniqueKeysWithValues: managed)
         var seen = Set<String>()
         var lines = existing.components(separatedBy: "\n")
-        // A file ending in a newline splits into a trailing "".
         if lines.last == "" { lines.removeLast() }
 
         lines = lines.map { line in
@@ -148,17 +134,13 @@ public enum ConfigFile {
         guard let host = c["HUB_HOST"], let user = c["HUB_USER"], let path = c["HUB_PATH"] else {
             return nil
         }
-        // Only the app's own sentinel means "no disk". Anything else, even
-        // install.sh's /Volumes/Backup, may be a real disk that the nightly
-        // backup depends on, so it is kept and shown, never dropped.
+        // Only the app's own sentinel means "no disk"; anything else may be a real backup disk, so it is kept.
         var volume = c["BACKUP_VOLUME"]
         if volume == noBackupVolume || volume?.isEmpty == true { volume = nil }
         return SetupValues(hubHost: host, hubUser: user, hubPath: path, backupVolume: volume)
     }
 
-    /// The checks the script's validate_config would fail on, phrased for
-    /// the app. Catching them here means the user fixes a text field
-    /// instead of reading a doctor report.
+    /// The checks the script's validate_config would fail on, phrased for the app.
     public static func problems(_ v: SetupValues, localSavePath: String, home: String) -> [String] {
         var out: [String] = []
         let pathChars = CharacterSet(charactersIn:

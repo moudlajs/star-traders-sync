@@ -1,6 +1,5 @@
 // Code generated from bin/star-traders-sync; DO NOT EDIT.
-// TestSnippetsMatchTheScript fails when they drift: a remote hub runs the
-// script's own text, so the two builds read it the same way.
+// TestSnippetsMatchTheScript fails when they drift from the script.
 
 package hub
 

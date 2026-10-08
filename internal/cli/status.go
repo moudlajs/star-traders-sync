@@ -23,8 +23,6 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/tailscale"
 )
 
-// run is one invocation past validation: what main() sets up in the
-// script before a command runs.
 type run struct {
 	env     Env
 	opt     Options
@@ -32,9 +30,9 @@ type run struct {
 	p       paths
 	log     *logx.Logger
 	out     io.Writer // say(): stdout, or stderr under --json
-	json    io.Writer // status --json's object, and nothing else
+	json    io.Writer
 	pid     int
-	host    string // this_host_id: hostname -s
+	host    string
 	local   string // LOCAL_SAVE_PATH, after a symlink is resolved
 	hub     *hub.Hub
 	lockLoc *lock.Local
@@ -46,8 +44,6 @@ func (r *run) say(format string, a ...any) { fmt.Fprintf(r.out, format+"\n", a..
 
 func hostnameShort() string { return platform.ShortHostname() }
 
-// prepare is main() from the local lock to the hub path check: everything
-// every hub-facing command needs first.
 func (r *run) prepare(now time.Time) *fail.Failure {
 	l, f := lock.AcquireLocal(r.p.stateDir, r.opt.Command == "backup", r.pid, now, r.log)
 	if f != nil {
@@ -55,8 +51,7 @@ func (r *run) prepare(now time.Time) *fail.Failure {
 	}
 	r.lockLoc = l
 	r.ex.add(l.Release)
-	// Only after the local lock: the sweep deletes staging directories,
-	// and before the lock it could delete a running sync's own.
+	// Only after the local lock: before it, the sweep could delete a running sync's staging.
 	if f := saves.RecoverOrphans(r.cfg.Get("LOCAL_SAVE_PATH"), r.opt.Command != "status", now, r.log); f != nil {
 		return f
 	}
@@ -94,7 +89,6 @@ func (r *run) prepare(now time.Time) *fail.Failure {
 			}
 		}
 	}
-	// --offline-ok only means anything for play.
 	if r.hub.EndpointKind == "offline" && r.opt.Command != "play" {
 		return fail.New(exitcode.TSPeerOffline, "hub",
 			"--offline-ok only applies to '%s play'; '%s' needs the hub, and %s is offline", prog, r.opt.Command, r.hub.Host)
@@ -108,8 +102,7 @@ func (r *run) prepare(now time.Time) *fail.Failure {
 	return nil
 }
 
-// sides reads both manifests, refusing (13) when either has something
-// that cannot be fingerprinted (assert_manifest_hashable).
+// sides reads both manifests, refusing (13) on anything unhashable (assert_manifest_hashable).
 func (r *run) sides() (lm, hm manifest.Manifest, lfp, hfp string, f *fail.Failure) {
 	lm, err := manifest.Build(r.local, r.cfg.Exclude())
 	if err != nil {
@@ -163,7 +156,6 @@ func isGameSave(p string) bool {
 	return strings.Trim(mid, "0123456789") == ""
 }
 
-// humanTime is the script's human_time: local time, or "never".
 func humanTime(epoch int64) string {
 	if epoch <= 0 {
 		return "never"
@@ -197,7 +189,6 @@ func (r *run) status() *fail.Failure {
 	lep, hep := hub.NewestLocal(r.local), r.hub.Newest()
 	st := state.Read(r.p.stateFile, r.cfg.Get("HUB_HOST"), r.cfg.Get("HUB_PATH"))
 
-	// One decision, two renderings: the text and the JSON never disagree.
 	verdict := "differ"
 	switch {
 	case lfp == hfp:
@@ -287,8 +278,7 @@ func (r *run) status() *fail.Failure {
 	return nil
 }
 
-// pgrep is the script's 'pgrep -x NAME | tr "\n" " "': each pid followed
-// by a space.
+// pgrep is 'pgrep -x NAME | tr "\n" " "': each pid followed by a space.
 func pgrep(name string) string {
 	var s string
 	for _, p := range platform.ProcessIDs(name) {
@@ -330,8 +320,7 @@ type jsonStatus struct {
 	GameRunning bool      `json:"game_running"`
 }
 
-// statusJSON writes the object status_json writes, in its key order and
-// json.dumps(indent=2) shape - the app parses it.
+// statusJSON writes status_json's object in its key order and indent=2 shape; the app parses it.
 func (r *run) statusJSON(lm, hm manifest.Manifest, lfp, hfp string, lep, hep int64, st decide.State,
 	verdict, lockinfo, gp string, decision decide.Decision) {
 	var j jsonStatus
@@ -339,8 +328,7 @@ func (r *run) statusJSON(lm, hm manifest.Manifest, lfp, hfp string, lep, hep int
 	j.Hub.Host, j.Hub.Path, j.Hub.EndpointKind = r.cfg.Get("HUB_HOST"), r.cfg.Get("HUB_PATH"), r.hub.EndpointKind
 	ln, _ := campaignSaves(lm)
 	hn, _ := campaignSaves(hm)
-	// check_local_save_path rewrote the path to a symlink's target, so the
-	// script reports the resolved one.
+	// check_local_save_path resolved a symlink, so the script reports the resolved path.
 	j.Sides.Local = jsonSide{r.local, lm.Count(), ln, lep, lfp}
 	j.Sides.Hub = jsonSide{r.cfg.Get("HUB_PATH"), hm.Count(), hn, hep, hfp}
 	j.Verdict, j.Decision = verdict, string(decision)

@@ -17,8 +17,6 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/transfer"
 )
 
-// sync is the state pull and push share: the hub lock, the transfer, and
-// what an interrupt has to undo.
 type syncer struct {
 	*run
 	hubLock *lock.Hub
@@ -40,9 +38,7 @@ func (r *run) newSyncer(now time.Time) *syncer {
 	return s
 }
 
-// release is on_exit's part for a sync: the hub lock (only if still ours),
-// staging paths - unless a swap is in flight, when they may hold the only
-// complete copy - and the local lock.
+// release is on_exit's part; staging is kept while a swap is in flight, as it may hold the only complete copy.
 func (s *syncer) release() {
 	s.hubLock.Release()
 	s.guard.Cleanup()
@@ -81,7 +77,7 @@ func (s *syncer) checkClockSkew() {
 	}
 }
 
-// sideLines is describe_side, as lines (for the conflict report on stderr).
+// sideLines is describe_side, as lines.
 func sideLines(label string, m manifest.Manifest, epoch int64) []string {
 	n, paths := campaignSaves(m)
 	l := []string{"  " + label, fmt.Sprintf("    files:     %d (%d campaign saves)", m.Count(), n), "    newest:    " + humanTime(epoch)}
@@ -91,7 +87,6 @@ func sideLines(label string, m manifest.Manifest, epoch int64) []string {
 	return l
 }
 
-// conflictReport: both sides, described; nothing merged, nothing picked.
 func (s *syncer) conflictReport(code exitcode.Code, step, logMsg, reason string, pre []string, lm, hm manifest.Manifest, lep, hep int64) *fail.Failure {
 	lines := append([]string{}, pre...)
 	lines = append(lines, "error: "+reason, "")
@@ -114,7 +109,6 @@ var divergedPre = []string{
 	"changed at the same moment, or SYNC_EXCLUDE differs between machines.", "",
 }
 
-// read is the shared opening of pull and push, under the hub lock.
 type reading struct {
 	lm, hm             manifest.Manifest
 	lfp, hfp           string
@@ -141,8 +135,7 @@ func (s *syncer) read(step string) (*reading, *fail.Failure) {
 	rd.verdict, rd.effective = decide.Decide(l, h, rd.st), decide.Effective(l, h, rd.st)
 	s.log.Log("INFO", step, "verdict=%s effective=%s local=%d files hub=%d files force='%s'",
 		rd.verdict, rd.effective, lm.Count(), hm.Count(), s.opt.Force)
-	// --expect-decision: checked under the hub lock, so nothing can change
-	// between this and the transfer.
+	// --expect-decision is checked under the hub lock, so nothing can change before the transfer.
 	if s.opt.Expect != "" {
 		if string(rd.effective) != s.opt.Expect {
 			return nil, fail.New(exitcode.StateChanged, step,
@@ -161,19 +154,14 @@ func (s *syncer) record(direction, lfp, hfp string) {
 	}
 }
 
-// afterTransferUnread: the transfer finished, but the hub could not be read
-// back to record it. Nothing is recorded - the script's set -e stops at the
-// same point - so the next run decides from what is really there.
+// afterTransferUnread records nothing, so the next run decides from what is really there.
 func (s *syncer) afterTransferUnread(direction string, err error) *fail.Failure {
 	s.log.Log("ERROR", direction, "could not read the hub back after the transfer: %v", err)
 	return fail.New(exitcode.SSHFailed, direction,
 		"the %s finished, but the hub could not be read back afterwards (%v), so it was not recorded. Run '%s status' once the hub is reachable.", direction, err, prog)
 }
 
-// verify is verify_transfer: after a transfer both sides must hold the same
-// saves, or it did not happen (#158). The state is already recorded as the
-// sides really are, so the next decision is DIVERGED_STATE, which every path
-// refuses: nothing syncs on its own until someone looks.
+// verify is verify_transfer: a mismatch leaves DIVERGED_STATE, which every path refuses (#158).
 func (s *syncer) verify(direction, lfp, hfp string) *fail.Failure {
 	if lfp == hfp {
 		return nil
@@ -283,8 +271,7 @@ func (s *syncer) push() *fail.Failure {
 			"before overwriting. If this machine is the source of truth, run:",
 			fmt.Sprintf("  %s push --force=local", prog))
 	}
-	// Never let an empty local directory wipe the hub - emptied after a
-	// sync, or never had saves. Not overridable.
+	// Never let an empty local directory wipe the hub. Not overridable.
 	if rd.effective == decide.LocalEmptied || rd.effective == decide.FirstSeed {
 		return fail.New(exitcode.ConflictFirstRun, "push",
 			"this machine has 0 files and the hub has %d - refusing to empty the hub. If this machine's empty state is correct, delete the hub contents by hand on %s.", hc, s.cfg.Get("HUB_HOST"))
@@ -348,8 +335,7 @@ func (s *syncer) push() *fail.Failure {
 	return nil
 }
 
-// dryRun is cmd_dry_run_plan: rsync's own -n -i plan for both directions,
-// nothing written.
+// dryRun is cmd_dry_run_plan: rsync -n -i for both directions, nothing written.
 func (r *run) dryRun() {
 	t := &transfer.T{Exclude: r.cfg.Exclude()}
 	e := strings.Join(t.Excludes(), " ")

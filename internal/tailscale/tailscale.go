@@ -1,6 +1,4 @@
-// Package tailscale finds the hub on the tailnet the way the script does:
-// which tailscale binary, whether the daemon answers, one "tailscale up"
-// attempt when it is down, the hub peer and whether it is online.
+// Package tailscale finds the hub on the tailnet as the script does: binary, daemon, one "tailscale up", peer.
 package tailscale
 
 import (
@@ -18,8 +16,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/platform"
 )
 
-// AppPath is the App Store build's CLI, preferred over PATH. The suite
-// points STS_TS_APP_PATH elsewhere so its stub on PATH wins.
+// AppPath is the App Store build's CLI, preferred over PATH; STS_TS_APP_PATH overrides it for the suite.
 func AppPath(getenv func(string) string) string {
 	if p := getenv("STS_TS_APP_PATH"); p != "" {
 		return p
@@ -49,9 +46,7 @@ type Peer struct {
 	Online       bool     `json:"Online"`
 }
 
-// Status is the part of tailscale status --json the tool reads. Peers are
-// kept in document order: the script takes the first that matches, and a
-// Go map would make that a different machine from run to run.
+// Status is what the tool reads of tailscale status --json; Peers keep document order, as the script takes the first match.
 type Status struct {
 	BackendState string
 	Self         *Peer
@@ -76,7 +71,7 @@ func (s *Status) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("Peer is not an object")
 	}
 	for dec.More() {
-		if _, err := dec.Token(); err != nil { // the key
+		if _, err := dec.Token(); err != nil {
 			return err
 		}
 		var p Peer
@@ -112,7 +107,6 @@ func (c *Client) run(args ...string) (stdout, stderr string, code int) {
 
 func trimNL(s string) string { return strings.TrimRight(s, "\n") }
 
-// firstLines is the script's "| head -n".
 func firstLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	if len(lines) > n {
@@ -121,9 +115,7 @@ func firstLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// Status is ts_status_json: stdout alone is the JSON (a version-mismatch
-// warning on stderr once broke every parser), a non-zero exit is the
-// daemon, and exit 0 without JSON is a disconnected App Store CLI.
+// Status is ts_status_json: stdout alone is the JSON (a version warning on stderr once broke every parser).
 func (c *Client) Status() (*Status, string, *fail.Failure) {
 	out, errOut, code := c.run("status", "--json")
 	out, errOut = trimNL(out), trimNL(errOut)
@@ -156,8 +148,7 @@ func (c *Client) Status() (*Status, string, *fail.Failure) {
 
 var loginURL = regexp.MustCompile(`https://login\.tailscale\.com/[A-Za-z0-9/._-]*`)
 
-// EnsureUp is ts_ensure_up: Running, or one "tailscale up" and a re-check.
-// A login URL means a human has to click: say so and stop, never wait.
+// EnsureUp is ts_ensure_up: one "tailscale up"; a login URL needs a human, so stop, never wait.
 func (c *Client) EnsureUp() (*Status, *fail.Failure) {
 	st, _, f := c.Status()
 	if f != nil {
@@ -201,16 +192,14 @@ func (c *Client) EnsureUp() (*Status, *fail.Failure) {
 	return st, nil
 }
 
-// Found is ts_find_peer's answer: the hub's MagicDNS name (no trailing
-// dot), its first IPv4 address, and whether it is online.
+// Found is ts_find_peer's answer: the MagicDNS name (no trailing dot), first IPv4, and whether online.
 type Found struct {
 	DNS    string
 	IP     string
 	Online bool
 }
 
-// FindPeer looks the hub up among the peers, then Self, by HostName, short
-// DNS label or full DNS name, case-insensitively.
+// FindPeer looks the hub up among the peers, then Self, by HostName or DNS name, case-insensitively.
 func FindPeer(st *Status, host string) (Found, bool) {
 	want := strings.ToLower(host)
 	all := append([]Peer(nil), st.Peers...)
@@ -237,9 +226,7 @@ func FindPeer(st *Status, host string) (Found, bool) {
 	return Found{}, false
 }
 
-// HubIsSelf is hub_host_matches against Self: HUB_HOST names this machine
-// by its HostName or its short MagicDNS label, which can differ after a
-// rename or a -1 collision suffix.
+// HubIsSelf is hub_host_matches against Self, by HostName or short MagicDNS label (they differ after a rename).
 func HubIsSelf(st *Status, hubHost string) (bool, string) {
 	if st.Self == nil {
 		return false, ""

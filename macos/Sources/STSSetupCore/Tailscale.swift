@@ -10,9 +10,7 @@ public struct TailscaleNode: Identifiable, Hashable {
 
     public var id: String { dnsName.isEmpty ? hostName : dnsName }
 
-    /// The name to write into HUB_HOST. sts accepts the HostName, the
-    /// MagicDNS short name or the full name; the short name is the one
-    /// `tailscale status` prints, so it is the one a human recognises.
+    /// The name for HUB_HOST: the MagicDNS short name, the one `tailscale status` prints and a human recognises.
     public var nodeName: String {
         let short = dnsName.split(separator: ".").first.map(String.init) ?? ""
         return short.isEmpty ? hostName.lowercased() : short
@@ -56,17 +54,14 @@ public enum TailscaleError: Error, CustomStringConvertible {
 public enum Tailscale {
     public static let appBinary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
-    /// Same preference order as the script's find_tailscale: the app first,
-    /// then a PATH install. Listed explicitly because a Finder-launched app
-    /// has no Homebrew on its PATH.
+    /// Same order as the script's find_tailscale, listed explicitly: a Finder-launched app has no Homebrew on PATH.
     public static func findBinary(fileManager fm: FileManager = .default) -> String? {
         [appBinary, "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale", "/usr/bin/tailscale"]
             .first { fm.isExecutableFile(atPath: $0) }
     }
 
     public static func parseStatus(_ data: Data) throws -> TailscaleStatus {
-        // Some builds print a warning line before the JSON (a client and
-        // daemon version mismatch does). Parse from the first brace.
+        // Some builds print a warning line before the JSON (client/daemon version mismatch); parse from the first brace.
         let body = data.firstIndex(of: UInt8(ascii: "{")).map { data[$0...] } ?? data
         guard let root = try? JSONSerialization.jsonObject(with: Data(body)) as? [String: Any] else {
             throw TailscaleError.badOutput(excerpt(data))
@@ -90,9 +85,7 @@ public enum Tailscale {
                                peers: peerDict.values.compactMap(node))
     }
 
-    /// Every installed binary, in preference order. The first one that
-    /// answers with readable status wins, so a quirk in one install does
-    /// not block setup when another works.
+    /// Every installed binary, in preference order; the first that answers with readable status wins.
     public static func allBinaries(fileManager fm: FileManager = .default) -> [String] {
         [appBinary, "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale", "/usr/bin/tailscale"]
             .filter { fm.isExecutableFile(atPath: $0) }
@@ -108,16 +101,13 @@ public enum Tailscale {
 
         var firstError: TailscaleError?
         for bin in bins {
-            // The app's binary is both the GUI and the CLI. Launched by a
-            // GUI process rather than a shell it may not realise it is
-            // being used as a CLI; TAILSCALE_BE_CLI says so explicitly.
+            // The app's binary is both GUI and CLI; launched from a GUI process it needs TAILSCALE_BE_CLI to act as a CLI.
             let r = runner(bin, ["status", "--json"], ["TAILSCALE_BE_CLI": "1"])
             log("\(bin) status --json: exit \(r.status)\n--- stdout ---\n\(excerpt(Data(r.stdout.utf8), 4000))\n--- stderr ---\n\(excerpt(Data(r.stderr.utf8), 4000))")
             if !r.stdout.isEmpty, let s = try? parseStatus(Data(r.stdout.utf8)) {
                 return .success(s)
             }
-            // Output that is there but unparseable is "unreadable"; no
-            // stdout at all is no answer, whatever the exit code says.
+            // Unparseable output is "unreadable"; no stdout at all is no answer, whatever the exit code says.
             let err: TailscaleError = r.stdout.isEmpty
                 ? .notRunning(r.combined)
                 : .badOutput(excerpt(Data(r.combined.utf8)))

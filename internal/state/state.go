@@ -1,7 +1,4 @@
-// Package state is the record of the last sync on this machine,
-// ~/.local/state/star-traders-sync/last-sync.json: version 2, keyed to the
-// hub it was made against. The format is the script's (state_read,
-// state_write) and the app's (SyncRecord), so the three read each other.
+// Package state is the last-sync record (last-sync.json, version 2), in the format the script and the app share.
 package state
 
 import (
@@ -26,9 +23,7 @@ type record struct {
 	HubPath          string `json:"hub_path"`
 }
 
-// Read returns the recorded state for this hub. Anything else - no file,
-// unreadable, not JSON, another version, a missing field, or a record made
-// against a different hub - is a first run, never "nothing changed".
+// Read returns the recorded state for this hub; anything else is a first run, never "nothing changed".
 func Read(path, hubHost, hubPath string) decide.State {
 	first := decide.State{FirstRun: true}
 	data, err := os.ReadFile(path)
@@ -67,9 +62,7 @@ func Read(path, hubHost, hubPath string) decide.State {
 	return st
 }
 
-// Write records a sync atomically (a temp file renamed over the old one),
-// in the bytes the script writes: two-space indent, its key order, a final
-// newline.
+// Write records a sync atomically (temp file and rename), in the bytes the script writes.
 func Write(path, direction, localFP, hubFP, hubHost, hubPath string, now time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

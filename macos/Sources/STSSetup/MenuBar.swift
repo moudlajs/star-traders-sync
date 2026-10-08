@@ -2,10 +2,7 @@ import ServiceManagement
 import STSSetupCore
 import SwiftUI
 
-/// The menu bar popover (#91, design board D): how things stand, Play, both
-/// sides, the two switches that matter with the window closed, and the
-/// way back to the window. Automatic sync keeps running while only this
-/// is showing.
+/// The menu bar popover (#91); automatic sync keeps running while only this is showing.
 struct MenuBarView: View {
     @EnvironmentObject var d: DashboardModel
     @EnvironmentObject var app: AppModel
@@ -92,12 +89,9 @@ struct MenuBarView: View {
 
     // MARK: the one button
 
-    /// Play when Play is what the main window offers. Anything that needs a
-    /// choice is made in the window, where its confirmation can be read.
     @ViewBuilder var primary: some View {
         let plan = d.status.map { SyncActions.plan(for: $0) }
-        // Only a Play that runs straight away: a confirmation is shown by
-        // the window, and one left pending would hold every check.
+        // Only a Play that runs straight away: a confirmation left pending in the window would hold every check.
         if let play = plan?.buttons.first(where: { $0.action == .play && $0.confirmation == nil }),
            plan?.blockedBecause == nil, !d.busy {
             Button { d.tapped(play) } label: {
@@ -148,8 +142,7 @@ struct MenuBarIcon: View {
     }
 }
 
-/// Open at login, through SMAppService (macOS 13+). The system owns the
-/// setting, so it is read back from there, never cached.
+/// Open at login via SMAppService; the system owns the setting, so it is read back, never cached.
 @MainActor
 final class LoginItem: ObservableObject {
     @Published private(set) var enabled = false

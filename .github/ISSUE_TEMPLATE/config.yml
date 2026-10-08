@@ -1,4 +1,2 @@
-# Blank issues are disabled deliberately. An empty box is what produced four
-# open issues with four different shapes - see #50. Picking a template is the
-# path of least resistance; inventing a structure should not be.
+# Blank issues disabled on purpose: templates keep every issue the same shape (#50).
 blank_issues_enabled: false

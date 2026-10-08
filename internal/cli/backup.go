@@ -21,8 +21,6 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/transfer"
 )
 
-// isHubByHostname: backup runs on the hub host only, told by hostname -s or
-// the LocalHostName (no tailnet needed for a local job).
 func (r *run) isHubByHostname() bool {
 	want := strings.ToLower(r.cfg.Get("HUB_HOST"))
 	if want == strings.ToLower(r.host) {
@@ -35,8 +33,7 @@ func device(p string) (uint64, bool) { return platform.Device(p) }
 
 func writable(p string) bool { return platform.CanWrite(p) }
 
-// volumeMounted is backup_volume_mounted: there, a mount point (another
-// device than its parent), and writable.
+// volumeMounted is backup_volume_mounted: a mount point (not on its parent's device) and writable.
 func volumeMounted(vol string) bool {
 	if st, err := os.Stat(vol); err != nil || !st.IsDir() {
 		return false
@@ -46,9 +43,7 @@ func volumeMounted(vol string) bool {
 	return ok1 && ok2 && dv != dp && writable(vol)
 }
 
-// waitForBackupVolume is wait_for_backup_volume: up to BACKUP_MOUNT_WAIT
-// for a disk still remounting after wake. Before the hub lock, so the other
-// machine is not locked out while this waits (#169).
+// waitForBackupVolume is wait_for_backup_volume, before the hub lock so the other Mac is not locked out (#169).
 func (r *run) waitForBackupVolume() {
 	vol := r.cfg.Get("BACKUP_VOLUME")
 	if wait := r.cfg.Int("BACKUP_MOUNT_WAIT"); wait > 0 && !volumeMounted(vol) {
@@ -65,8 +60,7 @@ func (r *run) waitForBackupVolume() {
 	}
 }
 
-// checkBackupVolume is check_backup_volume, under the hub lock: the volume
-// can go away during the wait.
+// checkBackupVolume is check_backup_volume, rechecked under the hub lock.
 func (r *run) checkBackupVolume() *fail.Failure {
 	vol := r.cfg.Get("BACKUP_VOLUME")
 	if st, err := os.Stat(vol); err != nil || !st.IsDir() {
@@ -85,9 +79,7 @@ func (r *run) checkBackupVolume() *fail.Failure {
 	return nil
 }
 
-// completeBackups is list_complete_backups: timestamp-named directories
-// with a completion marker, oldest first. Anything else is interrupted or
-// foreign, never a --link-dest base nor counted for retention.
+// completeBackups is list_complete_backups: only marked ones, oldest first, are --link-dest bases or retained.
 func completeBackups(dest string) []string {
 	entries, _ := os.ReadDir(dest)
 	var out []string
@@ -105,10 +97,7 @@ func completeBackups(dest string) []string {
 	return out
 }
 
-// backup is cmd_backup: the hub, under its own lock, into a timestamped
-// directory on an external volume - hard-linked against the last complete
-// backup where the volume can, counted, marked complete, pruned to
-// BACKUP_KEEP. A torn backup never joins the rotation.
+// backup is cmd_backup; a torn backup never joins the rotation.
 func (r *run) backup(now time.Time) *fail.Failure {
 	if !r.isHubByHostname() {
 		return fail.New(exitcode.BackupNotHub, "backup",
@@ -137,8 +126,7 @@ func (r *run) backup(now time.Time) *fail.Failure {
 		}
 		return nil
 	})
-	// Never back up an empty hub over a good rotation: nightly, it would
-	// age every real backup out within BACKUP_KEEP days.
+	// Never back up an empty hub: nightly, it would age every real backup out.
 	if srcN == 0 {
 		return fail.New(exitcode.HubEmpty, "backup",
 			"the hub at %s has 0 files - refusing to back up an empty hub over the existing rotation. Investigate the hub before running this again.", hubPath)
@@ -202,8 +190,7 @@ func (r *run) backup(now time.Time) *fail.Failure {
 		target = fmt.Sprintf("%s/%s-%d", dest, stamp, suffix)
 	}
 
-	// Until it is marked complete, a failure or an interrupt removes it, so
-	// a torn backup cannot be mistaken for a good one.
+	// Until marked complete, a failure or interrupt removes it, so a torn backup never looks good.
 	var pendMu sync.Mutex
 	pending := target
 	dropPending := func() {
@@ -215,14 +202,13 @@ func (r *run) backup(now time.Time) *fail.Failure {
 			pending = ""
 		}
 	}
-	r.ex.add(dropPending) // an interrupt
-	defer dropPending()   // any failure on the way out (on_exit's BACKUP_PENDING)
+	r.ex.add(dropPending)
+	defer dropPending()
 	r.say("backing up %s (%d files) -> %s", hubPath, srcN, target)
 	t := &transfer.T{Hub: r.hub, Log: r.log, Out: r.out, Stderr: r.env.Stderr, LocalDir: hubPath}
 	var f *fail.Failure
 	if prev != "" && canLink {
-		// -c: without it a same-size save rewritten in the same second as
-		// the previous backup's copy was hard-linked from it (#158).
+		// -c: else a same-size save rewritten in the same second is hard-linked from the old copy (#158).
 		f = t.Rsync("backup", "-a", "-c", "--link-dest="+filepath.Join(dest, prev), hubPath+"/", target+"/")
 		if f == nil {
 			r.log.Log("INFO", "backup", "hardlinked unchanged files against %s", prev)
@@ -239,8 +225,7 @@ func (r *run) backup(now time.Time) *fail.Failure {
 		return fail.New(exitcode.Rsync, "backup",
 			"backup is INCOMPLETE - %d files in the hub, only %d copied. The partial copy was removed so it cannot be mistaken for a good backup.", srcN, dstN)
 	}
-	// Unmarked, it would never join the rotation and nothing would remove
-	// it; still pending, the deferred cleanup does.
+	// Unmarked, it would never rotate out; still pending, the deferred cleanup removes it.
 	if err := os.WriteFile(filepath.Join(target, ".sts-complete"), []byte(time.Now().UTC().Format("2006-01-02T15:04:05Z")+"\n"), 0o644); err != nil {
 		return fail.New(exitcode.Rsync, "backup",
 			"could not mark the backup in %s complete, so it was removed - the backup volume may be full or read-only", target)

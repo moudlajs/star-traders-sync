@@ -2,9 +2,7 @@ import AppKit
 import STSSetupCore
 import SwiftUI
 
-/// Tailscale-style self update (#76): Update → progress ring → Restart to
-/// update. Every check that decides whether to install lives in
-/// STSSetupCore (UpdateFeed, UpdateInstaller) and is tested there.
+/// Self update (#76); every check that decides whether to install lives in STSSetupCore.
 @MainActor
 final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate {
     enum State: Equatable {
@@ -50,7 +48,7 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             guard let (data, _) = try? await URLSession.shared.data(for: request),
                   let release = try? UpdateFeed.parse(data) else {
-                return   // offline or a hiccup: stay quiet, try again later
+                return
             }
             guard testFeed || (UpdateFeed.isTrustedDownload(release.dmgURL)
                                && UpdateFeed.isTrustedDownload(release.signatureURL)) else {
@@ -97,9 +95,7 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
                 try UpdateInstaller.install(dmg: dmg, expectedVersion: release.version, bundleID: id, over: target)
                 try? FileManager.default.removeItem(at: dmg)
                 await MainActor.run {
-                    // Checked again: a sync that began before the gate above
-                    // must finish first. The new version is already in
-                    // place, so it starts the next time the app opens.
+                    // Checked again: a sync that began before the gate must finish first; the update applies on next launch.
                     if self.dashboard?.busy == true {
                         self.dashboard?.updating = false
                         self.state = .failed("Installed \(release.version). It starts the next time you open the app; a sync is running now.")
@@ -120,7 +116,6 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
         }
     }
 
-    /// Opens the freshly installed copy a moment after this one has quit.
     static func relaunch(_ app: URL) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -140,7 +135,7 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
     }
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // The file at `location` is removed when this returns: move it now.
+        // The file at `location` is removed when this delegate method returns: move it now.
         let kept = FileManager.default.temporaryDirectory
             .appendingPathComponent("Star-Traders-Sync-update-\(UUID().uuidString).dmg")
         let moved = (try? FileManager.default.moveItem(at: location, to: kept)) != nil
@@ -149,10 +144,7 @@ final class UpdateModel: NSObject, ObservableObject, URLSessionDownloadDelegate 
             guard moved else { self.state = .failed("The download could not be saved."); return }
             do {
                 try UpdateInstaller.verifyChecksum(kept, expected: release.sha256)
-                // The signature, from the same repository, checked against
-                // the key built into this app (#108). Never relaxed, not even
-                // for an STS_UPDATE_FEED test feed: testing an update locally
-                // means a dmg signed with the release key.
+                // The signature is checked against the built-in key (#108), never relaxed, not even for an STS_UPDATE_FEED test feed.
                 let (sig, response) = try await URLSession.shared.data(from: release.signatureURL)
                 if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                     throw UpdateError.io("The release's signature could not be downloaded (HTTP \(http.statusCode)). Nothing was changed.")
@@ -192,7 +184,6 @@ struct UpdateButton: View {
             .foregroundStyle(.blue)
             .help(r.notes.isEmpty ? "Version \(r.version) is available" : r.notes)
         case .downloading:
-            // No percentage: it races past in a second and only distracts.
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
                 Text("Downloading…").foregroundStyle(.secondary)

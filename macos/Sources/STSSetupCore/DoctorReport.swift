@@ -1,8 +1,6 @@
 import Foundation
 
-/// `sts doctor` output, grouped the way the script prints it: a header,
-/// sections ("  environment", "  tailscale", ...) of indented check lines,
-/// then a summary. Parsed so the app can show one row per section.
+/// One line of `sts doctor` output, classified so the app can show one row per section.
 public struct DoctorLine: Identifiable, Equatable {
     public enum Kind: Equatable { case ok, warn, fail, fixed, note, skip, section, plain }
 
@@ -25,9 +23,7 @@ public struct DoctorLine: Identifiable, Equatable {
 
     public static func == (a: DoctorLine, b: DoctorLine) -> Bool { a.text == b.text && a.kind == b.kind }
 
-    /// Section headers are indented two spaces and lowercase ("  ssh to
-    /// the hub"). Summary lines share the indent but start with a capital
-    /// or a digit ("  Everything checks out", "  2 problem(s)").
+    // Section headers are indented two spaces and lowercase; summary lines start with a capital or digit.
     static func isSectionHeader(_ raw: String) -> Bool {
         guard raw.hasPrefix("  "), !raw.hasPrefix("   ") else { return false }
         guard let first = raw.dropFirst(2).first else { return false }
@@ -109,8 +105,7 @@ public struct DoctorReport: Equatable {
 
     public init() {}
 
-    /// Folds one more output line in. Sections are complete once the next
-    /// one starts, or the run ends.
+    /// Folds one more output line in; a section is complete once the next starts or the run ends.
     public mutating func add(_ raw: String) {
         let line = DoctorLine(raw)
         if line.kind == .section {
@@ -119,8 +114,6 @@ public struct DoctorReport: Equatable {
         }
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        // Two-space lines after the sections are the closing summary;
-        // anything before the first section is the header.
         if raw.hasPrefix("  ") && !raw.hasPrefix("   ") && !sections.isEmpty {
             summary.append(trimmed)
         } else if !sections.isEmpty && summary.isEmpty {
@@ -135,9 +128,7 @@ public struct DoctorReport: Equatable {
     }
 }
 
-/// One row of the health check as drawn: every expected section is on
-/// screen from the start, greyed, and changes in place as the run
-/// reaches it, so nothing slides in or overlaps.
+/// One row of the health check as drawn: every expected section is shown from the start and updates in place.
 public struct DoctorRow: Identifiable, Equatable {
     public enum State: Equatable { case pending, checking, done, notChecked }
     public let title: String
@@ -148,13 +139,10 @@ public struct DoctorRow: Identifiable, Equatable {
 }
 
 extension DoctorReport {
-    /// The sections doctor prints, in its order, whatever the machine.
-    /// "hub duties" only on the Hub, and "everything else" when the config
-    /// is unusable, are appended where they occur.
+    /// The sections doctor prints, in its order; "hub duties" and "everything else" are appended where they occur.
     public static let expectedTitles = ["environment", "config", "state and logs", "game", "tailscale", "ssh to the hub"]
 
-    /// `revealed`: how many of the report's sections are shown so far (the
-    /// paced reveal); `finished`: the run and its reveal are over.
+    /// The rows so far: `revealed` sections shown by the paced reveal, `finished` once the run and reveal are over.
     public func rows(revealed: Int, finished: Bool) -> [DoctorRow] {
         var titles = Self.expectedTitles
         for s in sections where !titles.contains(s.title) { titles.append(s.title) }

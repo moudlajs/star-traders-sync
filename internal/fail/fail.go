@@ -1,5 +1,4 @@
-// Package fail is a refusal on its way out: the exit code from the table,
-// the log step, and what the user is told. Every non-zero exit carries one.
+// Package fail is a refusal on its way out: exit code, log step and what the user is told.
 package fail
 
 import (
@@ -8,9 +7,7 @@ import (
 	"github.com/moudlajs/star-traders-sync/internal/exitcode"
 )
 
-// Failure: printed as "error: <Msg>" plus "exit code N - see <log>" (the
-// script's die), or as Lines verbatim for the refusals the script prints
-// in its own shape.
+// Failure prints as the script's die ("error: <Msg>", then the exit code line), or as Lines verbatim.
 type Failure struct {
 	Code  exitcode.Code
 	Step  string
@@ -25,8 +22,7 @@ func New(code exitcode.Code, step, format string, a ...any) *Failure {
 	return &Failure{Code: code, Step: step, Msg: fmt.Sprintf(format, a...)}
 }
 
-// Printed is a refusal the script prints line by line, with no
-// "exit code" line: Msg is what goes to the log.
+// Printed is a refusal printed line by line with no "exit code" line; Msg goes to the log.
 func Printed(code exitcode.Code, step, logMsg string, lines ...string) *Failure {
 	return &Failure{Code: code, Step: step, Msg: logMsg, Lines: lines}
 }

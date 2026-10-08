@@ -68,6 +68,28 @@ Do not re-derive these the hard way:
 - The hub lock must be released before `sts play` waits for the game, or
   the other machine is blocked for the whole session.
 
+## Comments
+
+Comments are kept to the essentials (#186):
+
+- Each file, script or package: a 1-2 line header saying what it is. Scripts
+  keep their usage lines.
+- Exported identifiers (Go, Swift `public`): a one-line doc comment.
+- Anywhere else, one line, and only for something genuinely tricky: a regex,
+  a non-obvious idiom, a surprising bash 3.2 / BSD / openrsync / API
+  behaviour, a workaround with its issue number, or a security reason.
+- Keep one-line safety invariants ("the lock lives beside HUB_PATH, never
+  inside it") even where the code enforces them.
+- No comments that restate the code, no history or narrative ("this used
+  to", "found in review"), no language basics, no multi-line rationale. The
+  why behind a decision goes in the issue or the PR, which the commit links.
+- Lint directives (`# shellcheck disable=`, `//nolint`, `//go:build`) stay as
+  they are.
+- Runtime strings are code, not comments: help text, messages, heredoc
+  bodies, and the hub-side snippets inside quoted strings, whose `#` lines are
+  sent to the hub and pinned by `TestSnippetsMatchTheScript`.
+- Tests: one line only where a case is not obvious from its name.
+
 ## Before you open a pull request here
 
 Open an issue first and reference it with `Closes #N`, for anything beyond

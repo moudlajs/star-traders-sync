@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// Nothing outside this package names a macOS command, path or unix-only
-// syscall: that is what makes a port a new file here rather than edits
-// everywhere (#24). Comments and tests are not code that runs, so they may.
+// Nothing outside this package names a macOS command, path or unix-only syscall (#24).
 func TestNoPlatformCodeOutside(t *testing.T) {
 	banned := []string{`"pgrep"`, `"scutil"`, `"launchctl"`, `"diskutil"`, `"open"`, `"hostname"`,
 		"/Applications/", "Library/", "/Volumes", "xcode-select", "steam://",

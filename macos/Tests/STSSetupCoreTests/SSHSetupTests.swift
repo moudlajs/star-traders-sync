@@ -2,8 +2,7 @@ import XCTest
 @testable import STSSetupCore
 
 final class SSHSetupTests: XCTestCase {
-    /// A wrong account name looks exactly like a wrong password from here,
-    /// so the refusal names the account it tried (#178).
+    /// #178: a wrong account name looks exactly like a wrong password.
     func testARefusedPasswordNamesTheAccount() {
         let hub = TailscaleNode(dnsName: "nebulaplex01.t.ts.net", hostName: "NebulaPlex01",
                                 ip: "100.64.0.1", os: "macOS", online: true)

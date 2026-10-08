@@ -1,20 +1,9 @@
 #!/bin/bash
-#
-# star-traders-sync, as installed by the app: picks the engine and execs it
-# (#175). Every caller - the app, ~/bin/sts, the backup launcher - runs
-# this file by its old path, so none of them changes, and exec keeps the
-# launcher as the responsible process for its Full Disk Access grant.
-#
-# The engine: $STS_ENGINE, else the first word of
-# ~/.config/star-traders-sync/engine. "go", or no choice at all, runs the Go
-# build beside this file (#26); "bash" runs the script; anything else warns
-# and runs the script. Go back to the script with:
-#     echo bash > ~/.config/star-traders-sync/engine
-#
-# build-app.sh stamps the version below, which the app reads.
+# star-traders-sync engine shim: runs the Go build ($STS_ENGINE or the engine file: go/unset) or the bash script.
+# Go back to the script with:  echo bash > ~/.config/star-traders-sync/engine
+# exec keeps the backup launcher the responsible process for its Full Disk Access grant.
 readonly STS_VERSION="@STS_VERSION@"
 
-# This file's real directory: ~/bin/sts is a symlink to it.
 self="$0"
 while [ -L "$self" ]; do
     target="$(readlink "$self")"
@@ -33,9 +22,7 @@ if [ -z "$engine" ]; then
     { read -r engine _ < "$from"; } 2>/dev/null || true
 fi
 
-# A failed exec would otherwise end the shell here: with execfail it
-# returns, and a Go build that is present but cannot run (truncated by an
-# interrupted install, wrong architecture) falls back like a missing one.
+# execfail: a Go build that cannot run returns here and falls back, instead of ending the shell.
 shopt -s execfail
 case "$engine" in
     ""|go)
@@ -47,8 +34,7 @@ case "$engine" in
         fi ;;
     bash) ;;
     *)
-        # Most likely a rollback typed slightly wrong: the script is the
-        # safer guess, and the warning says how to make it stick.
+        # Likely a mistyped rollback: the script is the safer guess.
         printf 'warning: engine "%s" is not go or bash (from %s) - running the script\n' \
             "$engine" "$from" >&2
         printf '         to keep the script: echo bash > %s\n' \

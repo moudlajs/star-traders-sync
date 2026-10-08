@@ -1,7 +1,5 @@
 // Code generated from bin/star-traders-sync; DO NOT EDIT.
-// TestSnippetsMatchTheScript fails when they drift: these are the exact
-// texts the script runs on the hub, so the Go build takes and releases the
-// same locks the same way while both are in use.
+// TestSnippetsMatchTheScript fails when they drift from the script.
 
 package lock
 

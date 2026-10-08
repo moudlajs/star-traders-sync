@@ -38,8 +38,7 @@ func TestSnippetsMatchTheScript(t *testing.T) {
 	}
 }
 
-// An interrupt during the swap waits for it: the two renames are never
-// split, and nothing staged is swept while they run.
+// The two renames are never split, and nothing staged is swept while they run.
 func TestAnInterruptWaitsForTheSwap(t *testing.T) {
 	var g Guard
 	staged := t.TempDir() + "/staged"
@@ -68,8 +67,7 @@ func TestAnInterruptWaitsForTheSwap(t *testing.T) {
 	}
 }
 
-// An interrupt that has started exiting (and so removes the staging) keeps
-// any swap from starting afterwards.
+// An exiting interrupt removes the staging, so no swap may start afterwards.
 func TestNoSwapStartsOnceAnInterruptIsExiting(t *testing.T) {
 	var g Guard
 	g.Interrupt(func() {})
@@ -79,8 +77,6 @@ func TestNoSwapStartsOnceAnInterruptIsExiting(t *testing.T) {
 	}
 }
 
-// When the original cannot be put back either, the message says where the
-// saves are - never that they were restored.
 func TestAFailedRestoreSaysWhereTheSavesAre(t *testing.T) {
 	dir := t.TempDir()
 	target, tmp := dir+"/local", dir+"/staged"
@@ -108,8 +104,6 @@ func TestAFailedRestoreSaysWhereTheSavesAre(t *testing.T) {
 	}
 }
 
-// A leftover parked generation with this run's pid is moved aside, never
-// deleted.
 func TestALeftoverParkedGenerationIsKept(t *testing.T) {
 	dir := t.TempDir()
 	target, tmp, old := dir+"/local", dir+"/staged", dir+"/local.sts-old-42"
@@ -134,8 +128,7 @@ func TestALeftoverParkedGenerationIsKept(t *testing.T) {
 	}
 }
 
-// A snapshot that comes up short refuses, and stays hidden as .partial-:
-// never listed, counted or pruned as a safety copy.
+// A short snapshot stays hidden as .partial-: never listed, counted or pruned.
 func TestAnIncompleteSnapshotStaysHidden(t *testing.T) {
 	dir := t.TempDir()
 	saves := dir + "/local"
