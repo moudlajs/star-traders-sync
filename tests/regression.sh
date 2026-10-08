@@ -672,16 +672,35 @@ shim_says() {   # shim_says EXPECTED [env assignments...] - run ~/bin/sts status
     [ "$out" = "$want" ] || { printf '      got: %s\n' "$out"; return 1; }
 }
 rm -f "$ENGINE_FILE"
-check "no engine chosen: the script runs"                0 shim_says "bash engine: status"
+check "no engine chosen: the Go build runs (#26)"       0 shim_says "go engine: status"
 echo go > "$ENGINE_FILE"
 check "engine file says go: the Go build runs"           0 shim_says "go engine: status"
+echo bash > "$ENGINE_FILE"
+check "engine file says bash: the script runs"         0 shim_says "bash engine: status"
+echo go > "$ENGINE_FILE"
 check "  STS_ENGINE=bash overrides the file"             0 shim_says "bash engine: status" STS_ENGINE=bash
 echo "bash # rolled back" > "$ENGINE_FILE"
 check "rollback: the first word decides"                 0 shim_says "bash engine: status"
 check "  STS_ENGINE=go overrides the file"               0 shim_says "go engine: status" STS_ENGINE=go
+echo Bash > "$ENGINE_FILE"
+check "an unknown engine runs the script"                0 sh -c '"$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts"
+check "  and warns, naming the file"                     0 sh -c '"$1" status 2>&1 >/dev/null | grep -q "engine \"Bash\" is not go or bash (from .*/engine)"' _ "$CASE/home/bin/sts"
+check "  or naming STS_ENGINE"                          0 sh -c 'STS_ENGINE=script "$1" status 2>&1 >/dev/null | grep -q "engine \"script\" is not go or bash (from STS_ENGINE)"' _ "$CASE/home/bin/sts"
+: > "$ENGINE_FILE"
+check "an empty engine file is no choice: Go"            0 shim_says "go engine: status"
 mv "$SHIMDIR/star-traders-sync-go" "$SHIMDIR/gone"
 check "go chosen but missing: the script runs"           0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" 
-check "  and it says why"                                0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "engine is go, but .* is missing"' _ "$CASE/home/bin/sts"
+check "  and it says why"                                0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "the Go build .* is missing"' _ "$CASE/home/bin/sts"
+check "  the same with no engine chosen"                 0 sh -c 'rm -f "$2"; "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts" "$ENGINE_FILE"
+# Present but unable to run - a truncated binary from an interrupted
+# install. A failed exec ends a bash script; the shim must fall back.
+printf '\317\372\355\376\0\0\0truncated' > "$SHIMDIR/star-traders-sync-go"
+chmod 755 "$SHIMDIR/star-traders-sync-go"
+check "a Go build that cannot run: the script runs"      0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts"
+check "  and it says so"                                 0 sh -c 'STS_ENGINE=go "$1" status 2>&1 >/dev/null | grep -q "could not run"' _ "$CASE/home/bin/sts"
+: > "$SHIMDIR/star-traders-sync-go"          # a zero-byte one, from a failed copy
+check "  a zero-byte Go build falls back too"            0 sh -c 'STS_ENGINE=go "$1" status 2>/dev/null | grep -qx "bash engine: status"' _ "$CASE/home/bin/sts"
+rm -f "$SHIMDIR/star-traders-sync-go"
 mv "$SHIMDIR/gone" "$SHIMDIR/star-traders-sync-go"
 check "the shim carries the version the app reads"       0 grep -qx 'readonly STS_VERSION="9.9.9"' "$SHIMDIR/star-traders-sync"
 

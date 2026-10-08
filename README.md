@@ -84,7 +84,7 @@ Something wrong? Run `sts doctor` first. `sts --help` lists every exit code.
 - **[Configuration](docs/configuration.md)**: every config key, its default, and which must match across machines
 - **[Backups and restoring](docs/backups.md)**: the nightly backup job, Full Disk Access, restoring a snapshot
 - **[Troubleshooting](docs/troubleshooting.md)**: what `sts doctor` checks, every exit code, a row per failure
-- **[The Go engine](docs/engine.md)**: trying the Go rewrite, and going back
+- **[The Go engine](docs/engine.md)**: the Go rewrite that runs by default, and going back to the script
 - **[Design](docs/design.md)**: architecture, what lives in the save directory, the openrsync and path notes
 - **[Contributing](CONTRIBUTING.md)**: conventions, testing, how to submit a change
 
