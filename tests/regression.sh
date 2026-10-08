@@ -783,6 +783,21 @@ if command -v go >/dev/null 2>&1; then
     check "  and the installed engines are untouched"    0 test "$(inst_sums)" = "$BEFORE_INST"
     check "a missing release is refused, saying why"     1 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/nowhere"
     check "  and points at --script"                     0 grep -q -- "--script" "$CASE/inst.out"
+    # A build of the wrong version: runs, but is not this checkout.
+    printf '#!/bin/sh\necho "star-traders-sync 0.0.1"\n' > "$REL/star-traders-sync-go-darwin-universal"
+    (cd "$REL" && shasum -a 256 star-traders-sync-go-darwin-universal > star-traders-sync-go-darwin-universal.sha256)
+    check "a build of another version is refused"        1 inst STS_INSTALL_DOWNLOAD=1 STS_RELEASE_URL="file://$CASE/rel"
+    check "  saying so"                                  0 grep -q "is not version" "$CASE/inst.out"
+    check "  with the engines and ~/bin untouched"       0 test "$(inst_sums)" = "$BEFORE_INST" -a "$(readlink "$CASE/home/bin/sts")" = "$REPO/bin/star-traders-sync"
+
+    # go build failing: a stub go ahead of the real one.
+    mkdir -p "$CASE/fakego"
+    printf '#!/bin/sh\n[ "$1" = version ] && { echo "go version go0.0 stub"; exit 0; }\necho "stub: build broken" >&2; exit 1\n' > "$CASE/fakego/go"
+    chmod 755 "$CASE/fakego/go"
+    check "a failed go build is refused"                 1 inst PATH="$CASE/fakego:$PATH"
+    check "  pointing at --script"                       0 grep -q "go build failed.*--script" "$CASE/inst.out"
+    check "  with the engines and ~/bin untouched"       0 test "$(inst_sums)" = "$BEFORE_INST" -a "$(readlink "$CASE/home/bin/sts")" = "$REPO/bin/star-traders-sync"
+
     check "no staging directory is left behind"          0 test -z "$(ls -A "$INST" | grep '^\.stage')"
 else
     printf '  skip the Go install cases (no Go here)\n'
