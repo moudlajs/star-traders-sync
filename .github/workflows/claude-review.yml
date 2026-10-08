@@ -2,26 +2,12 @@ name: Claude review
 
 on:
   pull_request:
-    # ready_for_review is the one that was missing: without it, a PR opened
-    # as a draft and later marked ready was never reviewed at all.
+    # ready_for_review: without it a draft later marked ready is never reviewed.
     types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
 
-# A review takes minutes. Without this, pushing three times in quick
-# succession starts three reviews of increasingly stale diffs.
-#
-# Cancel only for new pushes. Workflow-level concurrency is evaluated before
-# the job-level `if`, so a comment run joins the group and cancels a running
-# review before skipping itself - which meant posting a summary comment
-# destroyed the review being summarised.
-#
-# The draft state is part of the key (#67). A push to a draft runs, finds
-# draft == true and skips - but it used to share the group with the
-# ready_for_review run that `gh pr ready` fires a second later, and cancel
-# it. Draft runs now only ever cancel each other; ready runs only each
-# other. Comment runs have no pull_request, so they land in their own group
-# and, as before, never cancel a review.
+# Concurrency runs before the job `if`: only pushes cancel, and draft state is keyed so a draft run can't cancel the ready review (#67).
 concurrency:
   group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -34,7 +20,6 @@ permissions:
 
 jobs:
   review:
-    # Skip drafts, and for comments only fire on an explicit @claude mention.
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
@@ -46,13 +31,10 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          # Minted with `claude setup-token` - uses the Claude subscription,
-          # not a metered API key.
+          # From `claude setup-token` (subscription, not a metered API key).
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-          # Without these the action runs, reviews the PR, and then has no
-          # permission to say anything - the log reads "No buffered inline
-          # comments" and nothing appears on the PR.
+          # Without these the review runs but cannot post anything to the PR.
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 

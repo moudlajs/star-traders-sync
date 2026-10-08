@@ -30,7 +30,7 @@ jobs:
 
       - name: No bash 4+ features
         run: |
-          # Comments are stripped first so one naming a forbidden construct passes.
+          # Comments are stripped first, so a comment that names a forbidden construct does not trip the check.
           for f in bin/star-traders-sync install.sh tests/regression.sh; do
             if sed 's/[[:space:]]*#.*$//' "$f" \
                | grep -nE '\$\{[A-Za-z_]+\^\^|\$\{[A-Za-z_]+,,|mapfile |readarray |declare -A|local -A|&>>|\|&'; then
