@@ -14,3 +14,6 @@
 # macOS app
 /macos/.build/
 /macos/build/
+
+# install.sh: the launcher and the Go build of a checkout install (#183)
+/build/

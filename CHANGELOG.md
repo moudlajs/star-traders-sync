@@ -15,6 +15,11 @@ upgrade now rather than later.
 
 ### Changed
 
+- `install.sh` installs the Go build behind the engine launcher, the way
+  the app does. It builds with Go when installed, otherwise downloads the
+  release binary and checks its checksum. The script stays linked as the
+  fallback. Re-run it after `git pull`. `./install.sh --script` keeps the
+  old plain link ([#183]).
 - The Go build is now the default engine ([#26]). Nothing changes for a Mac
   that already chose `go`. To keep the script:
   `echo bash > ~/.config/star-traders-sync/engine`. The script stays
@@ -470,3 +475,4 @@ of those findings has a case in `tests/regression.sh`.
 [#175]: https://github.com/moudlajs/star-traders-sync/issues/175
 [#178]: https://github.com/moudlajs/star-traders-sync/issues/178
 [#26]: https://github.com/moudlajs/star-traders-sync/issues/26
+[#183]: https://github.com/moudlajs/star-traders-sync/issues/183

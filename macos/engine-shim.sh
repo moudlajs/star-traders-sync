@@ -50,6 +50,8 @@ case "$engine" in
         # Most likely a rollback typed slightly wrong: the script is the
         # safer guess, and the warning says how to make it stick.
         printf 'warning: engine "%s" is not go or bash (from %s) - running the script\n' \
-            "$engine" "$from" >&2 ;;
+            "$engine" "$from" >&2
+        printf '         to keep the script: echo bash > %s\n' \
+            "${XDG_CONFIG_HOME:-$HOME/.config}/star-traders-sync/engine" >&2 ;;
 esac
 exec -a "$0" /bin/bash "$dir/star-traders-sync.bash" "$@"
