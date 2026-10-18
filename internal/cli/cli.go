@@ -20,7 +20,7 @@ import (
 )
 
 // Version must equal STS_VERSION in bin/star-traders-sync; a test enforces it.
-const Version = "1.8.1"
+const Version = "1.8.2"
 
 const prog = "star-traders-sync"
 
