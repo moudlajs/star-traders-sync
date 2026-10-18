@@ -35,6 +35,8 @@ final class DashboardModel: ObservableObject {
         didSet { UserDefaults.standard.set(autoHeldAfterRestore, forKey: Self.holdKey) }
     }
     nonisolated static let holdKey = "autoHeldAfterRestore"
+    static let playCancelledNotice = "Play cancelled before the game started. Nothing was synced. If the game opens anyway, your saves go to the Hub after you quit it."
+    static let gameDidNotStartNotice = "The game didn't start, so nothing was synced. If you didn't cancel it in Steam, check that Steam is running."
     static let holdNotice = "Automatic sync is waiting for you: the restored saves go to the Hub when you Send or Play."
 
     /// Something worth knowing about a run that otherwise succeeded, e.g. the game crashing after the saves were sent.
@@ -61,8 +63,8 @@ final class DashboardModel: ObservableObject {
         do { return .success(try SafetyCopy.list(from: Data(r.stdout.utf8))) }
         catch { return .failure(SyncProblem.from(code: 1, stderr: "error: could not read the list of safety copies")) }
     }
-    var runScript: (String, [String], @escaping (String) -> Void) -> Int32 = { script, args, onLine in
-        Shell.stream("/bin/bash", [script] + args, onLine: onLine)
+    var runScript: (String, [String], ProcessHandle, @escaping (String) -> Void) -> Int32 = { script, args, handle, onLine in
+        Shell.stream("/bin/bash", [script] + args, handle: handle, onLine: onLine)
     }
     var now: () -> Date = Date.init
     /// Keeps the app's script current before each check (#101); a no-op in tests, so they never touch the real copy.
@@ -244,7 +246,7 @@ final class DashboardModel: ObservableObject {
         let run = self.runScript
         Task.detached {
             var output: [String] = []
-            let status = run(script, args) { line in
+            let status = run(script, args, r.handle) { line in
                 output.append(line)
                 Task { @MainActor in r.feed(line) }
             }
@@ -257,6 +259,10 @@ final class DashboardModel: ObservableObject {
                     // Remember a failure so the same state is not retried in a loop; any change on either side clears it.
                     self.autoFailedKey = status == 0 ? nil : situation
                     self.autoFailedAt = status == 0 ? nil : self.now()
+                }
+                if status != 0, action == .play, r.cancelled || status == 41 {
+                    self.notice = r.cancelled ? Self.playCancelledNotice : Self.gameDidNotStartNotice
+                    withAnimation(.easeOut(duration: 0.25)) { self.run = nil }
                 }
                 if status == 0 {
                     if action == .restore { self.notice = Self.holdNotice }

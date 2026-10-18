@@ -106,6 +106,9 @@ struct MainHero: View {
                     ? "Making sure the game has really closed, then your saves go to the Hub."
                     : "When you quit the game, your saves go to the Hub by themselves."
             }
+            if r.action == .play && r.progress.current == 1 {
+                return "Waiting for Star Traders to open. If you cancelled it in Steam, cancel here too."
+            }
             let stages = r.action.stages
             let i = min(r.progress.current, stages.count - 1)
             return "Step \(i + 1) of \(stages.count) · \(stages[i])"
@@ -130,6 +133,11 @@ struct MainHero: View {
         case .running(let r):
             if r.action == .play && r.progress.current == 2 && !r.progress.gameClosed {
                 InGamePill(since: r.playStartedAt ?? Date())
+            } else if r.canCancel {
+                HStack(spacing: 10) {
+                    StatusPill(kind: .busy, text: "Starting…")
+                    Button("Cancel") { r.cancel() }
+                }
             } else {
                 StatusPill(kind: .busy, text: r.action == .play && r.progress.current == 1 ? "Starting…" : "Syncing…")
             }

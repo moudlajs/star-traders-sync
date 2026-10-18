@@ -52,7 +52,7 @@ final class DashboardModelTests: XCTestCase {
             return .success(queue.count > 1 ? queue.removeFirst() : queue[0])
         }
         let calls = self.calls!
-        d.runScript = { _, args, _ in calls.add(args); return exit }
+        d.runScript = { _, args, _, _ in calls.add(args); return exit }
     }
 
     func settle(_ timeout: TimeInterval = 3, until done: @escaping () -> Bool) async {
@@ -180,7 +180,7 @@ final class DashboardModelTests: XCTestCase {
         fresh.refreshScript = { _ in }
         let after = Calls()
         fresh.fetchStatus = { _ in .success(try! Self.status("LOCAL_ONLY")) }
-        fresh.runScript = { _, args, _ in after.add(args); return 0 }
+        fresh.runScript = { _, args, _, _ in after.add(args); return 0 }
         fresh.start()
         await settle(1) { false }
         XCTAssertTrue(after.all.isEmpty, "no automatic push after the relaunch")
@@ -201,8 +201,9 @@ final class DashboardModelTests: XCTestCase {
     /// Play's steps advance while the game runs, not when play exits hours later.
     func testPlayProgressAdvancesWhileTheGameRuns() async throws {
         fake([try Self.status("HUB_ONLY")])
+        d.autoSync = false   // the fake status stays HUB_ONLY: an automatic pull would follow
         let gate = DispatchSemaphore(value: 0)
-        d.runScript = { _, _, onLine in
+        d.runScript = { _, _, _, onLine in
             onLine("pulling before launch...")
             onLine("launching Star Traders: Frontiers (appid 335620)...")
             onLine("game running (pid 1146) - waiting for it to exit. Ctrl-C here does not stop the game.")
@@ -228,6 +229,57 @@ final class DashboardModelTests: XCTestCase {
         run.feed("launching Star Traders: Frontiers (appid 335620)...")
         watch.cancel()
         XCTAssertGreaterThan(announced, 0, "the main screen would stay on step 1")
+    }
+
+    func playButton() throws -> ActionButton {
+        try XCTUnwrap(SyncActions.plan(for: try Self.status("HUB_ONLY")).buttons.first { $0.action == .play })
+    }
+
+    /// Cancel while the game is starting stops the real child, and leaves a notice instead of a problem.
+    func testCancelWhileTheGameStartsStopsPlay() async throws {
+        fake([try Self.status("HUB_ONLY")])
+        d.autoSync = false   // the fake status stays HUB_ONLY: an automatic pull would follow
+        d.runScript = { _, _, handle, onLine in
+            onLine("pulling before launch...")
+            onLine("launching Star Traders: Frontiers (appid 335620)...")
+            return Shell.stream("/bin/sleep", ["30"], handle: handle) { _ in }   // waiting for a game that never comes
+        }
+        let started = Date()
+        d.perform(try playButton())
+        await settle { self.d.run?.canCancel == true }
+        XCTAssertEqual(d.run?.canCancel, true)
+        d.run?.cancel()
+        await settle(10) { self.d.run == nil }
+        XCTAssertNil(d.run)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10, "the child was not stopped")
+        XCTAssertEqual(d.notice, DashboardModel.playCancelledNotice)
+    }
+
+    /// The tool's 41 (the game never appeared) is a notice: nothing was synced, nothing is wrong.
+    func testAGameThatNeverStartsIsANoticeNotAProblem() async throws {
+        fake([try Self.status("HUB_ONLY")])
+        d.autoSync = false   // the fake status stays HUB_ONLY: an automatic pull would follow
+        d.runScript = { _, _, _, onLine in
+            onLine("launching Star Traders: Frontiers (appid 335620)...")
+            onLine("error: the game never started.")
+            return 41
+        }
+        d.perform(try playButton())
+        await settle { self.d.notice != nil }
+        XCTAssertEqual(d.notice, DashboardModel.gameDidNotStartNotice)
+        XCTAssertNil(d.run, "no problem card")
+    }
+
+    /// Once the game runs, the push after it must happen: no cancel.
+    func testNoCancelOnceTheGameRuns() {
+        let run = ActionRun(action: .play)
+        run.feed("launching Star Traders: Frontiers (appid 335620)...")
+        XCTAssertTrue(run.canCancel)
+        run.feed("game running (pid 1146) - waiting for it to exit.")
+        XCTAssertFalse(run.canCancel)
+        let pull = ActionRun(action: .pull)
+        pull.feed("pulling 3 files...")
+        XCTAssertFalse(pull.canCancel)
     }
 
     func testStopDropsAQueuedPressAndBlocksEveryAction() async throws {
