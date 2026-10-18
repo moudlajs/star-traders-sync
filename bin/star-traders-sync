@@ -4,7 +4,7 @@
 
 set -Eeuo pipefail
 
-readonly STS_VERSION="1.8.1"
+readonly STS_VERSION="1.8.2"
 readonly PROG="star-traders-sync"
 
 # Character classes spelled out, never as ranges: [A-Z] follows locale collation and matches more.
