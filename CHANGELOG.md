@@ -13,6 +13,13 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Changed
+
+- Play can be cancelled while the game is starting, for example after
+  cancelling Steam's launch prompt. Nothing is synced. While it waits, the
+  app says what for. A game that never starts is now a notice, not an error
+  ([#192]).
+
 ## [1.8.1] - 2026-10-18
 
 ### Fixed
@@ -489,3 +496,4 @@ of those findings has a case in `tests/regression.sh`.
 [#26]: https://github.com/moudlajs/star-traders-sync/issues/26
 [#183]: https://github.com/moudlajs/star-traders-sync/issues/183
 [#189]: https://github.com/moudlajs/star-traders-sync/issues/189
+[#192]: https://github.com/moudlajs/star-traders-sync/issues/192

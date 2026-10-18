@@ -13,3 +13,15 @@ final class SSHSetupTests: XCTestCase {
         XCTAssertTrue(msg.contains("account name"), msg)
     }
 }
+
+final class ProcessHandleTests: XCTestCase {
+    /// A cancel that lands before the child is started still stops it.
+    func testATerminateBeforeStartStillStops() {
+        let h = ProcessHandle()
+        h.terminate()
+        let started = Date()
+        let code = Shell.stream("/bin/sleep", ["30"], handle: h) { _ in }
+        XCTAssertNotEqual(code, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+}

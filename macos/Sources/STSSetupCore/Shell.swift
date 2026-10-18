@@ -72,6 +72,7 @@ public enum Shell {
     /// Runs to completion, handing each output line to `onLine` as it arrives; returns the exit status.
     public static func stream(_ executable: String, _ arguments: [String],
                               env extra: [String: String] = [:],
+                              handle: ProcessHandle? = nil,
                               onLine: @escaping (String) -> Void) -> Int32 {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: executable)
@@ -86,11 +87,12 @@ public enum Shell {
             onLine("could not start \(executable): \(error.localizedDescription)")
             return 127
         }
+        handle?.attach(p)
 
         var buffer = Data()
-        let handle = pipe.fileHandleForReading
+        let reader = pipe.fileHandleForReading
         while true {
-            let chunk = handle.availableData
+            let chunk = reader.availableData
             if chunk.isEmpty { break }
             buffer.append(chunk)
             while let nl = buffer.firstIndex(of: 0x0A) {
@@ -101,5 +103,25 @@ public enum Shell {
         if !buffer.isEmpty { onLine(String(decoding: buffer, as: UTF8.self)) }
         p.waitUntilExit()
         return p.terminationStatus
+    }
+}
+
+/// A running child that another thread may stop.
+public final class ProcessHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var stopRequested = false
+
+    public init() {}
+
+    func attach(_ p: Process) {
+        lock.lock(); process = p; let stop = stopRequested; lock.unlock()
+        if stop { p.terminate() }
+    }
+
+    /// SIGTERM: sts releases its locks on the way out.
+    public func terminate() {
+        lock.lock(); stopRequested = true; let p = process; lock.unlock()
+        p?.terminate()
     }
 }

@@ -10,6 +10,17 @@ final class ActionRun: ObservableObject, Identifiable {
     @Published private(set) var ended = false
     @Published private(set) var problem: SyncProblem?
     @Published private(set) var playStartedAt: Date?
+    @Published private(set) var cancelled = false
+    let handle = ProcessHandle()
+
+    /// Only between launch and the game appearing: the pull is done and no lock is held, so stopping syncs nothing.
+    var canCancel: Bool { action == .play && progress.current == 1 && !ended && !cancelled }
+
+    func cancel() {
+        guard canCancel else { return }
+        cancelled = true
+        handle.terminate()
+    }
 
     init(action: SyncAction, automatic: Bool = false) {
         self.action = action
