@@ -90,9 +90,9 @@ public enum Shell {
         handle?.attach(p)
 
         var buffer = Data()
-        let handle = pipe.fileHandleForReading
+        let reader = pipe.fileHandleForReading
         while true {
-            let chunk = handle.availableData
+            let chunk = reader.availableData
             if chunk.isEmpty { break }
             buffer.append(chunk)
             while let nl = buffer.firstIndex(of: 0x0A) {
