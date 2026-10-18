@@ -198,6 +198,38 @@ final class DashboardModelTests: XCTestCase {
         }
     }
 
+    /// Play's steps advance while the game runs, not when play exits hours later.
+    func testPlayProgressAdvancesWhileTheGameRuns() async throws {
+        fake([try Self.status("HUB_ONLY")])
+        let gate = DispatchSemaphore(value: 0)
+        d.runScript = { _, _, onLine in
+            onLine("pulling before launch...")
+            onLine("launching Star Traders: Frontiers (appid 335620)...")
+            onLine("game running (pid 1146) - waiting for it to exit. Ctrl-C here does not stop the game.")
+            gate.wait()          // the game is being played
+            onLine("pushing after play...")
+            return 0
+        }
+        let play = try XCTUnwrap(SyncActions.plan(for: try Self.status("HUB_ONLY")).buttons.first { $0.action == .play })
+        d.perform(play)
+        await settle { self.d.run?.progress.current == 2 }
+        XCTAssertEqual(d.run?.progress.current, 2, "still on step \((d.run?.progress.current ?? -1) + 1) while the game runs")
+        XCTAssertEqual(d.run?.ended, false)
+        gate.signal()
+        await settle { self.d.run == nil || self.d.run?.ended == true }
+    }
+
+    /// Views that observe only the model (the main screen) must redraw when the run's progress moves.
+    func testTheModelAnnouncesRunProgress() {
+        let run = ActionRun(action: .play)
+        d.run = run
+        var announced = 0
+        let watch = d.objectWillChange.sink { _ in announced += 1 }
+        run.feed("launching Star Traders: Frontiers (appid 335620)...")
+        watch.cancel()
+        XCTAssertGreaterThan(announced, 0, "the main screen would stay on step 1")
+    }
+
     func testStopDropsAQueuedPressAndBlocksEveryAction() async throws {
         fake([try Self.status("HUB_ONLY")])
         let play = try XCTUnwrap(SyncActions.plan(for: try Self.status("HUB_ONLY")).buttons.first { $0.action == .play })

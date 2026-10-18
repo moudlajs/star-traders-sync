@@ -13,6 +13,12 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+### Fixed
+
+- The app's main screen stayed on "Step 1 of 4" for a whole play session,
+  although the sync underneath ran normally. It now follows each step as
+  it happens ([#189]).
+
 ## [1.8.0] - 2026-10-08
 
 ### Changed
@@ -479,3 +485,4 @@ of those findings has a case in `tests/regression.sh`.
 [#178]: https://github.com/moudlajs/star-traders-sync/issues/178
 [#26]: https://github.com/moudlajs/star-traders-sync/issues/26
 [#183]: https://github.com/moudlajs/star-traders-sync/issues/183
+[#189]: https://github.com/moudlajs/star-traders-sync/issues/189
