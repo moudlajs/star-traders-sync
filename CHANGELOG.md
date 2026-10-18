@@ -13,6 +13,8 @@ upgrade now rather than later.
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-10-18
+
 ### Fixed
 
 - The app's main screen stayed on "Step 1 of 4" for a whole play session,
@@ -422,7 +424,8 @@ that was never transferred was simply absent from the replacement - taking
 from the live directory into the staging directory before the swap. Every one
 of those findings has a case in `tests/regression.sh`.
 
-[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/moudlajs/star-traders-sync/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/moudlajs/star-traders-sync/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/moudlajs/star-traders-sync/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/moudlajs/star-traders-sync/compare/v1.6.1...v1.6.2
