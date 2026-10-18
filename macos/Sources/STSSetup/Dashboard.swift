@@ -35,7 +35,7 @@ final class DashboardModel: ObservableObject {
         didSet { UserDefaults.standard.set(autoHeldAfterRestore, forKey: Self.holdKey) }
     }
     nonisolated static let holdKey = "autoHeldAfterRestore"
-    static let playCancelledNotice = "Play cancelled before the game started. Nothing was synced. If the game opens anyway, your saves go to the Hub after you quit it."
+    static let playCancelledNotice = "Play cancelled before the game started. Nothing was synced. If the game opens anyway, press Send after you quit it."
     static let gameDidNotStartNotice = "The game didn't start, so nothing was synced. If you didn't cancel it in Steam, check that Steam is running."
     static let holdNotice = "Automatic sync is waiting for you: the restored saves go to the Hub when you Send or Play."
 
