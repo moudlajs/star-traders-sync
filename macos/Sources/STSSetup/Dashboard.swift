@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import STSSetupCore
 import SwiftUI
 
@@ -16,7 +17,11 @@ final class DashboardModel: ObservableObject {
 
     let doctor = DoctorRun()
 
-    @Published var run: ActionRun?
+    // Forwarded: the main screen observes only this model, yet shows the run's progress.
+    @Published var run: ActionRun? {
+        didSet { runWatch = run?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() } }
+    }
+    private var runWatch: AnyCancellable?
     @Published var pending: ActionButton?
 
     var busy: Bool { run.map { !$0.ended } ?? false }
